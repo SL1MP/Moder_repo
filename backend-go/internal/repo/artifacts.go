@@ -356,3 +356,42 @@ func nullIfEmpty(s string) any {
 	}
 	return s
 }
+
+// FinishRequestItem — пакет заявки завершён решением роли (обычно отклонением).
+func (r *Repo) FinishRequestItem(ctx context.Context, id int64, status, blockedReason, nextAction string, at time.Time) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE request_item SET
+			status = $2, blocked_reason = $3, next_action = $4,
+			finished_at = $5, waiting_since = NULL, updated_at = now()
+		WHERE id = $1
+	`, id, status, nullIfEmpty(blockedReason), nullIfEmpty(nextAction), at)
+	if err != nil {
+		return fmt.Errorf("завершение пакета заявки: %w", err)
+	}
+	return nil
+}
+
+// MarkStepPassed — шаг отмечен пройденным после решения роли. Это и есть
+// «снятие блокировки»: отдельной сущности нет, шаг считается непогашенным,
+// пока его результат остаётся открытым.
+func (r *Repo) MarkStepPassed(ctx context.Context, requestItemID int64, stepCode, message string, at time.Time) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE pipeline_step SET result = 'pass', message = $3, finished_at = $4
+		WHERE request_item_id = $1 AND step_code = $2
+	`, requestItemID, stepCode, nullIfEmpty(message), at)
+	if err != nil {
+		return fmt.Errorf("снятие блокировки по шагу %s: %w", stepCode, err)
+	}
+	return nil
+}
+
+// ClearQuarantineUntil — срок карантина снят.
+func (r *Repo) ClearQuarantineUntil(ctx context.Context, packageVersionID int64) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE package_version SET quarantine_until = NULL, updated_at = now() WHERE id = $1
+	`, packageVersionID)
+	if err != nil {
+		return fmt.Errorf("снятие срока карантина: %w", err)
+	}
+	return nil
+}
