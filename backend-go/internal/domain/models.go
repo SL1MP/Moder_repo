@@ -299,3 +299,43 @@ type AuditLog struct {
 	Comment    *string
 	CreatedAt  time.Time
 }
+
+// ScanReport — снимок одного прогона сканера содержимого.
+//
+// Отдельно от CodeFinding: находки перезаписываются на каждом прогоне и
+// отвечают на вопрос «что показать в карточке сейчас», а отчёт — снимок, по
+// которому DevSecOps объясняет решение. Сами файлы (JSON и HTML) лежат в
+// объектном хранилище; здесь — ключи и сводка, чтобы список отчётов строился
+// без похода в хранилище.
+type ScanReport struct {
+	ID               int64
+	RequestItemID    int64
+	PackageVersionID int64
+
+	StepCode string // banner_scan | sast_scan
+	Scanner  string // yara | semgrep
+	Rules    *string
+
+	// State: clean | findings | unavailable. unavailable — проверка НЕ
+	// состоялась; это не «чисто», и отличать обязательно.
+	State            string
+	Threshold        string
+	FindingsTotal    int
+	FindingsBlocking int
+	WorstSeverity    *string
+	Detail           *string
+
+	JSONKey string
+	HTMLKey string
+	Bucket  *string
+
+	DurationMs *int
+	CreatedAt  time.Time
+}
+
+// ScanReportStates — допустимые значения ScanReport.State. Держать 1:1 с
+// CHECK-ограничением в migrations/0005 (см. его комментарий).
+var ScanReportStates = []string{"clean", "findings", "unavailable"}
+
+// ScanReportStepCodes — шаги, порождающие отчёт. Тоже 1:1 с миграцией 0005.
+var ScanReportStepCodes = []string{"banner_scan", "sast_scan"}

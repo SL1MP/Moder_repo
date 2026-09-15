@@ -196,3 +196,15 @@ func (r *Registry) Codes() []string {
 	}
 	return out
 }
+
+// NewWithPlugin возвращает копию реестра с заменённым плагином одного
+// менеджера. Нужен тестам конвейера, которым требуется подменить поведение
+// одного менеджера, не поднимая фейковый реестр целиком.
+func NewWithPlugin(base *Registry, plugin Plugin) *Registry {
+	plugins := make(map[string]Plugin, len(base.plugins))
+	for code, p := range base.plugins {
+		plugins[code] = p
+	}
+	plugins[plugin.Code()] = plugin
+	return &Registry{plugins: plugins}
+}

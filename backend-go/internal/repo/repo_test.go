@@ -48,12 +48,16 @@ func TestHappyPath_PyPI_AllStepsPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePackageVersion: %v", err)
 	}
+	// База между прогонами не пересоздаётся: без сброса заявки накапливаются, и
+	// проверка «ровно два request_item на версию» начинает считать хвосты
+	// прошлых запусков.
+	resetItems(t, r, ver.ID)
 	if ver.Status != "new" {
 		t.Fatalf("новая версия должна быть в статусе new, получено %q", ver.Status)
 	}
 
 	req, err := r.CreateModerationRequest(ctx, domain.ModerationRequest{
-		AuthorID: 1, Manager: "pypi", Status: "pending", Source: "api",
+		AuthorID: mustUser(t, r, "repo-test-author"), Manager: "pypi", Status: "pending", Source: "api",
 		Reason: strPtr("Сервис выставления счетов, спринт 41"),
 	})
 	if err != nil {
@@ -96,7 +100,7 @@ func TestHappyPath_PyPI_AllStepsPass(t *testing.T) {
 	// Опора для siblings_awaiting (фаза 2): вторая заявка на ту же версию должна
 	// быть видна через ListItemsByPackageVersion вместе с первой.
 	req2, err := r.CreateModerationRequest(ctx, domain.ModerationRequest{
-		AuthorID: 2, Manager: "pypi", Status: "pending", Source: "api",
+		AuthorID: mustUser(t, r, "repo-test-author-2"), Manager: "pypi", Status: "pending", Source: "api",
 	})
 	if err != nil {
 		t.Fatalf("CreateModerationRequest (второй автор): %v", err)
@@ -137,8 +141,14 @@ func TestIdempotencyKey_NoDuplicate(t *testing.T) {
 	ctx := context.Background()
 
 	key := "ci-build-repo-test-idempotency"
+	// Ключ идемпотентности переживает прогон: без сброса второй запуск падал бы
+	// уже на ПЕРВОЙ вставке, и тест проверял бы не то, что заявлено.
+	if _, err := r.pool.Exec(ctx, `DELETE FROM moderation_request WHERE idempotency_key = $1`, key); err != nil {
+		t.Fatalf("сброс фикстуры idempotency key: %v", err)
+	}
+
 	first, err := r.CreateModerationRequest(ctx, domain.ModerationRequest{
-		AuthorID: 1, Manager: "npm", Status: "pending", Source: "api",
+		AuthorID: mustUser(t, r, "repo-test-author"), Manager: "npm", Status: "pending", Source: "api",
 		IdempotencyKey: &key,
 	})
 	if err != nil {
@@ -154,7 +164,7 @@ func TestIdempotencyKey_NoDuplicate(t *testing.T) {
 	}
 
 	if _, err := r.CreateModerationRequest(ctx, domain.ModerationRequest{
-		AuthorID: 1, Manager: "npm", Status: "pending", Source: "api",
+		AuthorID: mustUser(t, r, "repo-test-author"), Manager: "npm", Status: "pending", Source: "api",
 		IdempotencyKey: &key,
 	}); err == nil {
 		t.Fatal("повторная вставка с тем же Idempotency-Key должна была упасть на UNIQUE-ограничении")
@@ -162,3 +172,24 @@ func TestIdempotencyKey_NoDuplicate(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// mustUser — пользователь для фикстуры. Раньше здесь стоял литерал AuthorID: 1
+// с расчётом на пользователя, заведённого руками: на чистой базе тест падал на
+// нарушении внешнего ключа. Тест обязан быть самодостаточным.
+func mustUser(t *testing.T, r *Repo, username string) int64 {
+	t.Helper()
+	user, err := r.GetOrCreateUser(context.Background(), username, username)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser(%q): %v", username, err)
+	}
+	return user.ID
+}
+
+// resetItems удаляет заявки на версию пакета (pipeline_step уходит каскадом).
+func resetItems(t *testing.T, r *Repo, packageVersionID int64) {
+	t.Helper()
+	if _, err := r.pool.Exec(context.Background(),
+		`DELETE FROM request_item WHERE package_version_id = $1`, packageVersionID); err != nil {
+		t.Fatalf("сброс фикстуры request_item: %v", err)
+	}
+}

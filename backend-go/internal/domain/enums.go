@@ -38,9 +38,13 @@ var RequestStatuses = []string{
 
 // ItemStatuses — статус request_item, гранулярнее RequestStatuses (см.
 // docs/architecture.md, "request_item.status — более гранулярный...").
+// dry_run — шаг публикации отработал в режиме ARTIFACT_DRY_RUN: обработка
+// завершена, но публикации не было, и помечать пакет approved нельзя (иначе
+// команда установки вела бы в никуда). Держать 1:1 с CHECK-ограничением в
+// migrations/0007.
 var ItemStatuses = []string{
 	"queued", "running", "quarantined", "awaiting_legal", "license_claimed",
-	"awaiting_security", "approved", "rejected", "revoked", "blacklisted", "failed",
+	"awaiting_security", "approved", "dry_run", "rejected", "revoked", "blacklisted", "failed",
 }
 
 var RequestSources = []string{"api", "ui", "cli", "gitlab"}

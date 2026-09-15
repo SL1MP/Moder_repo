@@ -4,24 +4,47 @@ import (
 	"context"
 	"fmt"
 
+	"time"
+
 	"moderation/internal/domain"
 	"moderation/internal/repo"
 )
 
-// Run выполняет шаги конвейера начиная с fromCode (пусто — с самого начала,
-// шага 0) и сохраняет результат каждого шага. В отличие от Python-версии,
-// где это делает Celery-таска, здесь — синхронный вызов; асинхронность
-// (очередь) — фаза 6, см. docs/migration-to-go.md.
-//
-// Возвращает финальный статус, который нужно применить к RequestItem, и
-// булев Blocked — остановился ли конвейер на блокирующем решении роли
-// (в отличие от "закончились реализованные шаги", см. package doc).
+// Result — итог прогона конвейера.
 type Result struct {
+	// ItemStatus — статус, применённый к request_item.
 	ItemStatus string
-	Blocked    bool
+	// Blocked — конвейер остановился на непогашенном согласовании или
+	// отклонении, а не дошёл до конца.
+	Blocked bool
+	// Terminal — пакет прошёл конвейер до конца (опубликован либо dry-run).
+	Terminal bool
+	// LastStep — код шага, на котором всё закончилось.
+	LastStep string
+	// Notifications — кого позвать. Отправку делает вызывающий код: у
+	// конвейера нет своего канала доставки, и заводить его здесь значило бы
+	// тащить в него транзакцию уведомлений.
+	Notifications []Notification
 }
 
-func Run(ctx context.Context, r *repo.Repo, item *domain.RequestItem, pc *Context, fromCode string) (Result, error) {
+// Notification — «позвать роль по поводу пакета».
+type Notification struct {
+	Event         string
+	Roles         []string
+	Message       string
+	RequestItemID int64
+}
+
+// Run выполняет шаги конвейера начиная с fromCode (пусто — с шага 0) и
+// сохраняет результат каждого шага.
+//
+// Проверка решения DevSecOps (security_override) делается ЗДЕСЬ, один раз, а
+// не в каждом шаге сканирования: в Python-версии она продублирована трижды —
+// отмеченный в architecture.md технический долг, который перенос исправляет.
+// Смысл проверки: без неё возобновлённый после одобрения конвейер снова упёрся
+// бы в тот же вердикт сканера и вернул пакет в очередь — решение DevSecOps не
+// имело бы эффекта.
+func Run(ctx context.Context, pc *Context, fromCode string) (Result, error) {
 	startIdx := 0
 	if fromCode != "" {
 		idx, ok := domain.StepOrder[fromCode]
@@ -30,79 +53,138 @@ func Run(ctx context.Context, r *repo.Repo, item *domain.RequestItem, pc *Contex
 		}
 		startIdx = idx
 	}
-	if startIdx >= len(Steps) {
-		return Result{}, fmt.Errorf("шаг с индексом %d ещё не реализован (см. docs/migration-to-go.md)", startIdx)
+
+	if err := loadSecurityOverride(ctx, pc); err != nil {
+		return Result{}, err
 	}
 
+	r := pc.Deps.Repo
+	result := Result{}
+
 	// deferredStatus — статус от шага, который сам не остановил конвейер
-	// (LicenseStep при warn, Stop=false), но которым нужно пометить item,
-	// если конвейер дойдёт до конца РЕАЛИЗОВАННЫХ шагов, не встретив более
-	// приоритетной блокировки. Аналог Python StepOutcome.defer, см. package
-	// doc в steps.go.
-	var deferredStatus string
+	// (Defer), но которым нужно пометить пакет, если конвейер дойдёт до конца,
+	// не встретив более приоритетной блокировки.
+	deferredStatus := ""
 
 	for i := startIdx; i < len(Steps); i++ {
 		step := Steps[i]
 		outcome, err := step.Run(ctx, pc)
 		if err != nil {
-			return Result{}, fmt.Errorf("шаг %s: %w", step.Code(), err)
+			return result, fmt.Errorf("шаг %s: %w", step.Code(), err)
 		}
+		result.LastStep = step.Code()
 
-		var msg *string
-		if outcome.Message != "" {
-			msg = &outcome.Message
-		}
-		if _, err := r.UpsertPipelineStep(ctx, domain.PipelineStep{
-			RequestItemID: item.ID,
-			StepCode:      step.Code(),
-			StepOrder:     domain.StepOrder[step.Code()],
-			Result:        outcome.Result,
-			Message:       msg,
-		}); err != nil {
-			return Result{}, fmt.Errorf("сохранение результата шага %s: %w", step.Code(), err)
+		if err := saveStep(ctx, r, pc, step.Code(), outcome); err != nil {
+			return result, err
 		}
 
 		if outcome.VersionStatus != "" {
-			if err := r.UpdatePackageVersionQuarantine(ctx, pc.Version.ID, outcome.VersionStatus, pc.Version.QuarantineUntil); err != nil {
-				return Result{}, err
+			if err := r.UpdatePackageVersionQuarantine(
+				ctx, pc.Version.ID, outcome.VersionStatus, pc.Version.QuarantineUntil); err != nil {
+				return result, err
 			}
 			pc.Version.Status = outcome.VersionStatus
 		}
 
-		if outcome.Stop {
-			if outcome.ItemStatus != "" {
-				if err := applyItemStatus(ctx, r, item, step.Code(), outcome); err != nil {
-					return Result{}, err
-				}
-				return Result{ItemStatus: outcome.ItemStatus, Blocked: true}, nil
-			}
-			return Result{}, nil
+		if outcome.NotifyEvent != "" {
+			result.Notifications = append(result.Notifications, Notification{
+				Event: outcome.NotifyEvent, Roles: outcome.NotifyRoles,
+				Message: outcome.Message, RequestItemID: pc.Item.ID,
+			})
 		}
 
 		if outcome.ItemStatus != "" {
-			// Пишем в БД сразу — карточка заявки должна показывать текущий
+			// Пишем сразу: карточка заявки должна показывать текущий
 			// блокирующий статус, даже если конвейер после этого шага не
-			// остановился (LicenseStep). Если далее по конвейеру найдётся
-			// более приоритетная блокировка, она перезапишет статус тем же
-			// путём на следующей итерации.
-			deferredStatus = outcome.ItemStatus
-			if err := applyItemStatus(ctx, r, item, step.Code(), outcome); err != nil {
-				return Result{}, err
+			// остановился. Более приоритетная блокировка перезапишет его на
+			// следующей итерации.
+			if err := applyItemStatus(ctx, r, pc, step.Code(), outcome); err != nil {
+				return result, err
 			}
+			if outcome.Defer {
+				deferredStatus = outcome.ItemStatus
+			}
+		}
+
+		if outcome.Terminal {
+			result.ItemStatus, result.Terminal = outcome.ItemStatus, true
+			return result, nil
+		}
+		if outcome.Stop {
+			result.ItemStatus, result.Blocked = outcome.ItemStatus, outcome.ItemStatus != ""
+			return result, nil
 		}
 	}
 
 	if deferredStatus != "" {
-		return Result{ItemStatus: deferredStatus, Blocked: true}, nil
+		result.ItemStatus, result.Blocked = deferredStatus, true
 	}
-	return Result{}, nil
+	return result, nil
 }
 
-func applyItemStatus(ctx context.Context, r *repo.Repo, item *domain.RequestItem, stepCode string, outcome StepOutcome) error {
-	msg := outcome.Message
-	step := stepCode
+// loadSecurityOverride — одна проверка решения DevSecOps на весь прогон.
+func loadSecurityOverride(ctx context.Context, pc *Context) error {
+	pc.SecurityOverride = nil
+	if pc.Version.SecurityOverrideAt == nil {
+		return nil
+	}
+	who := "DevSecOps"
+	if pc.Version.SecurityOverrideByID != nil {
+		user, err := pc.Deps.Repo.GetUser(ctx, *pc.Version.SecurityOverrideByID)
+		if err != nil {
+			return err
+		}
+		who = repo.DisplayName(user, "DevSecOps")
+	}
+	pc.SecurityOverride = &Override{
+		DecidedBy: who,
+		DecidedAt: *pc.Version.SecurityOverrideAt,
+		Comment:   deref(pc.Version.SecurityOverrideComment),
+	}
+	return nil
+}
+
+func saveStep(ctx context.Context, r *repo.Repo, pc *Context, code string, outcome StepOutcome) error {
+	var message *string
+	if outcome.Message != "" {
+		message = &outcome.Message
+	}
+	now := pc.now()
+	_, err := r.UpsertPipelineStep(ctx, domain.PipelineStep{
+		RequestItemID: pc.Item.ID,
+		StepCode:      code,
+		StepOrder:     domain.StepOrder[code],
+		Result:        outcome.Result,
+		Message:       message,
+		Details:       outcome.Details,
+		StartedAt:     &now,
+		FinishedAt:    &now,
+	})
+	if err != nil {
+		return fmt.Errorf("сохранение результата шага %s: %w", code, err)
+	}
+	return nil
+}
+
+func applyItemStatus(ctx context.Context, r *repo.Repo, pc *Context, stepCode string, outcome StepOutcome) error {
+	item := pc.Item
 	item.Status = outcome.ItemStatus
-	item.BlockedReason = &msg
-	item.CurrentStep = &step
-	return r.UpdateRequestItemStatus(ctx, item.ID, outcome.ItemStatus, &step, &msg, nil, nil)
+	item.CurrentStep = &stepCode
+	item.BlockedReason = nilIfEmpty(outcome.Message)
+	item.NextAction = nilIfEmpty(outcome.NextAction)
+
+	// waiting_since ставится, когда пакет впервые начал чего-то ждать: по нему
+	// строится очередь ролей «кто ждёт дольше всех».
+	var waitingSince *time.Time
+	if domain.Contains(domain.ResumableStatuses, outcome.ItemStatus) {
+		if item.WaitingSince != nil {
+			waitingSince = item.WaitingSince
+		} else {
+			waitingSince = timePtr(pc.now())
+		}
+	}
+	item.WaitingSince = waitingSince
+
+	return r.UpdateRequestItemStatus(ctx, item.ID, outcome.ItemStatus,
+		&stepCode, item.BlockedReason, item.NextAction, waitingSince)
 }
