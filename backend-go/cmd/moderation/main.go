@@ -18,6 +18,8 @@ import (
 	"moderation/internal/api"
 	"moderation/internal/config"
 	"moderation/internal/db"
+	"moderation/internal/repo"
+	"moderation/internal/storage"
 )
 
 func main() {
@@ -39,9 +41,28 @@ func main() {
 	}
 	defer pool.Close()
 
+	// Хранилище отчётов необязательно: без него сервис поднимается и отвечает
+	// health, просто маршруты отчётов не подключаются. Падать на старте из-за
+	// отчётов нельзя — иначе недоступный MinIO роняет весь сервис.
+	options := api.Options{}
+	if cfg.S3Endpoint != "" {
+		store, err := storage.NewS3(storage.S3Config{
+			Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
+			AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Region: cfg.S3Region,
+		})
+		if err != nil {
+			logger.Error("хранилище отчётов не настроено, выдача отчётов отключена", "error", err)
+		} else {
+			options.Reports = &api.ReportsHandler{Repo: repo.New(pool), Storage: store}
+			logger.Info("хранилище отчётов подключено", "endpoint", cfg.S3Endpoint, "bucket", cfg.S3Bucket)
+		}
+	} else {
+		logger.Warn("S3_ENDPOINT не задан — выдача отчётов о сканировании отключена")
+	}
+
 	server := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: api.NewRouter(pool),
+		Handler: api.NewRouter(pool, options),
 	}
 
 	go func() {

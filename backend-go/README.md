@@ -5,7 +5,52 @@ Go-версия backend'а сервиса модерации пакетов — 
 рабочим Python `../backend/`, не заменяет его — см. открытые вопросы в `migration-to-go.md`
 насчёт судьбы Python-версии после переноса.
 
-## Статус — фаза 1 (каркас), в работе
+
+## Что готово сейчас
+
+Конвейер перенесён целиком: все девять шагов, отчёты о сканировании и решения ролей.
+
+| Пакет | Что делает |
+|---|---|
+| `internal/config` | `Load(getenv)`, все ошибки валидации разом |
+| `internal/db`, `internal/repo` | pgx-пул и репозиторий без ORM |
+| `internal/domain` | 17 структур домена, перечисления 1:1 с миграциями |
+| `internal/registry` | плагины pypi / npm / go / nuget, нормализация SPDX |
+| `internal/unpack` | безопасная распаковка артефакта (zip-slip, ссылки, архивные бомбы) |
+| `internal/scanners` | YARA (баннеры) и semgrep (SAST) через внешние CLI |
+| `internal/osv` | компараторы версий, диапазоны OSV, CVSS v3, локальный снапшот |
+| `internal/artifactstore` | JFrog Artifactory и совместимые, режим dry-run |
+| `internal/storage` | S3-совместимое хранилище (SigV4 на stdlib) + in-memory |
+| `internal/reports` | отчёты о сканировании: JSON и самодостаточный HTML |
+| `internal/pipeline` | девять шагов, блокировки, runner |
+| `internal/decisions` | решения ролей с распространением на siblings |
+| `internal/api` | health, metrics, выдача отчётов |
+
+Не перенесено: разбор файлов зависимостей, REST API создания заявок, auth/OIDC, очередь
+(NATS + Valkey вместо Celery), уведомления, watchdog. Шесть недостающих пакетных менеджеров —
+обязательный скоуп, Docker первым (`../docs/ci-parity-gaps.md`).
+
+### Как запускать тесты
+
+Часть тестов — интеграционные, на реальном Postgres (принцип `../docs/testing.md`). Без
+переменной они не падают, а честно пропускаются с указанием причины:
+
+```bash
+# юнит-часть — без базы
+go test ./...
+
+# целиком, с базой
+createdb moderation_test
+for f in migrations/*.up.sql; do psql -d moderation_test -v ON_ERROR_STOP=1 -f "$f"; done
+MODERATION_TEST_POSTGRES_DSN='postgres://localhost/moderation_test' go test ./...
+```
+
+Тесты самодостаточны и идемпотентны: фикстуры namespace'ятся именем теста и сбрасываются
+перед прогоном. Это не украшательство — без сброса тест, однажды доведший пакет до `approved`,
+во второй раз останавливался бы на шаге 0 («версия уже одобрена») и «проходил», ничего не
+проверив.
+
+## История: фаза 1 (каркас)
 
 Сделано и проверено (`go build ./...`, `go vet ./...`, `gofmt -l .` — чисто):
 

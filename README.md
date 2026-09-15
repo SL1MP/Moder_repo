@@ -353,6 +353,7 @@ make import-list FILE=./package_list.txt MANAGER=pypi   # одноразовый
 - [`docs/osv-snapshot.md`](docs/osv-snapshot.md) — формат снапшота OSV и поведение при его недоступности
 - [`docs/migration-from-ci.md`](docs/migration-from-ci.md) — переход с `package_list.txt` и CI-проверок
 - [`docs/migration-to-go.md`](docs/migration-to-go.md) — план переноса backend с Python на Go (решение принято, см. `docs/architecture.md`, "Целевой стек"); каркас — [`backend-go/`](backend-go/README.md), фаза 1 готова и проверена
+- [`docs/scanning-and-reports.md`](docs/scanning-and-reports.md) — как устроены проверки на SAST и политический контент и где брать файлы отчётов (JSON и HTML)
 
 ## Что сервис намеренно не делает
 
