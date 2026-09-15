@@ -1,0 +1,99 @@
+# Продовый оверлей: healthcheck'и, restart: unless-stopped, без публикации портов
+# внутренних сервисов и без hot reload.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# (файл docker-compose.override.yml в этом случае НЕ подхватывается)
+
+services:
+  nginx:
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  api:
+    restart: unless-stopped
+    environment:
+      APP_ENV: prod
+      LOG_LEVEL: INFO
+      UVICORN_EXTRA_ARGS: "--workers 4"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  worker:
+    restart: unless-stopped
+    environment:
+      APP_ENV: prod
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app.celery_app inspect ping -d celery@$$HOSTNAME"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  beat:
+    restart: unless-stopped
+    environment:
+      APP_ENV: prod
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/celerybeat-schedule* || pgrep -f 'celery.*beat'"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  db:
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=512MB
+
+  redis:
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+
+  minio:
+    restart: unless-stopped
+
+  keycloak:
+    restart: unless-stopped
+    # В prod Keycloak запускается в боевом режиме, не start-dev.
+    # Без `--optimized`: этот флаг обещает, что образ уже собран через
+    # `kc.sh build`, а build-опции (KC_DB, features) задаются на этапе сборки.
+    # Мы их не фиксируем в образе, поэтому Keycloak собирается при старте —
+    # старт дольше на несколько секунд, зато конфигурация берётся из .env.
+    command: ["start", "--import-realm"]
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q 'UP'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  nexus:
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/service/rest/v1/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s

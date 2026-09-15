@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS pipeline_step;
+DROP TABLE IF EXISTS notification;
+DROP TABLE IF EXISTS license_claim;
+DROP TABLE IF EXISTS comment;
+DROP TABLE IF EXISTS vulnerability;
+DROP TABLE IF EXISTS request_item;
+DROP TABLE IF EXISTS artifact;
+DROP TABLE IF EXISTS package_version;
+DROP TABLE IF EXISTS moderation_request;
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS vuln_index_version;
+DROP TABLE IF EXISTS "user";
+DROP TABLE IF EXISTS package_manager;
+DROP TABLE IF EXISTS package;
+DROP TABLE IF EXISTS license;

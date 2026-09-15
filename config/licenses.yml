@@ -1,0 +1,54 @@
+# Справочник лицензий (SPDX). Шаг 3 конвейера сверяет идентификатор из метаданных
+# реестра с разделом `allowed`. Если лицензия не определилась или её нет в списке —
+# шаг даёт warn, конвейер останавливается и заявка уходит юристам.
+# Перечитывается при старте и по POST /api/v1/admin/reload.
+
+allowed:
+  - spdx_id: MIT
+    name: MIT License
+    url: https://spdx.org/licenses/MIT.html
+  - spdx_id: Apache-2.0
+    name: Apache License 2.0
+    url: https://spdx.org/licenses/Apache-2.0.html
+  - spdx_id: BSD-2-Clause
+    name: BSD 2-Clause "Simplified" License
+  - spdx_id: BSD-3-Clause
+    name: BSD 3-Clause "New" License
+  - spdx_id: ISC
+    name: ISC License
+  - spdx_id: Python-2.0
+    name: Python License 2.0
+  - spdx_id: PSF-2.0
+    name: Python Software Foundation License 2.0
+  - spdx_id: Unlicense
+    name: The Unlicense
+  - spdx_id: CC0-1.0
+    name: Creative Commons Zero v1.0 Universal
+  - spdx_id: Zlib
+    name: zlib License
+  - spdx_id: MPL-2.0
+    name: Mozilla Public License 2.0
+    notes: Разрешена только при использовании без модификации исходного кода.
+  - spdx_id: Artistic-2.0
+    name: Artistic License 2.0
+  - spdx_id: MS-PL
+    name: Microsoft Public License
+  - spdx_id: BSL-1.0
+    name: Boost Software License 1.0
+  - spdx_id: 0BSD
+    name: BSD Zero Clause License
+
+forbidden:
+  - spdx_id: AGPL-3.0-only
+    name: GNU Affero General Public License v3.0
+    notes: Копилефт с сетевым условием — запрещена для продуктов, доступных извне.
+  - spdx_id: AGPL-3.0-or-later
+    name: GNU Affero General Public License v3.0 or later
+  - spdx_id: SSPL-1.0
+    name: Server Side Public License
+    notes: Не является open source по определению OSI.
+  - spdx_id: BUSL-1.1
+    name: Business Source License 1.1
+    notes: Ограничения на коммерческое использование — требуется решение юристов.
+  - spdx_id: LicenseRef-Proprietary
+    name: Проприетарная лицензия

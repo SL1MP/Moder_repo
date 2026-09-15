@@ -1,0 +1,42 @@
+# Правила blacklist. Совпадение останавливает конвейер на шаге 1: пакет НЕ скачивается,
+# наружу за ним сервис не ходит. Решение окончательное — снять можно только правкой
+# этого файла (admin/devsecops) с последующим POST /api/v1/admin/reload.
+#
+# Поля правила:
+#   manager  — pypi | npm | go | nuget; отсутствует = любой менеджер
+#   name     — точное имя или glob (`*` и `?`), в нормализованном виде менеджера
+#   versions — `*` (любая), точная версия, либо диапазон: ">=1.0,<2.0"
+#   reason   — текст, который увидит разработчик в карточке заявки
+#   added_by / added_at — для аудита
+
+rules:
+  - manager: pypi
+    name: colourama
+    versions: "*"
+    reason: >-
+      Тайпсквоттинг пакета colorama, содержит вредоносный код.
+    added_by: devsecops
+    added_at: "2024-01-15"
+
+  - manager: npm
+    name: event-stream
+    versions: "==3.3.6"
+    reason: >-
+      Версия 3.3.6 содержала внедрённый бэкдор (flatmap-stream).
+    added_by: devsecops
+    added_at: "2024-01-15"
+
+  - manager: npm
+    name: "*-crypto-miner"
+    versions: "*"
+    reason: Пакеты со встроенным майнером запрещены политикой безопасности.
+    added_by: devsecops
+    added_at: "2024-01-15"
+
+  - name: "internal-*"
+    versions: "*"
+    reason: >-
+      Имена internal-* зарезервированы под внутренние пакеты; внешний пакет с таким
+      именем — попытка dependency confusion.
+    added_by: admin
+    added_at: "2024-02-01"

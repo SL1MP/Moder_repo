@@ -1,0 +1,62 @@
+[project]
+name = "moderation-service"
+version = "0.1.0"
+description = "Сервис модерации внешних (open-source) пакетов"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.1",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "celery[redis]>=5.4",
+    "redis>=5.0",
+    "httpx>=0.27",
+    "boto3>=1.34",
+    "pyyaml>=6.0",
+    "python-jose[cryptography]>=3.3",
+    "cryptography>=42.0",
+    "bcrypt>=4.1",
+    "packaging>=24.0",
+    "prometheus-client>=0.20",
+    "python-json-logger>=2.0",
+    "typer>=0.12",
+    # Шаг «Политические баннеры»: правила YARA из config/rules.yar.
+    "yara-python>=4.5",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "freezegun>=1.5",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+moderctl = "app.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --cov=app --cov-report=term-missing --cov-fail-under=70"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+omit = ["app/tasks/celery_app.py", "app/main.py", "alembic/*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]

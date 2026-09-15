@@ -1,0 +1,218 @@
+# Базовая конфигурация. Ни одного секрета здесь — только переменные из .env.
+# Профили: --profile nexus (свой Nexus), --profile sso (свой Keycloak).
+# Если Nexus/Keycloak у заказчика уже есть, контейнеры не поднимаются, а адреса
+# берутся из .env (ARTIFACT_BASE_URL, OIDC_ISSUER).
+
+name: moderation
+
+x-proxy-env: &proxy-env
+  # Весь исходящий трафик наружу идёт через корпоративный прокси.
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  http_proxy: ${HTTP_PROXY:-}
+  https_proxy: ${HTTPS_PROXY:-}
+  # Внутренние адреса обязательно в обход прокси.
+  NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis,minio,nexus,keycloak,api,web,nginx}
+  no_proxy: ${NO_PROXY:-localhost,127.0.0.1,db,redis,minio,nexus,keycloak,api,web,nginx}
+
+x-backend: &backend
+  # build: намеренно не здесь — все три сервиса (api/worker/beat) используют один и тот
+  # же образ moderation-backend:local; если каждый описывает свой build:, compose пытается
+  # собрать его трижды параллельно и падает на "image ... already exists". Собирает
+  # образ только api (ниже), остальные просто ссылаются на уже готовый тег.
+  image: moderation-backend:local
+  env_file: [.env]
+  # Без restart упавший worker больше не поднимется, и заявки молча зависнут в
+  # очереди — ровно тот случай, ради которого раньше приходилось звать
+  # `moderctl run-pending`. Политика нужна и в dev, не только в prod-оверлее.
+  restart: unless-stopped
+  environment:
+    <<: *proxy-env
+  volumes:
+    - ./config:/config:ro
+    - osv-db:/var/lib/osv-db
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  nginx:
+    # Конфиг зашит в образ (см. nginx/Dockerfile), а не монтируется с хоста:
+    # bind-mount с хоста на Docker Desktop + WSL2 ломается с
+    # "error mounting ... no such file or directory". Правка конфига:
+    # docker compose up -d --build nginx
+    build:
+      context: ./nginx
+    image: moderation-nginx:local
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+      - "${NGINX_TLS_PORT:-8443}:443"
+    environment:
+      # true — порт 80 редиректит на HTTPS. Локально false: тогда 80 отдаёт
+      # приложение и http://localhost:8080 работает как раньше.
+      NGINX_FORCE_HTTPS: ${NGINX_FORCE_HTTPS:-false}
+      # CN самоподписанного сертификата, если свой не положили в nginx/certs.
+      TLS_COMMON_NAME: ${TLS_COMMON_NAME:-localhost}
+    volumes:
+      # Named volume, а не bind-mount с хоста — с ними этой проблемы нет.
+      - web-dist:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+      - web
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    image: moderation-web:local
+    # Сборка SPA складывается в общий volume, откуда её отдаёт nginx.
+    volumes:
+      - web-dist:/output
+    command: ["sh", "-c", "rm -rf /output/* && cp -r /app/dist/* /output/ && echo 'SPA собрана'"]
+
+  api:
+    <<: *backend
+    build:
+      context: ./backend
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    command: ["api"]
+
+  worker:
+    <<: *backend
+    command: ["worker"]
+    # Молчащий worker должен быть виден в `docker compose ps` как unhealthy,
+    # а не как обычный Up.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app.celery_app inspect ping -d celery@$$HOSTNAME"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  beat:
+    <<: *backend
+    command: ["beat"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-moderation}
+      POSTGRES_USER: ${POSTGRES_USER:-moderation}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD обязателен}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-moderation} -d ${POSTGRES_DB:-moderation}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    # Тег обязателен: без него тянется latest, а он на разных зеркалах
+    # разъезжается — ловили сборку трёхлетней давности, в которой нет `mc`.
+    image: ${MINIO_IMAGE:-minio/minio:latest}
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?S3_ACCESS_KEY обязателен}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?S3_SECRET_KEY обязателен}
+    volumes:
+      - minio-data:/data
+    # Не `mc ready local`: клиента `mc` в образе minio/minio нет, healthcheck
+    # падал с "executable file not found" и контейнер вечно висел unhealthy.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  keycloak:
+    # Realm зашит в образ (см. keycloak/Dockerfile), а не монтируется с хоста:
+    # bind-mount отдельного файла на Docker Desktop + WSL2 ломается с
+    # "error mounting ... no such file or directory". Правка realm:
+    # docker compose --profile sso up -d --build keycloak
+    build:
+      context: ./keycloak
+      args:
+        # Внешний адрес попадает в realm на сборке: redirectUris и webOrigins
+        # клиента moderation-web. Меняли PUBLIC_BASE_URL — пересоберите образ,
+        # иначе Keycloak отклонит редирект после логина.
+        PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+    image: moderation-keycloak:local
+    profiles: ["sso"]
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD обязателен}
+      KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_PROXY_HEADERS: xforwarded
+    # Каталог /opt/keycloak/data/h2 намеренно НЕ монтируется как named volume: Keycloak
+    # в официальном образе работает от непривилегированного пользователя (uid 1000), а
+    # Docker при первом монтировании пустого named volume создаёт его от имени root — H2
+    # не может писать файл базы и падает с AccessDeniedException ещё до старта HTTP.
+    # Поскольку realm и так перезаливается из образа при каждом старте
+    # (--import-realm), персистентность H2 для dev-профиля не нужна: каталог остаётся
+    # в writable-слое контейнера с правами, уже заданными образом.
+
+  nexus:
+    image: ${NEXUS_IMAGE:-sonatype/nexus3:latest}
+    profiles: ["nexus"]
+    restart: unless-stopped
+    environment:
+      NEXUS_SECURITY_RANDOMPASSWORD: "false"
+      INSTALL4J_ADD_VM_PARAMS: "-Xms1g -Xmx2g -XX:MaxDirectMemorySize=2g"
+    volumes:
+      - nexus-data:/nexus-data
+    # Nexus готов через 1-3 минуты после старта, а контейнер считался Up сразу —
+    # bootstrap успевал прийти раньше и падал на создании репозиториев.
+    # `make bootstrap` дожидается именно этого healthcheck.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/service/rest/v1/status || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+volumes:
+  pgdata:
+  redis-data:
+  minio-data:
+  nexus-data:
+  osv-db:
+  web-dist:

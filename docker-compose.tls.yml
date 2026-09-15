@@ -1,0 +1,21 @@
+# Общий сертификат для nginx и Keycloak.
+#
+# Зачем отдельный файл: без него Keycloak в dev-режиме генерирует собственный
+# самоподписанный сертификат, и браузер требует подтверждения дважды — для
+# адреса сервиса и для адреса Keycloak. С этим оверлеем оба отдают один и тот
+# же сертификат, подтверждение одно.
+#
+# Требует, чтобы сертификат был сгенерирован: `make certs DOMAIN=<имя хоста>`.
+#
+# Использование:
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml \
+#                  -f docker-compose.tls.yml --profile sso --profile nexus up -d
+#
+# Или разово задать в окружении, чтобы не перечислять файлы каждый раз:
+#   export COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:docker-compose.tls.yml
+
+services:
+  keycloak:
+    environment:
+      KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/conf/certs/server.crt
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/conf/certs/server.key

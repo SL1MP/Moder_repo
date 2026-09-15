@@ -1,0 +1,41 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv*/
+venv/
+.env
+.env.local
+node_modules/
+dist/
+build/
+coverage/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.sqlite3
+*.db
+var/
+data/
+osv-db/
+frontend/.vite/
+*.tsbuildinfo
+
+# TLS-сертификаты: генерируются `make certs`, в репозиторий не попадают.
+#
+# Правило /certs/ якорем на корень — намеренно. Без слэша в начале git
+# исключил бы любой каталог с таким именем, включая nginx/certs, а вернуть
+# файл из исключённого каталога нельзя ничем: .gitkeep не попал бы в
+# репозиторий, каталога не оказалось бы в чистом клоне и `COPY certs/` в
+# Dockerfile уронил бы сборку.
+/certs/
+nginx/certs/*
+!nginx/certs/.gitkeep
+keycloak/certs/*
+!keycloak/certs/.gitkeep
+# Страховка на случай ключа, положенного мимо этих каталогов.
+*.key
+*.pem

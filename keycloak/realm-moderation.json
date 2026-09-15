@@ -1,0 +1,126 @@
+{
+  "realm": "moderation",
+  "enabled": true,
+  "displayName": "Модерация пакетов",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginTheme": "keycloak",
+  "accessTokenLifespan": 1800,
+  "roles": {
+    "realm": [
+      { "name": "moderation-admin", "description": "Администратор сервиса модерации" },
+      { "name": "moderation-devsecops", "description": "Решения по уязвимостям и карантину" },
+      { "name": "moderation-legal", "description": "Решения по лицензиям" },
+      { "name": "moderation-developer", "description": "Создание заявок и чтение базы пакетов" }
+    ]
+  },
+  "groups": [
+    { "name": "moderation-admin", "path": "/moderation-admin", "realmRoles": ["moderation-admin"] },
+    {
+      "name": "moderation-devsecops",
+      "path": "/moderation-devsecops",
+      "realmRoles": ["moderation-devsecops"]
+    },
+    { "name": "moderation-legal", "path": "/moderation-legal", "realmRoles": ["moderation-legal"] },
+    {
+      "name": "moderation-developer",
+      "path": "/moderation-developer",
+      "realmRoles": ["moderation-developer"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "moderation-web",
+      "name": "Модерация пакетов — Web UI",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8080/*"
+      },
+      "redirectUris": ["http://localhost:8080/*", "http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:8080", "http://localhost:5173"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "moderation-ci",
+      "name": "Модерация пакетов — сервисный клиент для CI",
+      "enabled": true,
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "secret": "CHANGE_ME_IN_ENV",
+      "protocolMappers": [
+        {
+          "name": "client-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "claim.name": "groups",
+            "multivalued": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "dev.ivanov",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "dev.ivanov@example.com",
+      "firstName": "Иван",
+      "lastName": "Иванов",
+      "credentials": [{ "type": "password", "value": "dev", "temporary": false }],
+      "groups": ["/moderation-developer"]
+    },
+    {
+      "username": "sec.petrov",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "sec.petrov@example.com",
+      "firstName": "Пётр",
+      "lastName": "Петров",
+      "credentials": [{ "type": "password", "value": "sec", "temporary": false }],
+      "groups": ["/moderation-devsecops"]
+    },
+    {
+      "username": "legal.sidorova",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "legal.sidorova@example.com",
+      "firstName": "Анна",
+      "lastName": "Сидорова",
+      "credentials": [{ "type": "password", "value": "legal", "temporary": false }],
+      "groups": ["/moderation-legal"]
+    },
+    {
+      "username": "moderation.admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin@example.com",
+      "firstName": "Администратор",
+      "lastName": "Сервиса",
+      "credentials": [{ "type": "password", "value": "admin", "temporary": false }],
+      "groups": ["/moderation-admin"]
+    }
+  ]
+}

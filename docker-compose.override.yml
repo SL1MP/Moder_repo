@@ -1,0 +1,60 @@
+# dev-окружение: hot reload, порты наружу, подключение к БД и MinIO с хоста.
+# Подхватывается автоматически при `docker compose up`.
+
+services:
+  api:
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      APP_ENV: dev
+      LOG_LEVEL: DEBUG
+      UVICORN_EXTRA_ARGS: "--reload --reload-dir /app/app"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+      - ./config:/config:ro
+      - osv-db:/var/lib/osv-db
+
+  worker:
+    environment:
+      APP_ENV: dev
+      LOG_LEVEL: DEBUG
+      CELERY_CONCURRENCY: 2
+    volumes:
+      - ./backend/app:/app/app
+      - ./config:/config:ro
+      - osv-db:/var/lib/osv-db
+
+  beat:
+    environment:
+      APP_ENV: dev
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ./backend/app:/app/app
+      - ./config:/config:ro
+
+  db:
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  minio:
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+
+  keycloak:
+    ports:
+      - "${KEYCLOAK_PORT:-8081}:8080"
+      # HTTPS. В dev-режиме Keycloak сам генерирует самоподписанный сертификат,
+      # поэтому порт рабочий и без своих ключей. Чтобы Keycloak отдавал тот же
+      # сертификат, что и nginx (браузер тогда спросит подтверждение один раз,
+      # а не два), поднимайте стек с оверлеем docker-compose.tls.yml.
+      - "${KEYCLOAK_TLS_PORT:-9443}:8443"
+
+  nexus:
+    ports:
+      - "${NEXUS_PORT:-8082}:8081"
