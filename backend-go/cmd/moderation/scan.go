@@ -43,12 +43,22 @@ import (
 func runScan(args []string, logger *slog.Logger) int {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	itemID := fs.Int64("item", 0, "идентификатор пакета заявки (request_item.id)")
+	requestID := fs.Int64("request", 0, "номер заявки — просканировать все её пакеты")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *itemID <= 0 {
-		fmt.Fprintln(os.Stderr, "укажите пакет заявки: moderation scan --item <id>")
-		fmt.Fprintln(os.Stderr, "id виден в адресе карточки пакета и в ответе GET /api/v1/requests/{id}")
+	if *itemID <= 0 && *requestID <= 0 {
+		fmt.Fprintln(os.Stderr, "укажите, что сканировать:")
+		fmt.Fprintln(os.Stderr, "  moderation scan --request <номер заявки>   все пакеты заявки")
+		fmt.Fprintln(os.Stderr, "  moderation scan --item <id пакета>         один пакет")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Номер заявки виден в адресе её страницы: /requests/42 -> --request 42.")
+		fmt.Fprintln(os.Stderr, "Идентификаторы пакетов внутри заявки — в ответе GET /api/v1/requests/{id},")
+		fmt.Fprintln(os.Stderr, "поле packages[].id.")
+		return 2
+	}
+	if *itemID > 0 && *requestID > 0 {
+		fmt.Fprintln(os.Stderr, "--item и --request взаимоисключающие")
 		return 2
 	}
 
@@ -78,39 +88,71 @@ func runScan(args []string, logger *slog.Logger) int {
 		return 1
 	}
 
-	pc, err := buildScanContext(ctx, r, store, cfg)
-	if err != nil {
-		logger.Error("подготовка сканирования", "error", err)
-		return 1
+	targets := []int64{*itemID}
+	if *requestID > 0 {
+		items, err := r.ListItemsByRequest(ctx, *requestID)
+		if err != nil {
+			logger.Error("заявка не прочитана", "request", *requestID, "error", err)
+			return 1
+		}
+		if len(items) == 0 {
+			logger.Error("в заявке нет пакетов — проверьте номер", "request", *requestID)
+			return 1
+		}
+		targets = targets[:0]
+		for _, item := range items {
+			targets = append(targets, item.ID)
+		}
+		logger.Info("заявка прочитана", "request", *requestID, "пакетов", len(targets))
 	}
-	if err := loadItem(ctx, r, pc, *itemID); err != nil {
-		logger.Error("пакет заявки не найден", "item", *itemID, "error", err)
+
+	failedAny := false
+	for _, target := range targets {
+		if err := scanOne(ctx, r, store, cfg, target, logger); err != nil {
+			logger.Error("пакет не просканирован", "item", target, "error", err)
+			failedAny = true
+		}
+	}
+	if failedAny {
 		return 1
 	}
 
+	fmt.Printf("\nОтчёты доступны:\n")
+	for _, target := range targets {
+		for _, code := range domain.ScanReportStepCodes {
+			fmt.Printf("  /api/v1/request-items/%d/reports/%s.html\n", target, code)
+		}
+	}
+	return 0
+}
+
+// scanOne прогоняет сканеры по одному пакету заявки.
+func scanOne(ctx context.Context, r *repo.Repo, store storage.Store, cfg *config.Config, itemID int64, logger *slog.Logger) error {
+	pc, err := buildScanContext(ctx, r, store, cfg)
+	if err != nil {
+		return err
+	}
+	if err := loadItem(ctx, r, pc, itemID); err != nil {
+		return fmt.Errorf("пакет заявки #%d не найден: %w", itemID, err)
+	}
+
 	logger.Info("сканирую пакет",
-		"item", *itemID, "package", pc.Package.DisplayName, "version", pc.Version.RawVersion)
+		"item", itemID, "package", pc.Package.DisplayName, "version", pc.Version.RawVersion)
 
 	// Артефакт мог быть вычищен из карантинной зоны после публикации —
 	// скачиваем заново тем же шагом конвейера.
 	if err := ensureArtifact(ctx, r, pc, logger); err != nil {
-		logger.Error("артефакт не получен", "error", err)
-		return 1
+		return fmt.Errorf("артефакт не получен: %w", err)
 	}
 
-	failed := false
 	for _, step := range []pipeline.Step{pipeline.BannerScanStep, pipeline.SastScanStep} {
 		outcome, err := step.Run(ctx, pc)
 		if err != nil {
-			logger.Error("шаг завершился ошибкой", "step", step.Code(), "error", err)
-			failed = true
-			continue
+			return fmt.Errorf("шаг %s: %w", step.Code(), err)
 		}
 		report, err := r.GetScanReport(ctx, pc.Item.ID, step.Code())
 		if err != nil {
-			logger.Error("отчёт не прочитан", "step", step.Code(), "error", err)
-			failed = true
-			continue
+			return fmt.Errorf("отчёт по шагу %s не прочитан: %w", step.Code(), err)
 		}
 		if report == nil {
 			// Шаг выключен настройкой — прогона не было, отчёта нет.
@@ -118,20 +160,10 @@ func runScan(args []string, logger *slog.Logger) int {
 			continue
 		}
 		logger.Info("отчёт готов",
-			"step", step.Code(), "состояние", report.State,
-			"находок", report.FindingsTotal, "блокирующих", report.FindingsBlocking,
-			"json", report.JSONKey, "html", report.HTMLKey)
+			"item", itemID, "step", step.Code(), "состояние", report.State,
+			"находок", report.FindingsTotal, "блокирующих", report.FindingsBlocking)
 	}
-
-	if failed {
-		return 1
-	}
-	fmt.Printf("\nОтчёты доступны:\n")
-	for _, code := range domain.ScanReportStepCodes {
-		fmt.Printf("  /api/v1/request-items/%d/reports/%s.html\n", *itemID, code)
-	}
-	fmt.Printf("  /api/v1/request-items/%d/reports   (список)\n", *itemID)
-	return 0
+	return nil
 }
 
 // buildScanContext собирает конвейерный контекст со всеми зависимостями,

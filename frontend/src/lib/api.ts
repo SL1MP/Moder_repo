@@ -129,6 +129,38 @@ export interface CodeFinding {
   matched: string | null
 }
 
+/**
+ * Отчёт о прогоне сканера содержимого. Отдаётся Go-версией backend'а
+ * (`/api/v1/request-items/{id}/reports`), python-версия отчётов не формирует.
+ *
+ * `state` — три значения, и путать их нельзя:
+ *   clean       — сканер отработал, срабатываний выше порога нет;
+ *   findings    — есть срабатывания, нужно решение DevSecOps;
+ *   unavailable — проверка НЕ выполнена. Это не «чисто».
+ */
+export interface ScanReport {
+  step_code: string
+  step_title: string
+  scanner: string
+  rules?: string
+  state: 'clean' | 'findings' | 'unavailable'
+  state_title: string
+  threshold: string
+  findings_total: number
+  findings_blocking: number
+  worst_severity?: string
+  detail?: string
+  duration_ms?: number
+  created_at: string
+  json_url: string
+  html_url: string
+}
+
+export interface ScanReportList {
+  request_item_id: number
+  reports: ScanReport[]
+}
+
 export interface RequestItem {
   id: number
   package_version_id: number
@@ -392,6 +424,17 @@ export const api = {
   queueSecurity: () => request<QueueItem[]>('/queue/security'),
   queueLegal: () => request<QueueItem[]>('/queue/legal'),
   queueCounters: () => request<Record<string, number>>('/queue/counters'),
+
+  /**
+   * Отчёты о сканировании по пакету заявки.
+   *
+   * Отдаёт их Go-версия; если она не поднята, nginx вернёт 502, а если
+   * сканирование не запускалось — пустой список. Ни то ни другое не должно
+   * ронять карточку заявки, поэтому вызывающий код обрабатывает ошибку
+   * отдельно и мягко.
+   */
+  scanReports: (itemId: number) =>
+    request<ScanReportList>(`/request-items/${itemId}/reports`),
 
   releaseQuarantine: (itemId: number, comment: string) =>
     request<RequestItem>(`/items/${itemId}/quarantine/release`, {

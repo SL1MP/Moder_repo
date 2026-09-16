@@ -217,11 +217,93 @@ function PackageBlock({
             </>
           ) : null}
 
+          <ScanReports itemId={item.id} />
+
           <Actions item={item} isSec={isSec} isLegal={isLegal} onChanged={onChanged} />
           <Discussion requestId={requestId} itemId={item.id} title="Обсуждение пакета" />
         </>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * Отчёты о прогонах сканеров содержимого.
+ *
+ * Отчёты формирует Go-версия backend'а; python-версия их не делает. Поэтому
+ * блок устроен мягко: пустой список и недоступность сервиса — нормальные
+ * состояния, а не ошибка карточки. Иначе у всех, кто Go-версию не поднимал,
+ * в каждой карточке висела бы красная ошибка.
+ */
+function ScanReports({ itemId }: { itemId: number }) {
+  const reports = useAsync(() => api.scanReports(itemId), [itemId])
+
+  // Сервис не поднят или маршрут не проброшен — молча ничего не показываем.
+  if (reports.error) return null
+  if (reports.loading) return null
+  const items = reports.data?.reports ?? []
+  if (!items.length) return null
+
+  return (
+    <>
+      <h3 style={{ marginTop: 12 }}>Отчёты о сканировании</h3>
+      <table className="grid">
+        <thead>
+          <tr>
+            <th>Проверка</th>
+            <th>Результат</th>
+            <th>Находки</th>
+            <th>Чем и по каким правилам</th>
+            <th>Отчёт</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((r) => (
+            <tr key={r.step_code}>
+              <td>{r.step_title}</td>
+              <td className="nowrap">
+                <Badge value={r.state_title} title={r.detail ?? undefined} />
+              </td>
+              <td className="nowrap">
+                {r.state === 'unavailable' ? (
+                  // Пустой список находок здесь НЕ означает «чисто»: прогон не
+                  // состоялся. Показать «0» было бы прямой дезинформацией.
+                  <span className="muted">не проверялось</span>
+                ) : r.findings_total === 0 ? (
+                  <span className="muted">нет</span>
+                ) : (
+                  <>
+                    {r.findings_total}
+                    {r.findings_blocking > 0 ? (
+                      <span className="small"> · блокирует: {r.findings_blocking}</span>
+                    ) : (
+                      <span className="small muted"> · ниже порога «{r.threshold}»</span>
+                    )}
+                  </>
+                )}
+              </td>
+              <td className="small">
+                {r.scanner}
+                {r.rules ? <span className="muted"> · {r.rules}</span> : null}
+              </td>
+              <td className="nowrap">
+                <a href={r.html_url} target="_blank" rel="noreferrer">
+                  смотреть
+                </a>
+                <span className="muted"> · </span>
+                <a href={r.json_url} target="_blank" rel="noreferrer">
+                  JSON
+                </a>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="small muted" style={{ marginTop: 4 }}>
+        Отчёт — снимок прогона: по нему видно, чем и по каким правилам
+        проверяли, даже если находок нет.
+      </p>
+    </>
   )
 }
 
