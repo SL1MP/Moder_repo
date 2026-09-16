@@ -46,6 +46,13 @@ type Config struct {
 	SASTTimeout       time.Duration
 	SASTMinSeverity   string
 
+	// Пороги конвейера. Значения по умолчанию — те же, что у python-версии
+	// (backend/app/core/config.py): обе версии выносят вердикт по одному
+	// пакету, и разные пороги означали бы разный вердикт при одном .env.
+	QuarantineDays      int
+	VulnMaxScore        float64
+	OSVMaxStalenessDays int
+
 	// Реестры пакетных менеджеров.
 	RegistryPyPIURL  string
 	RegistryNpmURL   string
@@ -76,19 +83,23 @@ func Load(getenv func(string) string) (*Config, error) {
 		BannerScanEnabled: boolOr(getenv("BANNER_SCAN_ENABLED"), true),
 		BannerRulesFile:   valueOr(getenv("BANNER_RULES_FILE"), "/config/rules.yar"),
 		BannerScanBin:     valueOr(getenv("BANNER_SCANNER_BIN"), "yara"),
-		BannerScanTimeout: secondsOr(getenv("BANNER_SCAN_TIMEOUT_SECONDS"), 300),
+		BannerScanTimeout: secondsOr(getenv("BANNER_SCAN_TOTAL_TIMEOUT_SECONDS"), 300),
 		SASTEnabled:       boolOr(getenv("SAST_ENABLED"), true),
 		SASTScannerBin:    valueOr(getenv("SAST_SCANNER_BIN"), "semgrep"),
 		SASTRules:         valueOr(getenv("SAST_RULES"), "p/default"),
 		SASTTimeout:       secondsOr(getenv("SAST_TIMEOUT_SECONDS"), 300),
-		SASTMinSeverity:   valueOr(getenv("SAST_MIN_SEVERITY"), "medium"),
+		SASTMinSeverity:   valueOr(getenv("SAST_MIN_SEVERITY"), "high"),
+
+		QuarantineDays:      intOr(getenv("QUARANTINE_DAYS"), 14),
+		VulnMaxScore:        floatOr(getenv("VULN_MAX_SCORE"), 80),
+		OSVMaxStalenessDays: intOr(getenv("OSV_MAX_STALENESS_DAYS"), 3),
 
 		RegistryPyPIURL:  valueOr(getenv("REGISTRY_PYPI_URL"), "https://pypi.org"),
 		RegistryNpmURL:   valueOr(getenv("REGISTRY_NPM_URL"), "https://registry.npmjs.org"),
 		RegistryGoProxy:  valueOr(getenv("REGISTRY_GO_PROXY"), "https://proxy.golang.org"),
 		RegistryNuGetURL: valueOr(getenv("REGISTRY_NUGET_URL"), "https://api.nuget.org"),
 
-		MaxArtifactSizeBytes: bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 512<<20),
+		MaxArtifactSizeBytes: bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 500*1024*1024),
 		ScanMaxUnpackedBytes: bytesOr(getenv("SCAN_MAX_UNPACKED_BYTES"), 512<<20),
 		ScanMaxFiles:         intOr(getenv("SCAN_MAX_FILES"), 20000),
 	}
@@ -161,4 +172,12 @@ func bytesOr(v string, fallback int64) int64 {
 
 func secondsOr(v string, fallback int) time.Duration {
 	return time.Duration(intOr(v, fallback)) * time.Second
+}
+
+func floatOr(v string, fallback float64) float64 {
+	n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || n < 0 {
+		return fallback
+	}
+	return n
 }

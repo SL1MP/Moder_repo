@@ -51,7 +51,7 @@ func (VulnScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 
 	maxDays := pc.Config.OSVMaxStalenessDays
 	if maxDays <= 0 {
-		maxDays = 7
+		maxDays = 3 // как в python-версии (OSV_MAX_STALENESS_DAYS)
 	}
 	stale, err := osv.IsStale(ctx, pc.Deps.Index, maxDays, pc.now())
 	if err != nil {

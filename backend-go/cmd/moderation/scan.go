@@ -146,6 +146,9 @@ func buildScanContext(_ context.Context, r *repo.Repo, store storage.Store, cfg 
 
 	return &pipeline.Context{
 		Config: pipeline.Config{
+			QuarantineDays:       cfg.QuarantineDays,
+			VulnMaxScore:         cfg.VulnMaxScore,
+			OSVMaxStalenessDays:  cfg.OSVMaxStalenessDays,
 			MaxArtifactSizeBytes: cfg.MaxArtifactSizeBytes,
 			BannerScanEnabled:    cfg.BannerScanEnabled,
 			SASTEnabled:          cfg.SASTEnabled,
