@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -175,8 +176,15 @@ func pathInt64(w http.ResponseWriter, r *http.Request, name string) (int64, bool
 	raw := chi.URLParam(r, name)
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value <= 0 {
+		// Декодируем для сообщения: chi отдаёт сегмент пути как есть, и
+		// кириллица в нём выглядит как %d0%b0%d0%b1%d0%b2 — сообщение об
+		// ошибке становится нечитаемым ровно там, где должно помогать.
+		shown := raw
+		if decoded, err := url.PathUnescape(raw); err == nil {
+			shown = decoded
+		}
 		writeError(w, http.StatusBadRequest,
-			fmt.Sprintf("Некорректный идентификатор в пути: %q", raw), nil)
+			fmt.Sprintf("Некорректный идентификатор в пути: %q", shown), nil)
 		return 0, false
 	}
 	return value, true
