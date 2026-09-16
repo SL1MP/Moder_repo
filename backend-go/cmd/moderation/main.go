@@ -16,10 +16,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"moderation/internal/api"
 	"moderation/internal/auth"
 	"moderation/internal/config"
 	"moderation/internal/db"
+	"moderation/internal/policy"
+	"moderation/internal/registry"
 	"moderation/internal/repo"
 	"moderation/internal/storage"
 )
@@ -61,47 +65,8 @@ func main() {
 	}
 	defer pool.Close()
 
-	options := api.Options{}
-
-	// Проверка токенов. Собирается всегда: маршрут /auth/config нужен SPA даже
-	// тогда, когда войти некуда — по нему интерфейс и объясняет, что вход не
-	// настроен. За JWKS сервис идёт лениво, при первом токене, поэтому
-	// недоступный на старте Keycloak сервис не роняет.
-	options.Auth = &api.AuthHandler{
-		Auth: &api.Auth{
-			Verifier: auth.NewVerifier(auth.SettingsFromConfig(cfg), nil, nil),
-			Repo:     repo.New(pool),
-		},
-		Cfg: cfg,
-	}
-	if cfg.OIDCIssuer == "" && !cfg.LocalAuthEnabled {
-		logger.Warn("вход не настроен: не задан OIDC_ISSUER и выключен LOCAL_AUTH_ENABLED — " +
-			"закрытые маршруты будут отвечать 401 всем")
-	}
-	if cfg.AppEnv == "prod" && cfg.LocalAuthEnabled {
-		// Не отказ в запуске, а громкое предупреждение: fallback-вход по
-		// паролю в prod — осознанное решение администратора, но молчать о нём
-		// нельзя.
-		logger.Warn("в prod включён вход по логину и паролю (LOCAL_AUTH_ENABLED=true)")
-	}
-
-	// Хранилище отчётов необязательно: без него сервис поднимается и отвечает
-	// health, просто маршруты отчётов не подключаются. Падать на старте из-за
-	// отчётов нельзя — иначе недоступный MinIO роняет весь сервис.
-	if cfg.S3Endpoint != "" {
-		store, err := storage.NewS3(storage.S3Config{
-			Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
-			AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Region: cfg.S3Region,
-		})
-		if err != nil {
-			logger.Error("хранилище отчётов не настроено, выдача отчётов отключена", "error", err)
-		} else {
-			options.Reports = &api.ReportsHandler{Repo: repo.New(pool), Storage: store}
-			logger.Info("хранилище отчётов подключено", "endpoint", cfg.S3Endpoint, "bucket", cfg.S3Bucket)
-		}
-	} else {
-		logger.Warn("S3_ENDPOINT не задан — выдача отчётов о сканировании отключена")
-	}
+	options, blacklist := buildOptions(cfg, pool, logger)
+	_ = blacklist // политики попадают в конвейер вместе с переносом шагов 0-3
 
 	// Наблюдатель сканирования. Требует хранилища: отчёты некуда класть без
 	// него, и запускать прогон впустую незачем.
@@ -163,4 +128,84 @@ func usage() {
 Конфигурация — через переменные окружения, см. backend-go/README.md.
 Обязательна DATABASE_URL; для отчётов нужны также S3_*.
 `)
+}
+
+// buildOptions собирает зависимости HTTP-маршрутов.
+//
+// Вынесено из main отдельной функцией именно чтобы её можно было проверить
+// тестом: маршруты уже один раз уехали в релиз объявленными, но не
+// подключёнными здесь — роутер их знал, а бинарник не отдавал, и снаружи это
+// выглядело как 404 на работающем сервисе.
+func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (api.Options, *policy.Blacklist) {
+	var options api.Options
+	r := repo.New(pool)
+	reg := registry.New(registry.Config{
+		PyPIURL: cfg.RegistryPyPIURL, NpmURL: cfg.RegistryNpmURL,
+		GoProxy: cfg.RegistryGoProxy, NuGetURL: cfg.RegistryNuGetURL,
+	})
+
+	// Проверка токенов. Собирается всегда: маршрут /auth/config нужен SPA даже
+	// тогда, когда войти некуда — по нему интерфейс и объясняет, что вход не
+	// настроен. За JWKS сервис идёт лениво, при первом токене, поэтому
+	// недоступный на старте Keycloak сервис не роняет.
+	options.Auth = &api.AuthHandler{
+		Auth: &api.Auth{
+			Verifier: auth.NewVerifier(auth.SettingsFromConfig(cfg), nil, nil),
+			Repo:     repo.New(pool),
+		},
+		Cfg: cfg,
+	}
+	if cfg.OIDCIssuer == "" && !cfg.LocalAuthEnabled {
+		logger.Warn("вход не настроен: не задан OIDC_ISSUER и выключен LOCAL_AUTH_ENABLED — " +
+			"закрытые маршруты будут отвечать 401 всем")
+	}
+	if cfg.AppEnv == "prod" && cfg.LocalAuthEnabled {
+		// Не отказ в запуске, а громкое предупреждение: fallback-вход по
+		// паролю в prod — осознанное решение администратора, но молчать о нём
+		// нельзя.
+		logger.Warn("в prod включён вход по логину и паролю (LOCAL_AUTH_ENABLED=true)")
+	}
+
+	// Политики из файлов. Сервис поднимается и с непрочитанным файлом, но
+	// молча это не проходит: шаги blacklist и license в таком случае отдают
+	// решение человеку, а не пропускают пакет (см. internal/pipeline/steps.go).
+	licenses := policy.LoadLicensePolicy(cfg.AllowedLicensesFile)
+	if licenses.Failed() {
+		logger.Error("справочник лицензий не загружен — каждый пакет уйдёт юристам",
+			"path", licenses.Path, "error", licenses.Err)
+	} else {
+		logger.Info("справочник лицензий загружен", "path", licenses.Path,
+			"разрешено", len(licenses.Allowed), "запрещено", len(licenses.Forbidden))
+	}
+	blacklist := policy.LoadBlacklist(cfg.BlacklistFile)
+	if blacklist.Failed() {
+		logger.Error("правила blacklist не загружены — запрет проверить нельзя, пакеты уйдут DevSecOps",
+			"path", blacklist.Path, "error", blacklist.Err)
+	} else {
+		logger.Info("правила blacklist загружены", "path", blacklist.Path, "правил", len(blacklist.Rules))
+	}
+	options.Licenses = &api.LicensesHandler{Policy: licenses}
+
+	// Хранилище отчётов необязательно: без него сервис поднимается и отвечает
+	// health, просто маршруты отчётов не подключаются. Падать на старте из-за
+	// отчётов нельзя — иначе недоступный MinIO роняет весь сервис.
+	if cfg.S3Endpoint != "" {
+		store, err := storage.NewS3(storage.S3Config{
+			Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
+			AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Region: cfg.S3Region,
+		})
+		if err != nil {
+			logger.Error("хранилище отчётов не настроено, выдача отчётов отключена", "error", err)
+		} else {
+			options.Reports = &api.ReportsHandler{Repo: repo.New(pool), Storage: store}
+			logger.Info("хранилище отчётов подключено", "endpoint", cfg.S3Endpoint, "bucket", cfg.S3Bucket)
+		}
+	} else {
+		logger.Warn("S3_ENDPOINT не задан — выдача отчётов о сканировании отключена")
+	}
+
+	options.Packages = &api.PackagesHandler{Repo: r, Registry: reg, Cfg: cfg}
+	options.Requests = &api.RequestsHandler{Repo: r, Registry: reg, Cfg: cfg}
+
+	return options, blacklist
 }

@@ -16,6 +16,7 @@ import (
 	"moderation/internal/db"
 	"moderation/internal/domain"
 	"moderation/internal/pipeline"
+	"moderation/internal/policy"
 	"moderation/internal/registry"
 	"moderation/internal/repo"
 	"moderation/internal/scanners"
@@ -213,6 +214,11 @@ func buildScanContext(_ context.Context, r *repo.Repo, store storage.Store, cfg 
 			ScanMaxUnpackedBytes: cfg.ScanMaxUnpackedBytes,
 			ScanMaxFiles:         cfg.ScanMaxFiles,
 		},
+		// Политики нужны шагам 1 и 3. Команда их не запускает, но контекст
+		// собирается один и тот же — неполный контекст здесь означал бы, что
+		// при следующем расширении команды шаги молча получат nil.
+		BL:  policy.LoadBlacklist(cfg.BlacklistFile),
+		Lic: policy.LoadLicensePolicy(cfg.AllowedLicensesFile),
 		Deps: pipeline.Deps{
 			Repo: r, Storage: store, Registry: reg,
 			Banner: scanners.YaraScanner{

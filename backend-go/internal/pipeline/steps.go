@@ -77,6 +77,17 @@ func (BlacklistStep) Run(_ context.Context, pc *Context) (StepOutcome, error) {
 	if pc.BL == nil {
 		return Pass(""), nil
 	}
+	// Не прочитанный файл правил — не «запрещать нечего». Мы не знаем, что
+	// запрещено, и молча пропустить пакет здесь значит пустить в контур ровно
+	// то, ради чего этот шаг и существует. Отдаём решение DevSecOps — тот же
+	// принцип, что с неотработавшим сканером.
+	if pc.BL.Failed() {
+		return Warn("Правила blacklist не загружены — проверить запрет автоматически нельзя.").
+			WithStatus("awaiting_security", "awaiting_security").
+			WithNextAction("DevSecOps: почините файл правил (BLACKLIST_FILE) и перезапустите проверку, "+
+				"либо подтвердите пакет вручную.").
+			WithNotify(EventAwaitsSecurity, "devsecops"), nil
+	}
 	rule := pc.BL.Find(pc.Package.Manager, pc.Package.Name, pc.Version.Version)
 	if rule == nil {
 		return Pass(""), nil
@@ -165,7 +176,17 @@ func (LicenseStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	}
 
 	message := "Лицензия не определена — ждём подтверждения юриста."
-	if spdx != "" {
+	switch {
+	// Не загрузившийся справочник запрещает всё, и юрист обязан видеть
+	// настоящую причину: иначе «лицензия не разрешена» про MIT выглядит как
+	// ошибка сервиса, и её идут искать не там.
+	case pc.Lic != nil && pc.Lic.Failed():
+		message = "Справочник лицензий не загружен — проверить лицензию автоматически нельзя."
+		if spdx != "" {
+			message = fmt.Sprintf(
+				"Справочник лицензий не загружен — лицензию %q проверить автоматически нельзя.", spdx)
+		}
+	case spdx != "":
 		message = fmt.Sprintf("Лицензия %q не разрешена справочником — ждём подтверждения юриста.", spdx)
 	}
 	return Pending(message).

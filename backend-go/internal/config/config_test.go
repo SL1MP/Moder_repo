@@ -34,6 +34,8 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"osv_max_staleness_days", cfg.OSVMaxStalenessDays, 3},
 		{"banner_scan_enabled", cfg.BannerScanEnabled, true},
 		{"banner_rules_file", cfg.BannerRulesFile, "/config/rules.yar"},
+		{"blacklist_file", cfg.BlacklistFile, "/config/blacklist.yml"},
+		{"allowed_licenses_file", cfg.AllowedLicensesFile, "/config/licenses.yml"},
 		{"sast_enabled", cfg.SASTEnabled, true},
 		{"sast_rules", cfg.SASTRules, "p/default"},
 		{"sast_min_severity", cfg.SASTMinSeverity, "high"},

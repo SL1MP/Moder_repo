@@ -10,6 +10,7 @@ import (
 
 	"moderation/internal/osv"
 	"moderation/internal/pipeline"
+	"moderation/internal/policy"
 	"moderation/internal/reports"
 	"moderation/internal/scanners"
 	"moderation/internal/storage"
@@ -60,7 +61,7 @@ func TestBlacklistStopsBeforeDownload(t *testing.T) {
 	pkg, ver, item := setup(t, r, "left-pad", "1.3.0")
 	pc := e.context(pkg, ver, item)
 	// Правило по glob: имя пакета namespace'ится именем теста (см. setup).
-	pc.BL = &pipeline.InMemoryBlacklist{Rules: []pipeline.BlacklistRule{
+	pc.BL = &policy.Blacklist{Rules: []policy.Rule{
 		{Name: "left-pad*", Versions: "*", Reason: "исторически проблемный пакет"},
 	}}
 
@@ -131,7 +132,7 @@ func TestLicenseDoesNotStopPipeline(t *testing.T) {
 	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
 	pc := e.context(pkg, ver, item)
 	// Справочник не разрешает ничего — лицензия уходит юристу.
-	pc.Lic = &pipeline.InMemoryLicensePolicy{Allowed: map[string]bool{}}
+	pc.Lic = licensePolicy()
 
 	res, err := pipeline.Run(ctx, pc, "")
 	if err != nil {
@@ -721,7 +722,7 @@ func TestPublishBlockedByOpenLicense(t *testing.T) {
 	e := newEnv(t, r)
 	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
 	pc := e.context(pkg, ver, item)
-	pc.Lic = &pipeline.InMemoryLicensePolicy{Allowed: map[string]bool{}}
+	pc.Lic = licensePolicy()
 
 	if _, err := pipeline.Run(ctx, pc, ""); err != nil {
 		t.Fatalf("Run: %v", err)

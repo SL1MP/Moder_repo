@@ -21,6 +21,7 @@ import (
 	"moderation/internal/domain"
 	"moderation/internal/osv"
 	"moderation/internal/pipeline"
+	"moderation/internal/policy"
 	"moderation/internal/registry"
 	"moderation/internal/repo"
 	"moderation/internal/scanners"
@@ -292,9 +293,21 @@ func (e *env) deps() pipeline.Deps {
 	}
 }
 
-// allowedLicenses — справочник, разрешающий MIT.
+// allowedLicenses — справочник, разрешающий MIT. Настоящий тип политики, а не
+// заглушка: тесты конвейера должны ходить через ту же проверку, что и бой.
 func allowedLicenses() pipeline.LicensePolicy {
-	return &pipeline.InMemoryLicensePolicy{Allowed: map[string]bool{"mit": true}}
+	return licensePolicy("MIT")
+}
+
+func licensePolicy(allowed ...string) *policy.LicensePolicy {
+	p := &policy.LicensePolicy{
+		Allowed:   map[string]policy.LicenseEntry{},
+		Forbidden: map[string]policy.LicenseEntry{},
+	}
+	for _, spdx := range allowed {
+		p.Allowed[strings.ToLower(spdx)] = policy.LicenseEntry{SPDXID: spdx, Allowed: true}
+	}
+	return p
 }
 
 func (e *env) context(pkg *domain.Package, ver *domain.PackageVersion, item *domain.RequestItem) *pipeline.Context {
