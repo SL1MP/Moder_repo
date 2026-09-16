@@ -24,12 +24,19 @@ const pingTimeout = 3 * time.Second
 // health, а не падать на старте.
 type Options struct {
 	Reports *ReportsHandler
+	// Auth — проверка токенов. Без неё закрытые маршруты НЕ подключаются
+	// вовсе: отдать их открытыми было бы хуже, чем не отдать совсем.
+	Auth *AuthHandler
 }
 
 // NewRouter собирает роутер. pool может быть nil в тестах, которые не трогают БД.
 func NewRouter(pool *pgxpool.Pool, opts ...Options) http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
+	// Свой request_id, а не middleware.RequestID из chi: формат должен
+	// совпадать с python-версией (hex uuid4), потому что nginx раздаёт часть
+	// путей одной версии, часть — другой, и след запроса ищется по одному
+	// идентификатору в обоих логах.
+	r.Use(withRequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 
@@ -56,8 +63,18 @@ func NewRouter(pool *pgxpool.Pool, opts ...Options) http.Handler {
 	r.Handle("/metrics", promhttp.Handler())
 
 	for _, opt := range opts {
+		if opt.Auth != nil {
+			MountAuth(r, opt.Auth)
+		}
 		if opt.Reports != nil {
-			MountReports(r, opt.Reports)
+			if opt.Auth == nil {
+				// Молча отдать отчёты без проверки токена нельзя: в них
+				// лежат пути внутри пакета и куски исходников.
+				defaultLogger.Print(
+					"маршруты отчётов НЕ подключены: не настроена проверка токенов (OIDC_ISSUER)")
+				continue
+			}
+			MountReports(r, opt.Reports, opt.Auth.Auth)
 		}
 	}
 
@@ -74,8 +91,13 @@ var defaultLogger = log.New(os.Stderr, "[api] ", log.LstdFlags)
 // Пути под /api/v1/request-items/{itemID}/..., а не под /requests/{id}/...:
 // отчёт относится к конкретному пакету заявки, а не к заявке целиком, и в
 // заявке таких пакетов десятки.
-func MountReports(r chi.Router, h *ReportsHandler) {
+// Доступ — как к самой заявке: достаточно аутентификации, отдельной роли не
+// требуется (в python-версии чтение заявки закрыто get_current_user без
+// require_roles). Открытыми эти маршруты быть не могут: в отчёте видны пути
+// внутри пакета и фрагменты исходного кода.
+func MountReports(r chi.Router, h *ReportsHandler, a *Auth) {
 	r.Route("/api/v1/request-items/{itemID}/reports", func(sub chi.Router) {
+		sub.Use(a.Authenticate)
 		sub.Get("/", h.List)
 		sub.Get("/{file}", h.Download)
 	})

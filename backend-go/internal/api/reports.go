@@ -1,8 +1,6 @@
 package api
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -92,7 +90,7 @@ func (h *ReportsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.Repo.ListScanReports(r.Context(), itemID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Не удалось получить список отчётов", err)
+		writeError(w, r, errInternal("Не удалось получить список отчётов").Because(err))
 		return
 	}
 	views := make([]reportView, 0, len(rows))
@@ -114,22 +112,21 @@ func (h *ReportsHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	stepCode, format, ok := splitReportFile(chi.URLParam(r, "file"))
 	if !ok {
-		writeError(w, http.StatusNotFound,
-			"Отчёт запрашивается как banner_scan.json, banner_scan.html, sast_scan.json или sast_scan.html", nil)
+		writeError(w, r, errNotFound(
+			"Отчёт запрашивается как banner_scan.json, banner_scan.html, sast_scan.json или sast_scan.html"))
 		return
 	}
 
 	report, err := h.Repo.GetScanReport(r.Context(), itemID, stepCode)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Не удалось получить отчёт", err)
+		writeError(w, r, errInternal("Не удалось получить отчёт").Because(err))
 		return
 	}
 	if report == nil {
 		// Отличать «прогона не было» от «файл потерялся» важно: первое —
 		// нормальное состояние (шаг выключен или ещё не дошли), второе —
 		// авария хранилища.
-		writeError(w, http.StatusNotFound,
-			"Отчёт по этому шагу отсутствует: прогон сканера не выполнялся", nil)
+		writeError(w, r, errNotFound("Отчёт по этому шагу отсутствует: прогон сканера не выполнялся"))
 		return
 	}
 
@@ -140,11 +137,11 @@ func (h *ReportsHandler) Download(w http.ResponseWriter, r *http.Request) {
 	body, err := h.Storage.Get(r.Context(), key)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			writeError(w, http.StatusNotFound,
-				"Файл отчёта не найден в хранилище — возможно, он был вычищен", err)
+			writeError(w, r, errNotFound(
+				"Файл отчёта не найден в хранилище — возможно, он был вычищен").Because(err))
 			return
 		}
-		writeError(w, http.StatusBadGateway, "Хранилище отчётов недоступно", err)
+		writeError(w, r, errUpstream("Хранилище отчётов недоступно").Because(err))
 		return
 	}
 
@@ -183,38 +180,8 @@ func pathInt64(w http.ResponseWriter, r *http.Request, name string) (int64, bool
 		if decoded, err := url.PathUnescape(raw); err == nil {
 			shown = decoded
 		}
-		writeError(w, http.StatusBadRequest,
-			fmt.Sprintf("Некорректный идентификатор в пути: %q", shown), nil)
+		writeError(w, r, errBadRequest(fmt.Sprintf("Некорректный идентификатор в пути: %q", shown)))
 		return 0, false
 	}
 	return value, true
 }
-
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	enc := json.NewEncoder(w)
-	// Кириллица и угловые скобки не экранируются — та же причина, что в
-	// отчётах и логах: экранированный ответ нечитаем и не грепается.
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(payload)
-}
-
-// writeError отдаёт ошибку в едином виде. Текст err наружу НЕ уходит: он
-// может содержать адреса и ключи внутренних систем; наружу — понятное
-// сообщение, внутрь — лог.
-func writeError(w http.ResponseWriter, status int, message string, err error) {
-	if err != nil {
-		logError(message, err)
-	}
-	writeJSON(w, status, map[string]any{"error": message})
-}
-
-// logError — точка, в которую встанет структурный логгер (фаза переноса
-// логирования). Пока пишет в стандартный лог, чтобы причина отказа не
-// терялась молча.
-var logError = func(message string, err error) {
-	defaultLogger.Printf("%s: %v", message, err)
-}
-
-var _ = context.Background

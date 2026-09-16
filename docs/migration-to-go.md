@@ -115,7 +115,18 @@ byte-for-byte или JSON-diff вывода. Тот же подход подхо
    плагина — multiarch-манифесты, сверка digest, `skopeo copy --all`), затем general → maven →
    terraform → luarocks → conan (от простого к сложному, полное обоснование порядка —
    `docs/ci-parity-gaps.md`). Каждый — отдельный, завершённый плагин с тестами, не заготовка.
-4. Auth: OIDC/Keycloak + RBAC + fallback-логин.
+4. ✅ **Auth: OIDC/Keycloak + RBAC + fallback-логин** — сделано: `internal/auth`
+   (проверка подписи RS256/RS512/ES256 по JWKS издателя с кэшем, приём обоих issuer'ов,
+   маппинг групп каталога в роли, локальные HS256-токены и bcrypt), middleware и проверка
+   ролей в `internal/api`, маршруты `/api/v1/auth/{config,me,token}`. Формат ответов и
+   формат ошибок совпадают с python-версией дословно — фронтенд не меняется. nginx отдаёт
+   `/api/v1/auth/` go-версии; остальные маршруты пока ведёт python-версия, и токен,
+   полученный у одной, принимается другой (общий realm Keycloak, общий `LOCAL_AUTH_SECRET`).
+   Маршруты отчётов, до этого открытые, закрыты проверкой токена.
+   Два намеренных расхождения с python-версией, оба в сторону строгости:
+   токен без `exp` не принимается (в python-версии `jose` такой токен пропускает), и
+   JWKS перечитывается при неизвестном `kid` не чаще раза в минуту — иначе ротация ключа
+   в Keycloak означает до 15 минут отказов, пока не истечёт кэш.
 5. Адаптеры: `ArtifactStore` — **приоритет `generic` (JFrog Artifactory), не `nexus`**:
    production реально работает только с Artifactory (см. `docs/ci-parity-gaps.md`, "Артефактори
    — production это JFrog Artifactory, не Nexus"); `NexusArtifactStore` переносить не первым и,

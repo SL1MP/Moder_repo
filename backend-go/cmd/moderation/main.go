@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"moderation/internal/api"
+	"moderation/internal/auth"
 	"moderation/internal/config"
 	"moderation/internal/db"
 	"moderation/internal/repo"
@@ -60,10 +61,33 @@ func main() {
 	}
 	defer pool.Close()
 
+	options := api.Options{}
+
+	// Проверка токенов. Собирается всегда: маршрут /auth/config нужен SPA даже
+	// тогда, когда войти некуда — по нему интерфейс и объясняет, что вход не
+	// настроен. За JWKS сервис идёт лениво, при первом токене, поэтому
+	// недоступный на старте Keycloak сервис не роняет.
+	options.Auth = &api.AuthHandler{
+		Auth: &api.Auth{
+			Verifier: auth.NewVerifier(auth.SettingsFromConfig(cfg), nil, nil),
+			Repo:     repo.New(pool),
+		},
+		Cfg: cfg,
+	}
+	if cfg.OIDCIssuer == "" && !cfg.LocalAuthEnabled {
+		logger.Warn("вход не настроен: не задан OIDC_ISSUER и выключен LOCAL_AUTH_ENABLED — " +
+			"закрытые маршруты будут отвечать 401 всем")
+	}
+	if cfg.AppEnv == "prod" && cfg.LocalAuthEnabled {
+		// Не отказ в запуске, а громкое предупреждение: fallback-вход по
+		// паролю в prod — осознанное решение администратора, но молчать о нём
+		// нельзя.
+		logger.Warn("в prod включён вход по логину и паролю (LOCAL_AUTH_ENABLED=true)")
+	}
+
 	// Хранилище отчётов необязательно: без него сервис поднимается и отвечает
 	// health, просто маршруты отчётов не подключаются. Падать на старте из-за
 	// отчётов нельзя — иначе недоступный MinIO роняет весь сервис.
-	options := api.Options{}
 	if cfg.S3Endpoint != "" {
 		store, err := storage.NewS3(storage.S3Config{
 			Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,

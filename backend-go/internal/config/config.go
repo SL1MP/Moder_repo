@@ -21,6 +21,7 @@ import (
 // в этой ревизии есть только то, что нужно для каркаса (HTTP + подключение к БД).
 type Config struct {
 	AppEnv      string // dev | prod — влияет на строгость проверок, как в Python-версии
+	AppName     string // заголовок в UI, отдаётся SPA в /auth/config
 	ListenAddr  string
 	DatabaseURL string
 
@@ -66,6 +67,32 @@ type Config struct {
 	ScanWatcherInterval time.Duration
 	ScanWatcherBatch    int
 
+	// Доступ. OIDCIssuer — адрес, по которому К НЕМУ ходит сервис (внутренний,
+	// http://keycloak:8080/...), OIDCPublicIssuer — адрес, по которому к нему
+	// ходит браузер. Keycloak кладёт в claim `iss` тот адрес, по которому к
+	// нему обратились, поэтому `iss` токена от SPA не совпадёт с внутренним —
+	// принимаем оба, подпись при этом одна и та же.
+	OIDCIssuer       string
+	OIDCPublicIssuer string
+	OIDCClientID     string
+
+	// Группы каталога, дающие роль сервиса. Права проверяются в API, а не
+	// только в UI.
+	RoleMappingAdmin     string
+	RoleMappingDevSecOps string
+	RoleMappingLegal     string
+	RoleMappingDeveloper string
+
+	// Fallback-вход логин/пароль — только сервисные учётки, в prod выключен.
+	LocalAuthEnabled  bool
+	LocalAuthSecret   string
+	LocalAuthTokenTTL time.Duration
+
+	// GitLab здесь только для флага gitlab_enabled в /auth/config: сами
+	// маршруты GitLab пока ведёт python-версия.
+	GitlabURL           string
+	GitlabOAuthClientID string
+
 	// Лимиты.
 	MaxArtifactSizeBytes int64
 	ScanMaxUnpackedBytes int64
@@ -79,6 +106,7 @@ func Load(getenv func(string) string) (*Config, error) {
 
 	cfg := &Config{
 		AppEnv:      valueOr(getenv("APP_ENV"), "dev"),
+		AppName:     valueOr(getenv("APP_NAME"), "Модерация пакетов"),
 		ListenAddr:  valueOr(getenv("LISTEN_ADDR"), ":8000"),
 		DatabaseURL: getenv("DATABASE_URL"),
 		S3Endpoint:  getenv("S3_ENDPOINT"),
@@ -109,6 +137,22 @@ func Load(getenv func(string) string) (*Config, error) {
 		ScanWatcherEnabled:  boolOr(getenv("SCAN_WATCHER_ENABLED"), true),
 		ScanWatcherInterval: secondsOr(getenv("SCAN_WATCHER_INTERVAL_SECONDS"), 60),
 		ScanWatcherBatch:    intOr(getenv("SCAN_WATCHER_BATCH"), 10),
+
+		OIDCIssuer:       strings.TrimRight(strings.TrimSpace(getenv("OIDC_ISSUER")), "/"),
+		OIDCPublicIssuer: strings.TrimRight(strings.TrimSpace(getenv("OIDC_PUBLIC_ISSUER")), "/"),
+		OIDCClientID:     valueOr(getenv("OIDC_CLIENT_ID"), "moderation-web"),
+
+		RoleMappingAdmin:     valueOr(getenv("ROLE_MAPPING_ADMIN"), "moderation-admin"),
+		RoleMappingDevSecOps: valueOr(getenv("ROLE_MAPPING_DEVSECOPS"), "moderation-devsecops"),
+		RoleMappingLegal:     valueOr(getenv("ROLE_MAPPING_LEGAL"), "moderation-legal"),
+		RoleMappingDeveloper: valueOr(getenv("ROLE_MAPPING_DEVELOPER"), "moderation-developer"),
+
+		LocalAuthEnabled:  boolOr(getenv("LOCAL_AUTH_ENABLED"), false),
+		LocalAuthSecret:   valueOr(getenv("LOCAL_AUTH_SECRET"), "change-me-in-prod"),
+		LocalAuthTokenTTL: time.Duration(intOr(getenv("LOCAL_AUTH_TOKEN_TTL_MINUTES"), 480)) * time.Minute,
+
+		GitlabURL:           getenv("GITLAB_URL"),
+		GitlabOAuthClientID: getenv("GITLAB_OAUTH_CLIENT_ID"),
 
 		MaxArtifactSizeBytes: bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 500*1024*1024),
 		ScanMaxUnpackedBytes: bytesOr(getenv("SCAN_MAX_UNPACKED_BYTES"), 512<<20),
@@ -191,4 +235,46 @@ func floatOr(v string, fallback float64) float64 {
 		return fallback
 	}
 	return n
+}
+
+// --------------------------------------------------------------------------- доступ
+
+// BrowserIssuer — адрес издателя для браузера. Порт config.browser_issuer.
+func (c *Config) BrowserIssuer() string {
+	if c.OIDCPublicIssuer != "" {
+		return c.OIDCPublicIssuer
+	}
+	return c.OIDCIssuer
+}
+
+// AcceptedIssuers — issuer'ы, которым доверяем при проверке токена.
+//
+// Порт config.accepted_issuers. Их два, потому что Keycloak подставляет в
+// claim `iss` тот адрес, по которому к нему обратились: браузер ходит по
+// внешнему, сервис берёт JWKS по внутреннему. Подпись одна и та же.
+func (c *Config) AcceptedIssuers() []string {
+	var out []string
+	for _, iss := range []string{c.OIDCIssuer, c.OIDCPublicIssuer} {
+		if iss == "" || domain.Contains(out, iss) {
+			continue
+		}
+		out = append(out, iss)
+	}
+	return out
+}
+
+// RoleForGroup — роль сервиса по группе каталога. Пустая строка — группа не
+// наша. Порт config.role_for_group.
+func (c *Config) RoleForGroup(group string) string {
+	switch group {
+	case c.RoleMappingAdmin:
+		return "admin"
+	case c.RoleMappingDevSecOps:
+		return "devsecops"
+	case c.RoleMappingLegal:
+		return "legal"
+	case c.RoleMappingDeveloper:
+		return "developer"
+	}
+	return ""
 }

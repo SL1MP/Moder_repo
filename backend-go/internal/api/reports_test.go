@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"moderation/internal/api"
+	"moderation/internal/auth"
+	"moderation/internal/config"
 	"moderation/internal/db"
 	"moderation/internal/domain"
 	"moderation/internal/repo"
@@ -105,13 +107,51 @@ func testSlug(t *testing.T) string {
 
 func newServer(t *testing.T, r *repo.Repo, store storage.Store) http.Handler {
 	t.Helper()
-	return api.NewRouter(nil, api.Options{Reports: &api.ReportsHandler{Repo: r, Storage: store}})
+	return api.NewRouter(nil, api.Options{
+		Reports: &api.ReportsHandler{Repo: r, Storage: store},
+		// Маршруты отчётов закрыты проверкой токена, поэтому роутер
+		// собирается вместе с ней. Проверка того, что без токена они
+		// отвечают 401, — в auth_test.go.
+		Auth: &api.AuthHandler{
+			Auth: &api.Auth{Verifier: reportsVerifier(), Repo: r},
+			Cfg:  reportsAuthCfg,
+		},
+	})
+}
+
+// reportsAuthCfg — доступ для тестов отчётов: включён локальный вход, поэтому
+// токен выпускается без Keycloak. Роль не нужна: отчёт доступен любому
+// аутентифицированному пользователю, как и сама заявка.
+var reportsAuthCfg = mustReportsAuthConfig()
+
+func mustReportsAuthConfig() *config.Config {
+	env := map[string]string{
+		"DATABASE_URL":       "postgres://не-используется/в-этих-тестах",
+		"LOCAL_AUTH_ENABLED": "true",
+		"LOCAL_AUTH_SECRET":  "секрет-тестов-отчётов",
+	}
+	cfg, err := config.Load(func(key string) string { return env[key] })
+	if err != nil {
+		panic("конфигурация тестов отчётов невалидна: " + err.Error())
+	}
+	return cfg
+}
+
+func reportsVerifier() *auth.Verifier {
+	return auth.NewVerifier(auth.SettingsFromConfig(reportsAuthCfg), nil, nil)
 }
 
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	token, _, err := reportsVerifier().IssueLocalToken(
+		&domain.User{Username: "тест-читатель-отчётов", IsActive: true})
+	if err != nil {
+		t.Fatalf("выпуск тестового токена: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	h.ServeHTTP(rec, req)
 	return rec
 }
 
