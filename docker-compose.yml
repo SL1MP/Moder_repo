@@ -85,6 +85,44 @@ services:
         NO_PROXY: ${NO_PROXY:-}
     command: ["api"]
 
+  # Go-версия backend'а. Пока отдаёт только свои эндпоинты (health, метрики,
+  # отчёты о сканировании) и существует ПАРАЛЛЕЛЬНО с python-сервисом api, не
+  # заменяя его: REST API заявок ещё не перенесён (см. docs/migration-to-go.md).
+  #
+  # Порт наружу НЕ публикуется: доступ только через nginx, который отдаёт
+  # Go-сервису ровно префикс /api/v1/request-items/ (см. nginx/snippets/app.conf).
+  # У сервиса нет собственной аутентификации, и выставлять его на хост нельзя.
+  #
+  # ВАЖНО: миграции 0005-0007 этот сервис НЕ применяет — в базе уже работает
+  # Alembic python-версии, и второй автоматический мигратор поверх неё создал
+  # бы трудноотлаживаемую гонку. Накатываются вручную один раз, см.
+  # backend-go/README.md, раздел "Как запустить сервис".
+  api-go:
+    build:
+      context: ./backend-go
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    image: moderation-backend-go:local
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      <<: *proxy-env
+      LISTEN_ADDR: ":8000"
+      # DATABASE_URL в .env пустой (python-версия собирает DSN из POSTGRES_*),
+      # а Go-конфигу нужен готовый. Значения из environment перекрывают env_file.
+      DATABASE_URL: postgres://${POSTGRES_USER:-moderation}:${POSTGRES_PASSWORD:-moderation}@db:5432/${POSTGRES_DB:-moderation}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   worker:
     <<: *backend
     command: ["worker"]

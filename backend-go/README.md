@@ -30,7 +30,38 @@ Go-версия backend'а сервиса модерации пакетов — 
 (NATS + Valkey вместо Celery), уведомления, watchdog. Шесть недостающих пакетных менеджеров —
 обязательный скоуп, Docker первым (`../docs/ci-parity-gaps.md`).
 
-### Как запустить сервис
+### Запуск в общем стеке (рекомендуемый способ)
+
+Сервис заведён в `docker-compose.yml` как `api-go` и доступен по тому же
+адресу, что и приложение: nginx отдаёт ему префикс `/api/v1/request-items/`,
+остальной `/api/` по-прежнему уходит на python-сервис. Конфликта нет —
+маршрута `/api/v1/request-items` в python-версии не существует, поэтому
+ссылки `json_url` и `html_url` из отчётов работают как есть.
+
+```bash
+# один раз: миграции 0005-0007 на уже существующую базу Alembic
+docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0005_scan_reports.up.sql
+docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0006_artifact_uniqueness.up.sql
+docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0007_dry_run_status.up.sql
+
+# собрать и поднять
+docker compose up -d --build api-go
+docker compose up -d --build nginx
+```
+
+Проверка:
+
+```bash
+curl https://<ваш-хост>/api/v1/request-items/1/reports
+# {"reports":[],"request_item_id":1}
+```
+
+Порт наружу у `api-go` намеренно не публикуется: у сервиса нет собственной
+аутентификации, и доступ к нему идёт только через nginx. Миграции сервис не
+применяет сам — в базе уже работает Alembic python-версии, и второй
+автоматический мигратор поверх неё создал бы трудноотлаживаемую гонку.
+
+### Как запустить сервис отдельно (для разработки)
 
 Ниже — полный порядок для машины, где УЖЕ работает Python-стек (обычный случай:
 база создана Alembic'ом, порты 8000/5432/9000 заняты). Останавливать Python не
