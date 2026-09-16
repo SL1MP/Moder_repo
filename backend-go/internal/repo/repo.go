@@ -192,6 +192,9 @@ func (r *Repo) CreateModerationRequest(ctx context.Context, req domain.Moderatio
 	return scanModerationRequest(row)
 }
 
+// GetModerationRequest — заявка по номеру. nil, если такой нет: «заявки не
+// существует» — штатный ответ API (404), а не сбой чтения, и отличать одно от
+// другого обязан вызывающий, а не текст ошибки.
 func (r *Repo) GetModerationRequest(ctx context.Context, id int64) (*domain.ModerationRequest, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, author_id, author_role, manager, reason, status, source,
@@ -199,7 +202,11 @@ func (r *Repo) GetModerationRequest(ctx context.Context, id int64) (*domain.Mode
 		       created_at, updated_at
 		FROM moderation_request WHERE id = $1
 	`, id)
-	return scanModerationRequest(row)
+	req, err := scanModerationRequest(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return req, err
 }
 
 // GetModerationRequestByIdempotencyKey — реализует контракт "повтор с тем же

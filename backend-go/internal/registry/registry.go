@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -96,6 +98,10 @@ type Plugin interface {
 	ArtifactPath(ref Ref, filename string) string
 	// OSVEcosystem — имя экосистемы в базе OSV.
 	OSVEcosystem() string
+	// DependencyFiles — имена файлов зависимостей менеджера, шаблонами в
+	// синтаксисе glob. По ним интерфейс подсказывает менеджер по
+	// перетащенному файлу.
+	DependencyFiles() []string
 }
 
 // MakeRef собирает Ref, прогоняя имя и версию через валидацию плагина.
@@ -138,6 +144,10 @@ func ParseEntry(p Plugin, entry string) (Ref, error) {
 // Registry — набор доступных менеджеров.
 type Registry struct {
 	plugins map[string]Plugin
+	// order — порядок плагинов как их объявили. Отдельно от карты: порядок
+	// виден пользователю в выпадающем списке менеджеров, а обход map в Go
+	// намеренно случаен — список прыгал бы от запроса к запросу.
+	order []Plugin
 }
 
 // Config — адреса реестров. Пустое значение заменяется публичным адресом по
@@ -172,11 +182,41 @@ func New(cfg Config) *Registry {
 		&Go{BaseURL: strings.TrimRight(cfg.GoProxy, "/"), HTTP: cfg.HTTP},
 		&NuGet{BaseURL: strings.TrimRight(cfg.NuGetURL, "/"), HTTP: cfg.HTTP},
 	}
-	r := &Registry{plugins: make(map[string]Plugin, len(plugins))}
+	r := &Registry{plugins: make(map[string]Plugin, len(plugins)), order: plugins}
 	for _, p := range plugins {
 		r.plugins[p.Code()] = p
 	}
 	return r
+}
+
+// Plugins — все плагины в порядке объявления (тот же, что у python-версии:
+// pypi, npm, go, nuget).
+func (r *Registry) Plugins() []Plugin {
+	out := make([]Plugin, len(r.order))
+	copy(out, r.order)
+	return out
+}
+
+// DetectByFile — менеджер по имени файла зависимостей. Пустая строка, если
+// файл ничей. Порт registry.detect_manager_by_file.
+//
+// Сравнивается только базовое имя: пользователь перетаскивает файл, и путь к
+// нему на его машине к делу не относится.
+func (r *Registry) DetectByFile(filename string) string {
+	base := path.Base(filepath.ToSlash(strings.TrimSpace(filename)))
+	if base == "." || base == "/" || base == "" {
+		return ""
+	}
+	for _, p := range r.order {
+		for _, pattern := range p.DependencyFiles() {
+			// Ошибка шаблона означает опечатку в самом плагине, а не в
+			// пользовательском вводе; такой шаблон просто не совпадает ни с чем.
+			if ok, err := path.Match(pattern, base); err == nil && ok {
+				return p.Code()
+			}
+		}
+	}
+	return ""
 }
 
 // Get возвращает плагин менеджера.
@@ -188,11 +228,11 @@ func (r *Registry) Get(manager string) (Plugin, error) {
 	return p, nil
 }
 
-// Codes — коды поддерживаемых менеджеров.
+// Codes — коды поддерживаемых менеджеров, в порядке объявления.
 func (r *Registry) Codes() []string {
-	out := make([]string, 0, len(r.plugins))
-	for code := range r.plugins {
-		out = append(out, code)
+	out := make([]string, 0, len(r.order))
+	for _, p := range r.order {
+		out = append(out, p.Code())
 	}
 	return out
 }
@@ -206,5 +246,12 @@ func NewWithPlugin(base *Registry, plugin Plugin) *Registry {
 		plugins[code] = p
 	}
 	plugins[plugin.Code()] = plugin
-	return &Registry{plugins: plugins}
+	order := make([]Plugin, len(base.order))
+	copy(order, base.order)
+	for i, p := range order {
+		if p.Code() == plugin.Code() {
+			order[i] = plugin
+		}
+	}
+	return &Registry{plugins: plugins, order: order}
 }

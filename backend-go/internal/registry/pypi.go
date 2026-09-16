@@ -188,3 +188,8 @@ func (p *PyPI) InstallCommand(ref Ref, baseURL, repo string) string {
 func (p *PyPI) ArtifactPath(ref Ref, filename string) string {
 	return fmt.Sprintf("%s/%s/%s", ref.Name, ref.RawVersion, filename)
 }
+
+// DependencyFiles — те же шаблоны, что в python-версии (managers/pypi.py).
+func (*PyPI) DependencyFiles() []string {
+	return []string{"requirements*.txt", "poetry.lock", "pyproject.toml"}
+}

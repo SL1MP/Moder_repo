@@ -176,3 +176,8 @@ func (p *Npm) InstallCommand(ref Ref, baseURL, repo string) string {
 func (p *Npm) ArtifactPath(ref Ref, filename string) string {
 	return fmt.Sprintf("%s/-/%s", ref.Name, filename)
 }
+
+// DependencyFiles — те же шаблоны, что в python-версии (managers/npm.py).
+func (*Npm) DependencyFiles() []string {
+	return []string{"package-lock.json", "yarn.lock", "package.json"}
+}

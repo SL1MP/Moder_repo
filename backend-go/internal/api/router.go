@@ -23,7 +23,9 @@ const pingTimeout = 3 * time.Second
 // не подключаются: сервис должен подниматься и без хранилища отчётов, отдавая
 // health, а не падать на старте.
 type Options struct {
-	Reports *ReportsHandler
+	Reports  *ReportsHandler
+	Packages *PackagesHandler
+	Requests *RequestsHandler
 	// Auth — проверка токенов. Без неё закрытые маршруты НЕ подключаются
 	// вовсе: отдать их открытыми было бы хуже, чем не отдать совсем.
 	Auth *AuthHandler
@@ -65,6 +67,12 @@ func NewRouter(pool *pgxpool.Pool, opts ...Options) http.Handler {
 	for _, opt := range opts {
 		if opt.Auth != nil {
 			MountAuth(r, opt.Auth)
+		}
+		if opt.Packages != nil && opt.Auth != nil {
+			MountPackages(r, opt.Packages, opt.Auth.Auth)
+		}
+		if opt.Requests != nil && opt.Auth != nil {
+			MountRequests(r, opt.Requests, opt.Auth.Auth)
 		}
 		if opt.Reports != nil {
 			if opt.Auth == nil {

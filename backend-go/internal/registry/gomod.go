@@ -135,3 +135,8 @@ func (p *Go) InstallCommand(ref Ref, baseURL, repo string) string {
 func (p *Go) ArtifactPath(ref Ref, filename string) string {
 	return fmt.Sprintf("%s/@v/%s", EscapeModule(ref.DisplayName), filename)
 }
+
+// DependencyFiles — те же шаблоны, что в python-версии (managers/golang.py).
+func (*Go) DependencyFiles() []string {
+	return []string{"go.mod", "go.sum"}
+}

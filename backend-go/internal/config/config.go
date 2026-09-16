@@ -54,6 +54,15 @@ type Config struct {
 	VulnMaxScore        float64
 	OSVMaxStalenessDays int
 
+	// Артефактори: адрес и целевые репозитории. Нужны, чтобы отдавать команду
+	// установки одобренного пакета — её показывает карточка пакета и карточка
+	// заявки.
+	ArtifactBaseURL   string
+	ArtifactRepoPyPI  string
+	ArtifactRepoNpm   string
+	ArtifactRepoGo    string
+	ArtifactRepoNuGet string
+
 	// Реестры пакетных менеджеров.
 	RegistryPyPIURL  string
 	RegistryNpmURL   string
@@ -132,6 +141,12 @@ func Load(getenv func(string) string) (*Config, error) {
 		QuarantineDays:      intOr(getenv("QUARANTINE_DAYS"), 14),
 		VulnMaxScore:        floatOr(getenv("VULN_MAX_SCORE"), 80),
 		OSVMaxStalenessDays: intOr(getenv("OSV_MAX_STALENESS_DAYS"), 3),
+
+		ArtifactBaseURL:   valueOr(getenv("ARTIFACT_BASE_URL"), "http://nexus:8081"),
+		ArtifactRepoPyPI:  valueOr(getenv("ARTIFACT_REPO_PYPI"), "pypi-internal"),
+		ArtifactRepoNpm:   valueOr(getenv("ARTIFACT_REPO_NPM"), "npm-internal"),
+		ArtifactRepoGo:    valueOr(getenv("ARTIFACT_REPO_GO"), "go-internal"),
+		ArtifactRepoNuGet: valueOr(getenv("ARTIFACT_REPO_NUGET"), "nuget-internal"),
 
 		RegistryPyPIURL:  valueOr(getenv("REGISTRY_PYPI_URL"), "https://pypi.org"),
 		RegistryNpmURL:   valueOr(getenv("REGISTRY_NPM_URL"), "https://registry.npmjs.org"),
@@ -266,6 +281,22 @@ func (c *Config) AcceptedIssuers() []string {
 		out = append(out, iss)
 	}
 	return out
+}
+
+// ArtifactRepo — целевой репозиторий артефактори для менеджера. Пустая
+// строка — менеджер неизвестен.
+func (c *Config) ArtifactRepo(manager string) string {
+	switch manager {
+	case "pypi":
+		return c.ArtifactRepoPyPI
+	case "npm":
+		return c.ArtifactRepoNpm
+	case "go":
+		return c.ArtifactRepoGo
+	case "nuget":
+		return c.ArtifactRepoNuGet
+	}
+	return ""
 }
 
 // RoleForGroup — роль сервиса по группе каталога. Пустая строка — группа не

@@ -153,3 +153,8 @@ func (p *NuGet) InstallCommand(ref Ref, baseURL, repo string) string {
 func (p *NuGet) ArtifactPath(ref Ref, filename string) string {
 	return fmt.Sprintf("%s/%s/%s", ref.Name, ref.Version, filename)
 }
+
+// DependencyFiles — те же шаблоны, что в python-версии (managers/nuget.py).
+func (*NuGet) DependencyFiles() []string {
+	return []string{"packages.lock.json", "packages.config", "*.csproj"}
+}

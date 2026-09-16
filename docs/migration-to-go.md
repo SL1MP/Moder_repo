@@ -127,7 +127,21 @@ byte-for-byte или JSON-diff вывода. Тот же подход подхо
    токен без `exp` не принимается (в python-версии `jose` такой токен пропускает), и
    JWKS перечитывается при неизвестном `kid` не чаще раза в минуту — иначе ротация ключа
    в Keycloak означает до 15 минут отказов, пока не истечёт кэш.
-5. Адаптеры: `ArtifactStore` — **приоритет `generic` (JFrog Artifactory), не `nexus`**:
+5. 🔶 **REST API: маршруты чтения** — перенесены `GET /managers`, `GET /managers/detect`,
+   `GET /packages` (поиск), `GET /packages/{id}`, `GET /requests`, `GET /requests/{id}`.
+   Ответы совпадают с python-версией дословно, фронтенд не менялся. nginx отдаёт go-версии
+   только те пути, которые она действительно умеет, поимённо: под теми же префиксами у
+   python-версии живут `POST /packages/check`, `POST /packages/{id}/revoke`,
+   `POST /requests/{id}/retry` и ветка комментариев — префиксное правило увело бы их в
+   go-версию, где их нет. `GET /requests` (список) пока за python-версией: по тому же адресу
+   идёт POST создания заявки, а разводить методы в nginx без трюков нельзя — список переедет
+   вместе с созданием.
+   **Ещё не перенесено:** создание заявок и разбор файлов зависимостей, решения ролей
+   (`/items/{id}/...`), очереди `/queue/*`, комментарии, уведомления, админка, GitLab,
+   `POST /packages/check`, `GET /licenses` (последнему нужен загрузчик `config/licenses.yml`
+   и `config/blacklist.yml` — в go-версии политики пока только инъекцией в память, файлы она
+   не читает).
+6. Адаптеры: `ArtifactStore` — **приоритет `generic` (JFrog Artifactory), не `nexus`**:
    production реально работает только с Artifactory (см. `docs/ci-parity-gaps.md`, "Артефактори
    — production это JFrog Artifactory, не Nexus"); `NexusArtifactStore` переносить не первым и,
    возможно, не переносить вовсе, если у заказчика Nexus нигде не используется — уточнить перед
@@ -135,12 +149,12 @@ byte-for-byte или JSON-diff вывода. Тот же подход подхо
    Artifactory vs скачивание+`PUT`) до переноса, не после. SeaweedFS вместо MinIO — для временной
    карантинной зоны, не связано с выбором `ArtifactStore`. `VulnerabilityIndex` (OSV-снапшот),
    `Notifier` (in-app) — без изменений от исходного плана.
-6. Воркер: NATS JetStream + Valkey вместо Celery/Redis; heartbeat + watchdog + атомарный захват.
-7. REST API контракт — сверка с текущим `docs/api.md` и живым фронтендом (frontend не
+7. Воркер: NATS JetStream + Valkey вместо Celery/Redis; heartbeat + watchdog + атомарный захват.
+8. REST API контракт — сверка с текущим `docs/api.md` и живым фронтендом (frontend не
    переписывается, только конфигурация вызовов, если понадобится).
-8. Отключение Python-стека, `docker-compose.yml` этого репозитория переезжает на Go-образы;
+9. Отключение Python-стека, `docker-compose.yml` этого репозитория переезжает на Go-образы;
    `backend/` (Python) архивируется, не удаляется молча — см. открытый вопрос ниже.
-9. **Конфигурация — admin API + БД вместо `.env`+рестарт** (прямой запрос пользователя, см.
+10. **Конфигурация — admin API + БД вместо `.env`+рестарт** (прямой запрос пользователя, см.
    `docs/configuration-model.md`): новые таблицы под Artifactory/Sandbox/реестры/политики
    блокировки/лимиты, admin API на запись (не только чтение, как сейчас), формы в UI. Делать
    сразу в Go-версии, не дважды (см. `configuration-model.md`, открытый вопрос №5) — естественно
