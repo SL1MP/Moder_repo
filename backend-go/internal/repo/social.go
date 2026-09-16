@@ -376,3 +376,28 @@ func nilIfNoMentions(mentions []string) any {
 	}
 	return mentions
 }
+
+// UserIDsByRoles — активные пользователи, у которых есть хотя бы одна из
+// ролей. Роли лежат JSON-массивом, поэтому сверка идёт оператором
+// пересечения jsonb, а не выборкой всех пользователей в память, как это
+// делает python-версия (notify_roles перебирает всю таблицу).
+func (r *Repo) UserIDsByRoles(ctx context.Context, roles []string) ([]int64, error) {
+	if len(roles) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id FROM "user" WHERE is_active AND roles ?| $1`, roles)
+	if err != nil {
+		return nil, fmt.Errorf("поиск получателей по ролям: %w", err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

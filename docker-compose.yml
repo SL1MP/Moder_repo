@@ -129,6 +129,41 @@ services:
       retries: 3
       start_period: 10s
 
+  # Воркер конвейера на Go. Очередь — строки request_item в статусе `queued`,
+  # отдельного брокера нет (см. backend-go/internal/queue). Может работать
+  # одновременно с python-воркером: захват пакета у них общий, и пакет
+  # достанется ровно одному.
+  # По умолчанию НЕ поднимается: профиль go-worker. Причина — пока живы оба
+  # воркера, пакет достаётся тому, кто первым его захватил, и поведение
+  # отличается в мелочах (go-версия пишет отчёты сканирования, python-версия
+  # нет). Недетерминизм «какой движок обработал этот пакет» дороже, чем
+  # явное переключение: сначала остановить python-воркер, потом поднять этот.
+  #   docker compose stop worker beat
+  #   docker compose --profile go-worker up -d worker-go
+  worker-go:
+    profiles: ["go-worker"]
+    build:
+      context: ./backend-go
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    image: moderation-backend-go:local
+    restart: unless-stopped
+    command: ["worker"]
+    env_file: [.env]
+    environment:
+      <<: *proxy-env
+      DATABASE_URL: postgres://${POSTGRES_USER:-moderation}:${POSTGRES_PASSWORD:-moderation}@db:5432/${POSTGRES_DB:-moderation}
+    volumes:
+      - ./config:/config:ro
+      - osv-db:/var/lib/osv-db
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
   worker:
     <<: *backend
     command: ["worker"]

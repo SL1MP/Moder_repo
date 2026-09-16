@@ -54,6 +54,9 @@ func Run(ctx context.Context, pc *Context, fromCode string) (Result, error) {
 		startIdx = idx
 	}
 
+	if err := pc.Deps.Validate(); err != nil {
+		return Result{}, err
+	}
 	if err := loadSecurityOverride(ctx, pc); err != nil {
 		return Result{}, err
 	}

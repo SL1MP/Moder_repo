@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"moderation/internal/artifactstore"
@@ -192,3 +193,36 @@ func (c *Context) SetPayload(data []byte) { c.payload = data }
 // DropPayload освобождает кеш: после публикации или отклонения держать
 // артефакт в памяти незачем, а он бывает в сотни мегабайт.
 func (c *Context) DropPayload() { c.payload = nil }
+
+// Validate проверяет, что контекст собран целиком.
+//
+// Существует из-за живого прогона: воркер упал с nil pointer dereference на
+// шаге проверки уязвимостей, потому что сборщик контекста не заполнял Index —
+// команде `scan` он был не нужен, она до этого шага не доходит. Незаполненная
+// зависимость обязана давать понятную ошибку с именем поля, а не panic:
+// panic в воркере убивает процесс целиком, вместе с соседними прогонами.
+func (d Deps) Validate() error {
+	var missing []string
+	if d.Repo == nil {
+		missing = append(missing, "Repo (доступ к базе)")
+	}
+	if d.Storage == nil {
+		missing = append(missing, "Storage (карантинное хранилище артефактов)")
+	}
+	if d.Registry == nil {
+		missing = append(missing, "Registry (плагины пакетных менеджеров)")
+	}
+	if d.Index == nil {
+		missing = append(missing, "Index (снапшот базы уязвимостей OSV)")
+	}
+	if d.Artifacts == nil {
+		missing = append(missing, "Artifacts (артефактори для публикации)")
+	}
+	if d.Fetch == nil {
+		missing = append(missing, "Fetch (скачивание артефакта)")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("конвейер собран не полностью, не заданы: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}

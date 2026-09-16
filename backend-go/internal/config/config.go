@@ -112,6 +112,20 @@ type Config struct {
 	GitlabURL           string
 	GitlabOAuthClientID string
 
+	// Артефактори — учётные данные для публикации и режим «без записи».
+	ArtifactAuthType string
+	ArtifactUser     string
+	ArtifactToken    string
+	ArtifactDryRun   bool
+
+	// Каталог с распакованным снапшотом базы OSV.
+	OSVLocalDBPath string
+
+	// Конвейер и очередь. PipelineStuckAfter — через сколько молчания пакет
+	// считается зависшим; брошенным прогон признаётся втрое позже (столько же,
+	// сколько у python-версии: STALE_RUNNING_FACTOR = 3).
+	PipelineStuckAfter time.Duration
+
 	// Окно, в течение которого правка сообщения не помечается как «изменено».
 	CommentEditWindow time.Duration
 
@@ -185,6 +199,15 @@ func Load(getenv func(string) string) (*Config, error) {
 
 		GitlabURL:           getenv("GITLAB_URL"),
 		GitlabOAuthClientID: getenv("GITLAB_OAUTH_CLIENT_ID"),
+
+		ArtifactAuthType: valueOr(getenv("ARTIFACT_AUTH_TYPE"), "basic"),
+		ArtifactUser:     getenv("ARTIFACT_USER"),
+		ArtifactToken:    getenv("ARTIFACT_TOKEN"),
+		ArtifactDryRun:   boolOr(getenv("ARTIFACT_DRY_RUN"), false),
+
+		OSVLocalDBPath: valueOr(getenv("OSV_LOCAL_DB_PATH"), "/var/lib/osv-db"),
+
+		PipelineStuckAfter: secondsOr(getenv("PIPELINE_STUCK_AFTER_SECONDS"), 120),
 
 		CommentEditWindow: time.Duration(intOr(getenv("COMMENT_EDIT_WINDOW_MINUTES"), 15)) * time.Minute,
 

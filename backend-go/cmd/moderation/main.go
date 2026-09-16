@@ -37,6 +37,8 @@ func main() {
 		switch os.Args[1] {
 		case "scan":
 			os.Exit(runScan(os.Args[2:], logger))
+		case "worker":
+			os.Exit(runWorker(os.Args[2:], logger))
 		case "serve":
 			os.Args = append(os.Args[:1], os.Args[2:]...)
 		case "-h", "--help", "help":
@@ -123,6 +125,8 @@ func usage() {
   moderation scan --item N    прогнать сканеры содержимого по пакету заявки N
   moderation scan --pending   что фоновый наблюдатель возьмёт в работу
   moderation scan --why N     почему по пакету N нет отчёта
+  moderation worker           обработка очереди конвейера
+  moderation worker --once    разобрать очередь и выйти
                               и записать отчёты
 
 Конфигурация — через переменные окружения, см. backend-go/README.md.

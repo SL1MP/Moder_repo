@@ -403,3 +403,7 @@ func scanPipelineStep(row scanner) (*domain.PipelineStep, error) {
 	}
 	return &s, nil
 }
+
+// Pool — пул подключений. Нужен там, где запрос не относится к предметной
+// области репозитория: тестам, очереди, диагностике.
+func (r *Repo) Pool() *pgxpool.Pool { return r.pool }

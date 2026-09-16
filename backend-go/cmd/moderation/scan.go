@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"moderation/internal/artifactstore"
 	"moderation/internal/config"
 	"moderation/internal/db"
 	"moderation/internal/domain"
+	"moderation/internal/osv"
 	"moderation/internal/pipeline"
 	"moderation/internal/policy"
 	"moderation/internal/registry"
@@ -196,6 +198,14 @@ func scanOne(ctx context.Context, r *repo.Repo, store storage.Store, cfg *config
 // кроме самого пакета: его подставляет loadItem.
 func buildScanContext(_ context.Context, r *repo.Repo, store storage.Store, cfg *config.Config) (*pipeline.Context, error) {
 	httpClient := &http.Client{Timeout: 60 * time.Second}
+	artifacts, err := artifactstore.New(artifactstore.Config{
+		BaseURL: cfg.ArtifactBaseURL, AuthType: artifactstore.AuthType(cfg.ArtifactAuthType),
+		Token: cfg.ArtifactToken, Username: cfg.ArtifactUser, Password: cfg.ArtifactToken,
+		DryRun: cfg.ArtifactDryRun, HTTPClient: httpClient,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("артефактори: %w", err)
+	}
 	reg := registry.New(registry.Config{
 		PyPIURL: cfg.RegistryPyPIURL, NpmURL: cfg.RegistryNpmURL,
 		GoProxy: cfg.RegistryGoProxy, NuGetURL: cfg.RegistryNuGetURL,
@@ -204,6 +214,11 @@ func buildScanContext(_ context.Context, r *repo.Repo, store storage.Store, cfg 
 
 	return &pipeline.Context{
 		Config: pipeline.Config{
+			ArtifactBaseURL: cfg.ArtifactBaseURL,
+			ArtifactRepos: map[string]string{
+				"pypi": cfg.ArtifactRepoPyPI, "npm": cfg.ArtifactRepoNpm,
+				"go": cfg.ArtifactRepoGo, "nuget": cfg.ArtifactRepoNuGet,
+			},
 			QuarantineDays:       cfg.QuarantineDays,
 			VulnMaxScore:         cfg.VulnMaxScore,
 			OSVMaxStalenessDays:  cfg.OSVMaxStalenessDays,
@@ -221,6 +236,12 @@ func buildScanContext(_ context.Context, r *repo.Repo, store storage.Store, cfg 
 		Lic: policy.LoadLicensePolicy(cfg.AllowedLicensesFile),
 		Deps: pipeline.Deps{
 			Repo: r, Storage: store, Registry: reg,
+			// Индекс уязвимостей и артефактори нужны шагам 5 и 8. Команде
+			// `scan` они не требуются, но контекст собирается один и тот же:
+			// неполный контекст уже приводил к падению воркера на шаге, до
+			// которого `scan` не доходит.
+			Index:     osv.NewSnapshotIndex(cfg.OSVLocalDBPath),
+			Artifacts: artifacts,
 			Banner: scanners.YaraScanner{
 				Binary: cfg.BannerScanBin, RulesFile: cfg.BannerRulesFile,
 				Timeout: cfg.BannerScanTimeout,

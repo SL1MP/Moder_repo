@@ -4,7 +4,7 @@ PROD := -f docker-compose.yml -f docker-compose.prod.yml
 PROFILES ?= --profile nexus --profile sso
 
 .DEFAULT_GOAL := help
-.PHONY: help env up up-all down restart logs ps build bootstrap migrate revision \
+.PHONY: help env up up-all down restart logs ps build bootstrap migrate revision go-worker py-worker \
         test test-fast lint fmt shell cli sync-osv rescan reload import-list run-pending \
         queue-status queue-doctor api-smoke certs wait-nexus check-dockerfiles sql \
         prod-up prod-down clean
@@ -36,6 +36,19 @@ restart: ## Применить правки .env и config/ (пересозда�
 
 logs: ## Логи api, api-go, worker и beat
 	$(COMPOSE) logs -f api api-go worker beat
+
+go-worker: ## Переключить обработку конвейера на go-воркер (останавливает python-воркер)
+	# Явное переключение, а не параллельная работа: захват пакета у обоих
+	# воркеров общий и безопасный, но поведение отличается в мелочах, и
+	# «какой движок обработал этот пакет» не должно решаться гонкой.
+	$(COMPOSE) stop worker beat
+	$(COMPOSE) --profile go-worker up -d --build worker-go
+	@echo "Конвейер ведёт go-воркер. Логи: docker compose logs -f worker-go"
+
+py-worker: ## Вернуть обработку конвейера python-воркеру
+	$(COMPOSE) --profile go-worker stop worker-go
+	$(COMPOSE) up -d worker beat
+	@echo "Конвейер ведёт python-воркер."
 
 ps: ## Состояние контейнеров
 	$(COMPOSE) $(PROFILES) ps
