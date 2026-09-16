@@ -137,8 +137,7 @@ byte-for-byte или JSON-diff вывода. Тот же подход подхо
    идёт POST создания заявки, а разводить методы в nginx без трюков нельзя — список переедет
    вместе с созданием.
    **Ещё не перенесено:** создание заявок и разбор файлов зависимостей, решения ролей
-   (`/items/{id}/...`), очереди `/queue/*`, комментарии, уведомления, админка, GitLab,
-   `POST /packages/check`.
+   (`/items/{id}/...`), админка, GitLab, `POST /packages/check`.
 6. ✅ **Политики из файлов** — `internal/policy` читает те же `config/licenses.yml` и
    `config/blacklist.yml`, что и python-версия (общий том `./config:/config:ro`), плюс
    `GET /api/v1/licenses`. Перенесено то, что в прошлой ревизии было сознательно пропущено:
@@ -152,7 +151,20 @@ byte-for-byte или JSON-diff вывода. Тот же подход подхо
    видит «лицензия MIT не разрешена» и идёт искать ошибку не там.
    **Ещё нет:** перечитывания без рестарта (в python-версии `POST /api/v1/admin/reload`);
    пока правка файла применяется через `make restart`.
-7. Адаптеры: `ArtifactStore` — **приоритет `generic` (JFrog Artifactory), не `nexus`**:
+7. 🔶 **REST API: очереди, обсуждения, уведомления** — перенесены `GET /queue/security`,
+   `/queue/legal`, `/queue/counters`, ветка обсуждения (`GET`/`POST /requests/{id}/comments`,
+   `PATCH`/`DELETE /comments/{id}`) и уведомления (`GET /notifications`,
+   `POST /notifications/read`). Эти маршруты отданы go-версии целиком, со всеми методами:
+   в отличие от `/packages/` и `/requests/`, под ними у python-версии ничего не осталось.
+   **Решения ролей (`/items/{id}/quarantine/release`, `/security-decision`, `/license-decision`)
+   сознательно НЕ перенесены**, хотя сам сервис решений (`internal/decisions`) готов с фазы 2.
+   Причина: решение обязано возобновить конвейер, а конвейер сейчас ведёт python-воркер через
+   Celery. Go может либо запустить свой прогон (тогда две реализации пишут `pipeline_step`
+   одновременно), либо поставить задачу в Celery, руками собрав его протокол поверх Redis —
+   непроверяемый на этом стенде код ровно того сорта, что уже дал мину 8.1 старого handoff
+   («задачи ставятся в очередь, которую никто не слушает»). Решения переносятся вместе с
+   воркером (фаза 8), и не раньше.
+8. Адаптеры: `ArtifactStore` — **приоритет `generic` (JFrog Artifactory), не `nexus`**:
    production реально работает только с Artifactory (см. `docs/ci-parity-gaps.md`, "Артефактори
    — production это JFrog Artifactory, не Nexus"); `NexusArtifactStore` переносить не первым и,
    возможно, не переносить вовсе, если у заказчика Nexus нигде не используется — уточнить перед
@@ -160,12 +172,12 @@ byte-for-byte или JSON-diff вывода. Тот же подход подхо
    Artifactory vs скачивание+`PUT`) до переноса, не после. SeaweedFS вместо MinIO — для временной
    карантинной зоны, не связано с выбором `ArtifactStore`. `VulnerabilityIndex` (OSV-снапшот),
    `Notifier` (in-app) — без изменений от исходного плана.
-8. Воркер: NATS JetStream + Valkey вместо Celery/Redis; heartbeat + watchdog + атомарный захват.
-9. REST API контракт — сверка с текущим `docs/api.md` и живым фронтендом (frontend не
+9. Воркер: NATS JetStream + Valkey вместо Celery/Redis; heartbeat + watchdog + атомарный захват.
+10. REST API контракт — сверка с текущим `docs/api.md` и живым фронтендом (frontend не
    переписывается, только конфигурация вызовов, если понадобится).
-10. Отключение Python-стека, `docker-compose.yml` этого репозитория переезжает на Go-образы;
+11. Отключение Python-стека, `docker-compose.yml` этого репозитория переезжает на Go-образы;
    `backend/` (Python) архивируется, не удаляется молча — см. открытый вопрос ниже.
-11. **Конфигурация — admin API + БД вместо `.env`+рестарт** (прямой запрос пользователя, см.
+12. **Конфигурация — admin API + БД вместо `.env`+рестарт** (прямой запрос пользователя, см.
    `docs/configuration-model.md`): новые таблицы под Artifactory/Sandbox/реестры/политики
    блокировки/лимиты, admin API на запись (не только чтение, как сейчас), формы в UI. Делать
    сразу в Go-версии, не дважды (см. `configuration-model.md`, открытый вопрос №5) — естественно

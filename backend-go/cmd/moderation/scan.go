@@ -238,6 +238,9 @@ func loadItem(ctx context.Context, r *repo.Repo, pc *pipeline.Context, itemID in
 	if err != nil {
 		return err
 	}
+	if item == nil {
+		return fmt.Errorf("пакета заявки #%d нет в базе", itemID)
+	}
 	version, err := r.GetPackageVersion(ctx, item.PackageVersionID)
 	if err != nil {
 		return err

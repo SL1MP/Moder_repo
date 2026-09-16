@@ -35,6 +35,15 @@ func TestBuildOptionsMountsEverything(t *testing.T) {
 	if options.Licenses == nil {
 		t.Error("не подключён справочник лицензий")
 	}
+	if options.Queues == nil {
+		t.Error("не подключены очереди ролей")
+	}
+	if options.Comments == nil {
+		t.Error("не подключены обсуждения")
+	}
+	if options.Notifications == nil {
+		t.Error("не подключены уведомления")
+	}
 	if blacklist == nil {
 		t.Fatal("правила blacklist не загружены вовсе")
 	}

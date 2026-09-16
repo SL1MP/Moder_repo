@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // TestDefaultsMatchPython — сторож против расхождения умолчаний с
 // python-версией (backend/app/core/config.py).
@@ -55,6 +58,7 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"local_auth_enabled", cfg.LocalAuthEnabled, false},
 		{"local_auth_secret", cfg.LocalAuthSecret, "change-me-in-prod"},
 		{"app_name", cfg.AppName, "Модерация пакетов"},
+		{"comment_edit_window_minutes", cfg.CommentEditWindow, 15 * time.Minute},
 		{"registry_pypi_url", cfg.RegistryPyPIURL, "https://pypi.org"},
 		{"registry_npm_url", cfg.RegistryNpmURL, "https://registry.npmjs.org"},
 		{"registry_go_proxy", cfg.RegistryGoProxy, "https://proxy.golang.org"},

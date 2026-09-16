@@ -206,6 +206,9 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 
 	options.Packages = &api.PackagesHandler{Repo: r, Registry: reg, Cfg: cfg}
 	options.Requests = &api.RequestsHandler{Repo: r, Registry: reg, Cfg: cfg}
+	options.Queues = &api.QueuesHandler{Repo: r}
+	options.Comments = &api.CommentsHandler{Repo: r, Cfg: cfg}
+	options.Notifications = &api.NotificationsHandler{Repo: r}
 
 	return options, blacklist
 }

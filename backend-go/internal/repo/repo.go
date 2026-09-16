@@ -258,6 +258,8 @@ func (r *Repo) CreateRequestItem(ctx context.Context, item domain.RequestItem) (
 	return scanRequestItem(row)
 }
 
+// GetRequestItem — пакет заявки по идентификатору. nil, если такого нет:
+// «пакета не существует» — штатный ответ API (404), а не сбой чтения.
 func (r *Repo) GetRequestItem(ctx context.Context, id int64) (*domain.RequestItem, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, request_id, package_version_id, requested_name, requested_version,
@@ -265,7 +267,11 @@ func (r *Repo) GetRequestItem(ctx context.Context, id int64) (*domain.RequestIte
 		       waiting_since, finished_at, created_at, updated_at
 		FROM request_item WHERE id = $1
 	`, id)
-	return scanRequestItem(row)
+	item, err := scanRequestItem(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return item, err
 }
 
 // ListItemsByRequest — все пакеты заявки, в порядке заведения (порт

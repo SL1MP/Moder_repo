@@ -112,6 +112,9 @@ type Config struct {
 	GitlabURL           string
 	GitlabOAuthClientID string
 
+	// Окно, в течение которого правка сообщения не помечается как «изменено».
+	CommentEditWindow time.Duration
+
 	// Лимиты.
 	MaxArtifactSizeBytes int64
 	ScanMaxUnpackedBytes int64
@@ -182,6 +185,8 @@ func Load(getenv func(string) string) (*Config, error) {
 
 		GitlabURL:           getenv("GITLAB_URL"),
 		GitlabOAuthClientID: getenv("GITLAB_OAUTH_CLIENT_ID"),
+
+		CommentEditWindow: time.Duration(intOr(getenv("COMMENT_EDIT_WINDOW_MINUTES"), 15)) * time.Minute,
 
 		MaxArtifactSizeBytes: bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 500*1024*1024),
 		ScanMaxUnpackedBytes: bytesOr(getenv("SCAN_MAX_UNPACKED_BYTES"), 512<<20),

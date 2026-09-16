@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"moderation/internal/policy"
 )
 
 // Все маршруты должны собираться в один роутер: chi падает паникой на попытке
@@ -13,10 +15,14 @@ func TestFullRouterMounts(t *testing.T) {
 	store := newMemStore()
 	h := newHarness(t, store, nil)
 	router := NewRouter(nil, Options{
-		Auth:     &AuthHandler{Auth: h.auth, Cfg: h.cfg},
-		Reports:  &ReportsHandler{},
-		Packages: &PackagesHandler{Cfg: h.cfg},
-		Requests: &RequestsHandler{Cfg: h.cfg},
+		Auth:          &AuthHandler{Auth: h.auth, Cfg: h.cfg},
+		Reports:       &ReportsHandler{},
+		Packages:      &PackagesHandler{Cfg: h.cfg},
+		Requests:      &RequestsHandler{Cfg: h.cfg},
+		Licenses:      &LicensesHandler{Policy: &policy.LicensePolicy{}},
+		Queues:        &QueuesHandler{},
+		Comments:      &CommentsHandler{Cfg: h.cfg},
+		Notifications: &NotificationsHandler{},
 	})
 	for _, path := range []string{
 		"/api/v1/auth/config", "/api/v1/auth/me",
@@ -24,6 +30,8 @@ func TestFullRouterMounts(t *testing.T) {
 		"/api/v1/packages", "/api/v1/packages/1",
 		"/api/v1/requests", "/api/v1/requests/1",
 		"/api/v1/request-items/1/reports",
+		"/api/v1/licenses", "/api/v1/queue/security", "/api/v1/queue/legal",
+		"/api/v1/queue/counters", "/api/v1/requests/1/comments", "/api/v1/notifications",
 	} {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))

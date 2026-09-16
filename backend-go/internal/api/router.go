@@ -23,10 +23,13 @@ const pingTimeout = 3 * time.Second
 // не подключаются: сервис должен подниматься и без хранилища отчётов, отдавая
 // health, а не падать на старте.
 type Options struct {
-	Reports  *ReportsHandler
-	Packages *PackagesHandler
-	Requests *RequestsHandler
-	Licenses *LicensesHandler
+	Reports       *ReportsHandler
+	Packages      *PackagesHandler
+	Requests      *RequestsHandler
+	Licenses      *LicensesHandler
+	Queues        *QueuesHandler
+	Comments      *CommentsHandler
+	Notifications *NotificationsHandler
 	// Auth — проверка токенов. Без неё закрытые маршруты НЕ подключаются
 	// вовсе: отдать их открытыми было бы хуже, чем не отдать совсем.
 	Auth *AuthHandler
@@ -77,6 +80,15 @@ func NewRouter(pool *pgxpool.Pool, opts ...Options) http.Handler {
 		}
 		if opt.Licenses != nil && opt.Auth != nil {
 			MountLicenses(r, opt.Licenses, opt.Auth.Auth)
+		}
+		if opt.Queues != nil && opt.Auth != nil {
+			MountQueues(r, opt.Queues, opt.Auth.Auth)
+		}
+		if opt.Comments != nil && opt.Auth != nil {
+			MountComments(r, opt.Comments, opt.Auth.Auth)
+		}
+		if opt.Notifications != nil && opt.Auth != nil {
+			MountNotifications(r, opt.Notifications, opt.Auth.Auth)
 		}
 		if opt.Reports != nil {
 			if opt.Auth == nil {
