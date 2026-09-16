@@ -67,6 +67,35 @@ make logs                 # логи api, worker, beat
 Демо-учётные записи Keycloak (realm `moderation`): `dev.ivanov/dev`, `sec.petrov/sec`,
 `legal.sidorova/legal`, `moderation.admin/admin`.
 
+### Вход через Keycloak
+
+Keycloak проксируется nginx'ом на том же origin, что и приложение: пути
+`/realms/`, `/resources/`, `/admin/` и `/js/` уходят на `keycloak:8080`
+(`nginx/snippets/app.conf`). Поэтому отдельный порт и отдельный сертификат для
+Keycloak наружу не нужны — достаточно того же 443, на котором работает сервис:
+
+```ini
+OIDC_PUBLIC_ISSUER=https://<ваш-хост>/realms/moderation   # без порта
+```
+
+`OIDC_ISSUER` при этом остаётся внутренним (`http://keycloak:8080/realms/moderation`):
+по нему api берёт JWKS внутри сети compose. Сервис принимает оба issuer'а
+(`backend/app/core/config.py::accepted_issuers`), подпись у токена одна и та же.
+
+Админконсоль Keycloak: `https://<ваш-хост>/admin` (или напрямую
+`http://<хост>:8081` — этот порт остаётся для локальной отладки).
+
+**Почему не отдельный порт.** Так было раньше, и это ломалось тремя способами
+подряд: Keycloak без сертификата HTTPS вообще не поднимает (порт опубликован, а
+внутри контейнера на нём никто не слушает — браузер получает
+`ERR_CONNECTION_REFUSED`); отдельный порт обычно закрыт фаерволом; а
+самоподписанный сертификат убивает вход совсем незаметно — SPA дёргает
+`.well-known` через `fetch`, и тот падает на невалидном сертификате молча, без
+кнопки «всё равно перейти».
+
+Отдельный порт Keycloak (`KEYCLOAK_TLS_PORT` + оверлей `docker-compose.tls.yml`)
+нужен теперь только если вы сознательно выставляете Keycloak в обход nginx.
+
 ### Остановка и повторный запуск
 
 `bootstrap` нужен **только один раз**: база, артефакты Nexus и объекты MinIO лежат в
