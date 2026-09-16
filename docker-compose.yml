@@ -59,7 +59,10 @@ services:
       # Named volume, а не bind-mount с хоста — с ними этой проблемы нет.
       - web-dist:/usr/share/nginx/html:ro
     depends_on:
+      # api-go тоже: с фазы доступа nginx отдаёт ему /api/v1/auth/, то есть
+      # без него не работает вход, а не только отчёты.
       - api
+      - api-go
       - web
 
   web:

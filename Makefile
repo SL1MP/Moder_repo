@@ -27,13 +27,15 @@ up-all: env ## Поднять сервис вместе с Nexus и Keycloak (п
 down: ## Остановить сервис
 	$(COMPOSE) $(PROFILES) down
 
-restart: ## Применить правки .env и config/ (пересоздаёт api/worker/beat)
+restart: ## Применить правки .env и config/ (пересоздаёт api/api-go/worker/beat)
 	# Именно up -d, а не restart: переменные из env_file фиксируются при создании
 	# контейнера, поэтому `docker compose restart` правки .env НЕ подхватывает.
-	$(COMPOSE) up -d api worker beat
+	# api-go здесь обязателен: он читает тот же .env (OIDC_*, LOCAL_AUTH_*,
+	# SCAN_*), и без пересоздания правки доступа применятся только к python-версии.
+	$(COMPOSE) up -d api api-go worker beat
 
-logs: ## Логи api, worker и beat
-	$(COMPOSE) logs -f api worker beat
+logs: ## Логи api, api-go, worker и beat
+	$(COMPOSE) logs -f api api-go worker beat
 
 ps: ## Состояние контейнеров
 	$(COMPOSE) $(PROFILES) ps
