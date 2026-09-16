@@ -59,6 +59,13 @@ type Config struct {
 	RegistryGoProxy  string
 	RegistryNuGetURL string
 
+	// Наблюдатель сканирования: сам находит пакеты без отчётов и прогоняет по
+	// ним сканеры. Конструкция переходного периода — пока заявки ведёт
+	// python-конвейер, а отчёты умеет делать только Go.
+	ScanWatcherEnabled  bool
+	ScanWatcherInterval time.Duration
+	ScanWatcherBatch    int
+
 	// Лимиты.
 	MaxArtifactSizeBytes int64
 	ScanMaxUnpackedBytes int64
@@ -98,6 +105,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		RegistryNpmURL:   valueOr(getenv("REGISTRY_NPM_URL"), "https://registry.npmjs.org"),
 		RegistryGoProxy:  valueOr(getenv("REGISTRY_GO_PROXY"), "https://proxy.golang.org"),
 		RegistryNuGetURL: valueOr(getenv("REGISTRY_NUGET_URL"), "https://api.nuget.org"),
+
+		ScanWatcherEnabled:  boolOr(getenv("SCAN_WATCHER_ENABLED"), true),
+		ScanWatcherInterval: secondsOr(getenv("SCAN_WATCHER_INTERVAL_SECONDS"), 60),
+		ScanWatcherBatch:    intOr(getenv("SCAN_WATCHER_BATCH"), 10),
 
 		MaxArtifactSizeBytes: bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 500*1024*1024),
 		ScanMaxUnpackedBytes: bytesOr(getenv("SCAN_MAX_UNPACKED_BYTES"), 512<<20),

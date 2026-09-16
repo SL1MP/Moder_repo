@@ -129,11 +129,25 @@ func (s contentScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, err
 	}
 
 	// Явное разрешение DevSecOps важнее вердикта шага (см. VulnScanStep).
+	//
+	// Но «разрешено вручную» и «сканер не отработал» — разные вещи, и
+	// смешивать их нельзя. В python-версии эта ветка стоит ДО проверки
+	// outcome.available и сообщает «Находок: 0» независимо от того, работал ли
+	// сканер вообще: в карточке неустановленный semgrep выглядел как чистый
+	// пакет. Здесь недоступность называется прямо, а в отчёте она и так
+	// зафиксирована состоянием unavailable.
 	if pc.SecurityOverride != nil {
 		details["reason"] = "security_override"
 		details["decided_by"] = pc.SecurityOverride.DecidedBy
-		return Pass(fmt.Sprintf("%s: публикация разрешена вручную (%s). Находок: %d.%s",
-			s.title, pc.SecurityOverride.DecidedBy, report.Summary.Total, reportNote)).
+		verdict := fmt.Sprintf("Находок: %d.", report.Summary.Total)
+		if !outcome.Available {
+			details["scanner_unavailable"] = outcome.Detail
+			verdict = fmt.Sprintf(
+				"ВНИМАНИЕ: проверка не выполнялась (%s), поэтому отсутствие находок "+
+					"ничего не означает.", outcome.Detail)
+		}
+		return Pass(fmt.Sprintf("%s: публикация разрешена вручную (%s). %s%s",
+			s.title, pc.SecurityOverride.DecidedBy, verdict, reportNote)).
 			WithDetails(details), nil
 	}
 

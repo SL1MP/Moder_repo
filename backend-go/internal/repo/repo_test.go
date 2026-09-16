@@ -193,3 +193,109 @@ func resetItems(t *testing.T, r *Repo, packageVersionID int64) {
 		t.Fatalf("сброс фикстуры request_item: %v", err)
 	}
 }
+
+// TestItemsAwaitingScan — выборка наблюдателя: кого сканировать автоматически.
+//
+// Важны обе границы. Пакет, застрявший до скачивания (blacklist, карантин,
+// нет в реестре), сканировать нечем — брать его в работу значит бесконечно
+// пытаться и писать ошибки в лог. Пакет, у которого отчёт уже есть, брать
+// повторно значит сканировать одно и то же по кругу на каждом тике.
+func TestItemsAwaitingScan(t *testing.T) {
+	r, cleanup := mustPool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	pkg, err := r.GetOrCreatePackage(ctx, "pypi", "awaiting-scan-fixture", "awaiting-scan-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ver, err := r.CreatePackageVersion(ctx, pkg.ID, "1.0.0", "1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resetItems(t, r, ver.ID)
+
+	req, err := r.CreateModerationRequest(ctx, domain.ModerationRequest{
+		AuthorID: mustUser(t, r, "watcher-test-author"), Manager: "pypi",
+		Status: "pending", Source: "ui",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newItem := func(status string) *domain.RequestItem {
+		item, err := r.CreateRequestItem(ctx, domain.RequestItem{
+			RequestID: req.ID, PackageVersionID: ver.ID,
+			RequestedName: pkg.Name, RequestedVersion: "1.0.0",
+			DependencyKind: "direct", Status: status,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	downloaded := func(item *domain.RequestItem, result string) {
+		if _, err := r.UpsertPipelineStep(ctx, domain.PipelineStep{
+			RequestItemID: item.ID, StepCode: "download",
+			StepOrder: domain.StepOrder["download"], Result: result,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	wantScan := newItem("awaiting_security") // скачан, отчётов нет — брать
+	downloaded(wantScan, "pass")
+
+	noDownload := newItem("blacklisted") // до скачивания не дошёл — не брать
+	failedDownload := newItem("failed")  // скачивание не удалось — не брать
+	downloaded(failedDownload, "fail")
+
+	alreadyScanned := newItem("approved") // отчёт уже есть — не брать
+	downloaded(alreadyScanned, "pass")
+	if _, err := r.UpsertScanReport(ctx, domain.ScanReport{
+		RequestItemID: alreadyScanned.ID, PackageVersionID: ver.ID,
+		StepCode: "banner_scan", Scanner: "yara", State: "clean", Threshold: "info",
+		JSONKey: "reports/x/banner_scan.json", HTMLKey: "reports/x/banner_scan.html",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.ItemsAwaitingScan(ctx, 50)
+	if err != nil {
+		t.Fatalf("ItemsAwaitingScan: %v", err)
+	}
+	inList := func(id int64) bool {
+		for _, v := range got {
+			if v == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !inList(wantScan.ID) {
+		t.Errorf("скачанный пакет без отчётов не попал в выборку: %v", got)
+	}
+	for _, c := range []struct {
+		id  int64
+		why string
+	}{
+		{noDownload.ID, "не дошёл до скачивания — сканировать нечего"},
+		{failedDownload.ID, "скачивание не удалось — сканировать нечего"},
+		{alreadyScanned.ID, "отчёт уже есть — сканировался бы по кругу"},
+	} {
+		if inList(c.id) {
+			t.Errorf("пакет #%d попал в выборку, хотя %s", c.id, c.why)
+		}
+	}
+}
+
+func TestItemsAwaitingScanRespectsLimit(t *testing.T) {
+	r, cleanup := mustPool(t)
+	defer cleanup()
+	got, err := r.ItemsAwaitingScan(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ItemsAwaitingScan: %v", err)
+	}
+	if len(got) > 1 {
+		t.Errorf("вернулось %d пакетов при лимите 1", len(got))
+	}
+}

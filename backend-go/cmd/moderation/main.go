@@ -79,6 +79,19 @@ func main() {
 		logger.Warn("S3_ENDPOINT не задан — выдача отчётов о сканировании отключена")
 	}
 
+	// Наблюдатель сканирования. Требует хранилища: отчёты некуда класть без
+	// него, и запускать прогон впустую незачем.
+	if cfg.ScanWatcherEnabled && options.Reports != nil {
+		w := &watcher{
+			repo: options.Reports.Repo, storage: options.Reports.Storage,
+			cfg: cfg, logger: logger,
+			interval: cfg.ScanWatcherInterval, batch: cfg.ScanWatcherBatch,
+		}
+		go w.run(ctx)
+	} else if !cfg.ScanWatcherEnabled {
+		logger.Info("наблюдатель сканирования выключен (SCAN_WATCHER_ENABLED=false)")
+	}
+
 	server := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: api.NewRouter(pool, options),

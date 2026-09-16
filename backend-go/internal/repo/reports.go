@@ -150,3 +150,41 @@ func (r *Repo) GetOrCreateUser(ctx context.Context, username, fullName string) (
 	}
 	return &u, nil
 }
+
+// ItemsAwaitingScan — пакеты заявок, по которым отчётов ещё нет.
+//
+// Отбор: у пакета есть успешно пройденный шаг скачивания (значит артефакт
+// когда-то существовал и его можно перекачать) и нет ни одной строки
+// scan_report. Так наблюдатель не трогает заявки, застрявшие раньше — на
+// blacklist, карантине или отсутствии в реестре: сканировать там нечего.
+//
+// Порядок — от свежих к старым: при разборе накопившегося хвоста полезнее
+// сначала закрыть то, чем занимаются прямо сейчас.
+func (r *Repo) ItemsAwaitingScan(ctx context.Context, limit int) ([]int64, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT ri.id
+		FROM request_item ri
+		JOIN pipeline_step ps
+		  ON ps.request_item_id = ri.id AND ps.step_code = 'download' AND ps.result = 'pass'
+		WHERE NOT EXISTS (SELECT 1 FROM scan_report sr WHERE sr.request_item_id = ri.id)
+		ORDER BY ri.id DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("поиск пакетов без отчётов: %w", err)
+	}
+	defer rows.Close()
+
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("чтение идентификатора пакета: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
