@@ -130,9 +130,11 @@ type Config struct {
 	CommentEditWindow time.Duration
 
 	// Лимиты.
-	MaxArtifactSizeBytes int64
-	ScanMaxUnpackedBytes int64
-	ScanMaxFiles         int
+	MaxArtifactSizeBytes  int64
+	MaxUploadSizeBytes    int64
+	MaxPackagesPerRequest int
+	ScanMaxUnpackedBytes  int64
+	ScanMaxFiles          int
 }
 
 // Load читает конфигурацию через getenv (не os.Getenv напрямую — тестируемость,
@@ -211,9 +213,11 @@ func Load(getenv func(string) string) (*Config, error) {
 
 		CommentEditWindow: time.Duration(intOr(getenv("COMMENT_EDIT_WINDOW_MINUTES"), 15)) * time.Minute,
 
-		MaxArtifactSizeBytes: bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 500*1024*1024),
-		ScanMaxUnpackedBytes: bytesOr(getenv("SCAN_MAX_UNPACKED_BYTES"), 512<<20),
-		ScanMaxFiles:         intOr(getenv("SCAN_MAX_FILES"), 20000),
+		MaxArtifactSizeBytes:  bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 500*1024*1024),
+		MaxUploadSizeBytes:    bytesOr(getenv("MAX_UPLOAD_SIZE_BYTES"), 5*1024*1024),
+		MaxPackagesPerRequest: intOr(getenv("MAX_PACKAGES_PER_REQUEST"), 200),
+		ScanMaxUnpackedBytes:  bytesOr(getenv("SCAN_MAX_UNPACKED_BYTES"), 512<<20),
+		ScanMaxFiles:          intOr(getenv("SCAN_MAX_FILES"), 20000),
 	}
 
 	if cfg.AppEnv != "dev" && cfg.AppEnv != "prod" {

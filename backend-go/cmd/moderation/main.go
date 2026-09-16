@@ -23,8 +23,10 @@ import (
 	"moderation/internal/config"
 	"moderation/internal/db"
 	"moderation/internal/policy"
+	"moderation/internal/queue"
 	"moderation/internal/registry"
 	"moderation/internal/repo"
+	"moderation/internal/requests"
 	"moderation/internal/storage"
 )
 
@@ -209,7 +211,29 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	}
 
 	options.Packages = &api.PackagesHandler{Repo: r, Registry: reg, Cfg: cfg}
-	options.Requests = &api.RequestsHandler{Repo: r, Registry: reg, Cfg: cfg}
+	options.Requests = &api.RequestsHandler{
+		Repo: r, Registry: reg, Cfg: cfg,
+		Requests: &requests.Service{
+			Repo: r, Registry: reg,
+			Limits: requests.Limits{
+				MaxPackages: cfg.MaxPackagesPerRequest, MaxUploadSize: cfg.MaxUploadSizeBytes,
+			},
+			InstallCommand: func(manager, name, displayName, version, rawVersion string) string {
+				plugin, err := reg.Get(manager)
+				if err != nil {
+					return ""
+				}
+				return plugin.InstallCommand(registry.Ref{
+					Manager: manager, Name: name, DisplayName: displayName,
+					Version: version, RawVersion: rawVersion,
+				}, cfg.ArtifactBaseURL, cfg.ArtifactRepo(manager))
+			},
+			OnAuditError: func(err error) {
+				logger.Error("аудит создания заявки не записан", "error", err)
+			},
+		},
+		Queue: queue.New(pool, cfg.PipelineStuckAfter*3),
+	}
 	options.Queues = &api.QueuesHandler{Repo: r}
 	options.Comments = &api.CommentsHandler{Repo: r, Cfg: cfg}
 	options.Notifications = &api.NotificationsHandler{Repo: r}

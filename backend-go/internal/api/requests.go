@@ -9,8 +9,10 @@ import (
 	"moderation/internal/config"
 	"moderation/internal/domain"
 	"moderation/internal/pipeline"
+	"moderation/internal/queue"
 	"moderation/internal/registry"
 	"moderation/internal/repo"
+	"moderation/internal/requests"
 )
 
 // Заявки: список и карточка. Порт маршрутов чтения из
@@ -24,6 +26,13 @@ type RequestsHandler struct {
 	Repo     *repo.Repo
 	Registry *registry.Registry
 	Cfg      *config.Config
+	// Requests — разбор и создание заявок. nil — маршрут создания не
+	// подключается (см. MountRequests): отдавать 500 на кнопку «Добавить
+	// пакеты» хуже, чем честно не иметь этого маршрута.
+	Requests *requests.Service
+	// Queue — очередь конвейера. nil — пакеты заводятся в статусе `queued`,
+	// но воркеры не будятся: их подберёт ближайший опрос.
+	Queue *queue.Queue
 }
 
 // MountRequests подключает маршруты заявок.
@@ -32,6 +41,9 @@ func MountRequests(r chi.Router, h *RequestsHandler, a *Auth) {
 		sub.Use(a.Authenticate)
 		sub.Get("/", h.List)
 		sub.Get("/{requestID}", h.Get)
+		if h.Requests != nil {
+			sub.Post("/", h.Create)
+		}
 	})
 }
 

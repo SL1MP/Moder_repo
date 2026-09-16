@@ -439,3 +439,64 @@ func (r *Repo) CodeFindingsByVersions(ctx context.Context, ids []int64) (map[int
 	}
 	return out, rows.Err()
 }
+
+// FindVersion — версия пакета по менеджеру, нормализованному имени и
+// нормализованной версии. nil, если такой в базе нет.
+//
+// Сверка идёт по нормализованным значениям, а не по тому, как их записал
+// разработчик: «Django» и «django», «1.0» и «1.0.0» — один и тот же пакет, и
+// заводить на них разные строки значило бы модерировать одно дважды.
+func (r *Repo) FindVersion(ctx context.Context, manager, name, version string) (*domain.PackageVersion, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT pv.id, pv.package_id, pv.version, pv.raw_version, pv.status, pv.published_at,
+		       pv.quarantine_until, pv.license_spdx, pv.license_source, pv.license_raw,
+		       pv.vuln_index_version_id, pv.max_vuln_score, pv.security_override_at,
+		       pv.security_override_by_id, pv.security_override_comment,
+		       pv.approved_at, pv.revoked_at, pv.status_reason, pv.created_at, pv.updated_at
+		FROM package_version pv
+		JOIN package p ON p.id = pv.package_id
+		WHERE p.manager = $1 AND p.name = $2 AND pv.version = $3
+	`, manager, name, version)
+	version_, err := scanPackageVersion(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return version_, nil
+}
+
+// RecomputeRequestStatus пересчитывает статус заявки по статусам её пакетов.
+// Порт runner.recompute_request_status.
+//
+// Считается в SQL одним запросом: статусы пакетов нужны только для этой
+// свёртки, и вычитывать двести строк в память ради неё незачем. Порядок веток
+// — по убыванию «блокирующей силы», как в python-версии: пока хоть один пакет
+// в работе, заявка целиком «в обработке», каким бы ни был вердикт остальных.
+func (r *Repo) RecomputeRequestStatus(ctx context.Context, requestID int64) (string, error) {
+	var status string
+	row := r.pool.QueryRow(ctx, `
+		WITH s AS (SELECT status FROM request_item WHERE request_id = $1)
+		UPDATE moderation_request mr
+		SET status = CASE
+			WHEN NOT EXISTS (SELECT 1 FROM s) THEN 'pending'
+			WHEN EXISTS (SELECT 1 FROM s WHERE status IN ('queued', 'running')) THEN 'pending'
+			WHEN EXISTS (SELECT 1 FROM s WHERE status = 'awaiting_security') THEN 'awaiting_security'
+			WHEN EXISTS (SELECT 1 FROM s WHERE status IN ('awaiting_legal', 'license_claimed'))
+				THEN 'awaiting_legal'
+			WHEN EXISTS (SELECT 1 FROM s WHERE status = 'quarantined') THEN 'quarantined'
+			WHEN NOT EXISTS (SELECT 1 FROM s WHERE status <> 'approved') THEN 'approved'
+			WHEN EXISTS (SELECT 1 FROM s WHERE status = 'approved') THEN 'partially_approved'
+			WHEN EXISTS (SELECT 1 FROM s WHERE status = 'failed') THEN 'failed'
+			ELSE 'rejected'
+		END,
+		updated_at = now()
+		WHERE mr.id = $1
+		RETURNING mr.status
+	`, requestID)
+	if err := row.Scan(&status); err != nil {
+		return "", fmt.Errorf("пересчёт статуса заявки #%d: %w", requestID, err)
+	}
+	return status, nil
+}

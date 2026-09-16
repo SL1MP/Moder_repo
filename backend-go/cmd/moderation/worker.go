@@ -217,6 +217,13 @@ func (w *pipelineWorker) handle(ctx context.Context, job queue.Job) {
 	defer stopBeat()
 
 	started := time.Now()
+	// Статус заявки — свёртка статусов её пакетов. Пересчёт стоит в defer, а
+	// не сразу после прогона: при неудаче статус пакета ставится ниже по
+	// коду (повтор или окончательный отказ), и пересчёт до этого зафиксировал
+	// бы промежуточное состояние. Без пересчёта заявка навсегда остаётся «в
+	// обработке», хотя её пакеты давно разошлись по очередям ролей.
+	defer w.recompute(ctx, job.ItemID)
+
 	result, err := w.runPipeline(runCtx, job)
 	if err == nil {
 		w.deliver(ctx, job.ItemID, result.Notifications)
@@ -372,5 +379,21 @@ func (w *pipelineWorker) deliver(ctx context.Context, item int64, notifications 
 			// объявлять прогон неудачным и повторять всю работу.
 			w.logger.Error("уведомления не созданы", "item", item, "событие", n.Event, "error", err)
 		}
+	}
+}
+
+// recompute пересчитывает статус заявки, которой принадлежит пакет.
+func (w *pipelineWorker) recompute(ctx context.Context, itemID int64) {
+	item, err := w.repo.GetRequestItem(ctx, itemID)
+	if err != nil || item == nil {
+		if err != nil {
+			w.logger.Error("статус заявки не пересчитан: пакет не прочитан",
+				"item", itemID, "error", err)
+		}
+		return
+	}
+	if _, err := w.repo.RecomputeRequestStatus(ctx, item.RequestID); err != nil {
+		w.logger.Error("статус заявки не пересчитан",
+			"item", itemID, "request", item.RequestID, "error", err)
 	}
 }
