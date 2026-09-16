@@ -105,15 +105,26 @@ func main() {
 
 	// Наблюдатель сканирования. Требует хранилища: отчёты некуда класть без
 	// него, и запускать прогон впустую незачем.
-	if cfg.ScanWatcherEnabled && options.Reports != nil {
+	//
+	// Каждая ветка что-то пишет в лог. Раньше случай «наблюдатель включён, но
+	// хранилища нет» не писал НИЧЕГО: отчёты не появлялись сами, в логах было
+	// пусто, и снаружи это выглядело как «автоматика не работает» без единой
+	// зацепки. Молчаливо не запуститься фоновая работа не имеет права.
+	switch {
+	case !cfg.ScanWatcherEnabled:
+		logger.Info("наблюдатель сканирования выключен (SCAN_WATCHER_ENABLED=false) — " +
+			"отчёты появятся только после `moderation scan`")
+	case options.Reports == nil:
+		logger.Error("наблюдатель сканирования НЕ запущен: не настроено хранилище отчётов " +
+			"(S3_ENDPOINT/S3_ACCESS_KEY/S3_SECRET_KEY) — класть отчёты некуда")
+	default:
 		w := &watcher{
 			repo: options.Reports.Repo, storage: options.Reports.Storage,
 			cfg: cfg, logger: logger,
 			interval: cfg.ScanWatcherInterval, batch: cfg.ScanWatcherBatch,
+			itemTimeout: cfg.ScanWatcherItemTimeout,
 		}
 		go w.run(ctx)
-	} else if !cfg.ScanWatcherEnabled {
-		logger.Info("наблюдатель сканирования выключен (SCAN_WATCHER_ENABLED=false)")
 	}
 
 	server := &http.Server{
@@ -145,6 +156,8 @@ func usage() {
 Использование:
   moderation [serve]          HTTP-сервер: health, метрики, выдача отчётов
   moderation scan --item N    прогнать сканеры содержимого по пакету заявки N
+  moderation scan --pending   что фоновый наблюдатель возьмёт в работу
+  moderation scan --why N     почему по пакету N нет отчёта
                               и записать отчёты
 
 Конфигурация — через переменные окружения, см. backend-go/README.md.

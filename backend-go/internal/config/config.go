@@ -66,6 +66,10 @@ type Config struct {
 	ScanWatcherEnabled  bool
 	ScanWatcherInterval time.Duration
 	ScanWatcherBatch    int
+	// ScanWatcherItemTimeout — потолок на один пакет. Прогон включает
+	// перекачивание артефакта из внешнего реестра, поэтому запас нужен
+	// большой, но не бесконечный: зависший пакет не должен держать пачку.
+	ScanWatcherItemTimeout time.Duration
 
 	// Доступ. OIDCIssuer — адрес, по которому К НЕМУ ходит сервис (внутренний,
 	// http://keycloak:8080/...), OIDCPublicIssuer — адрес, по которому к нему
@@ -134,9 +138,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		RegistryGoProxy:  valueOr(getenv("REGISTRY_GO_PROXY"), "https://proxy.golang.org"),
 		RegistryNuGetURL: valueOr(getenv("REGISTRY_NUGET_URL"), "https://api.nuget.org"),
 
-		ScanWatcherEnabled:  boolOr(getenv("SCAN_WATCHER_ENABLED"), true),
-		ScanWatcherInterval: secondsOr(getenv("SCAN_WATCHER_INTERVAL_SECONDS"), 60),
-		ScanWatcherBatch:    intOr(getenv("SCAN_WATCHER_BATCH"), 10),
+		ScanWatcherEnabled:     boolOr(getenv("SCAN_WATCHER_ENABLED"), true),
+		ScanWatcherInterval:    secondsOr(getenv("SCAN_WATCHER_INTERVAL_SECONDS"), 60),
+		ScanWatcherBatch:       intOr(getenv("SCAN_WATCHER_BATCH"), 10),
+		ScanWatcherItemTimeout: secondsOr(getenv("SCAN_WATCHER_ITEM_TIMEOUT_SECONDS"), 20*60),
 
 		OIDCIssuer:       strings.TrimRight(strings.TrimSpace(getenv("OIDC_ISSUER")), "/"),
 		OIDCPublicIssuer: strings.TrimRight(strings.TrimSpace(getenv("OIDC_PUBLIC_ISSUER")), "/"),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -185,6 +186,80 @@ func (r *Repo) ItemsAwaitingScan(ctx context.Context, limit int) ([]int64, error
 			return nil, fmt.Errorf("чтение идентификатора пакета: %w", err)
 		}
 		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ScanEligibility — почему пакет попадает (или не попадает) в выборку
+// наблюдателя. Отдельный запрос ради диагностики: без него на вопрос «почему
+// отчёт не появился сам» отвечают чтением исходников и ручными SELECT'ами.
+type ScanEligibility struct {
+	Exists bool
+	// DownloadResult — результат шага скачивания; пустая строка, если шага
+	// нет вовсе (конвейер до него не дошёл).
+	DownloadResult string
+	Reports        []string // коды шагов, по которым отчёт уже есть
+	ItemStatus     string
+	CurrentStep    string
+}
+
+// Eligible — взял бы наблюдатель этот пакет прямо сейчас.
+func (e ScanEligibility) Eligible() bool {
+	return e.Exists && e.DownloadResult == "pass" && len(e.Reports) == 0
+}
+
+// Reason — человеческое объяснение, почему пакет не берут.
+func (e ScanEligibility) Reason() string {
+	switch {
+	case !e.Exists:
+		return "пакета с таким id нет"
+	case len(e.Reports) > 0:
+		return "отчёты уже есть (" + strings.Join(e.Reports, ", ") + "), повторно не сканируем"
+	case e.DownloadResult == "":
+		return "шага скачивания ещё не было — конвейер до него не дошёл, сканировать нечего"
+	case e.DownloadResult != "pass":
+		return "шаг скачивания в состоянии " + e.DownloadResult + " — артефакта нет, сканировать нечего"
+	}
+	return "берём"
+}
+
+// ScanEligibilityOf собирает диагностику по одному пакету.
+func (r *Repo) ScanEligibilityOf(ctx context.Context, itemID int64) (ScanEligibility, error) {
+	var out ScanEligibility
+	var currentStep *string
+	err := r.pool.QueryRow(ctx,
+		`SELECT status, current_step FROM request_item WHERE id = $1`, itemID).
+		Scan(&out.ItemStatus, &currentStep)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return out, fmt.Errorf("чтение пакета заявки #%d: %w", itemID, err)
+	}
+	out.Exists = true
+	if currentStep != nil {
+		out.CurrentStep = *currentStep
+	}
+
+	err = r.pool.QueryRow(ctx,
+		`SELECT result FROM pipeline_step WHERE request_item_id = $1 AND step_code = 'download'`, itemID).
+		Scan(&out.DownloadResult)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return out, fmt.Errorf("чтение шага скачивания: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx,
+		`SELECT step_code FROM scan_report WHERE request_item_id = $1 ORDER BY step_code`, itemID)
+	if err != nil {
+		return out, fmt.Errorf("чтение отчётов: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return out, fmt.Errorf("чтение кода шага отчёта: %w", err)
+		}
+		out.Reports = append(out.Reports, code)
 	}
 	return out, rows.Err()
 }

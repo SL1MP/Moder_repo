@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"moderation/internal/config"
@@ -44,21 +45,35 @@ func runScan(args []string, logger *slog.Logger) int {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	itemID := fs.Int64("item", 0, "идентификатор пакета заявки (request_item.id)")
 	requestID := fs.Int64("request", 0, "номер заявки — просканировать все её пакеты")
+	pending := fs.Bool("pending", false,
+		"ничего не сканировать, показать, что наблюдатель взял бы в работу")
+	why := fs.Int64("why", 0,
+		"ничего не сканировать, объяснить, почему по этому пакету нет отчёта")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *itemID <= 0 && *requestID <= 0 {
+	modes := 0
+	for _, on := range []bool{*itemID > 0, *requestID > 0, *pending, *why > 0} {
+		if on {
+			modes++
+		}
+	}
+	if modes == 0 {
 		fmt.Fprintln(os.Stderr, "укажите, что сканировать:")
 		fmt.Fprintln(os.Stderr, "  moderation scan --request <номер заявки>   все пакеты заявки")
 		fmt.Fprintln(os.Stderr, "  moderation scan --item <id пакета>         один пакет")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "или разберитесь, почему отчёт не появился сам:")
+		fmt.Fprintln(os.Stderr, "  moderation scan --pending                  что наблюдатель возьмёт в работу")
+		fmt.Fprintln(os.Stderr, "  moderation scan --why <id пакета>          почему по пакету нет отчёта")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Номер заявки виден в адресе её страницы: /requests/42 -> --request 42.")
 		fmt.Fprintln(os.Stderr, "Идентификаторы пакетов внутри заявки — в ответе GET /api/v1/requests/{id},")
 		fmt.Fprintln(os.Stderr, "поле packages[].id.")
 		return 2
 	}
-	if *itemID > 0 && *requestID > 0 {
-		fmt.Fprintln(os.Stderr, "--item и --request взаимоисключающие")
+	if modes > 1 {
+		fmt.Fprintln(os.Stderr, "--item, --request, --pending и --why взаимоисключающие")
 		return 2
 	}
 
@@ -78,6 +93,16 @@ func runScan(args []string, logger *slog.Logger) int {
 	}
 	defer pool.Close()
 	r := repo.New(pool)
+
+	// Диагностика идёт до подключения к хранилищу: она отвечает на вопрос
+	// «почему не сработало», и требовать для этого исправного MinIO — значит
+	// не отвечать ровно в том случае, когда ответ и нужен.
+	if *pending {
+		return reportPending(ctx, r, cfg)
+	}
+	if *why > 0 {
+		return explainItem(ctx, r, *why)
+	}
 
 	store, err := storage.NewS3(storage.S3Config{
 		Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
@@ -280,4 +305,65 @@ func readLimited(r io.Reader, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("размер артефакта превышает лимит %d байт", limit)
 	}
 	return data, nil
+}
+
+// reportPending — что наблюдатель взял бы в работу прямо сейчас. Та же
+// выборка, которой он пользуется, а не похожая: смысл диагностики в том,
+// чтобы показать реальное поведение, а не его пересказ.
+func reportPending(ctx context.Context, r *repo.Repo, cfg *config.Config) int {
+	if !cfg.ScanWatcherEnabled {
+		fmt.Println("Наблюдатель выключен (SCAN_WATCHER_ENABLED=false) — сам он ничего не возьмёт.")
+	}
+	items, err := r.ItemsAwaitingScan(ctx, cfg.ScanWatcherBatch)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "выборка не удалась: %v\n", err)
+		return 1
+	}
+	if len(items) == 0 {
+		fmt.Println("Пакетов без отчётов нет — наблюдателю нечего делать.")
+		fmt.Println("Если отчёта не хватает по конкретному пакету: moderation scan --why <id>")
+		return 0
+	}
+	fmt.Printf("Наблюдатель возьмёт в работу %d пакет(ов) (не больше %d за проход, интервал %s):\n",
+		len(items), cfg.ScanWatcherBatch, cfg.ScanWatcherInterval)
+	for _, id := range items {
+		fmt.Printf("  request_item #%d\n", id)
+	}
+	return 0
+}
+
+// explainItem — почему по пакету нет отчёта. Отвечает на вопрос, с которого
+// начинается любое разбирательство, и отвечает конкретно: не «что-то не так»,
+// а какого именно условия не хватает.
+func explainItem(ctx context.Context, r *repo.Repo, itemID int64) int {
+	e, err := r.ScanEligibilityOf(ctx, itemID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "не удалось разобраться: %v\n", err)
+		return 1
+	}
+	fmt.Printf("request_item #%d\n", itemID)
+	if !e.Exists {
+		fmt.Println("  пакета с таким id нет")
+		return 1
+	}
+	fmt.Printf("  статус заявки по пакету: %s\n", e.ItemStatus)
+	if e.CurrentStep != "" {
+		fmt.Printf("  текущий шаг: %s\n", e.CurrentStep)
+	}
+	if e.DownloadResult == "" {
+		fmt.Println("  шаг скачивания: не выполнялся")
+	} else {
+		fmt.Printf("  шаг скачивания: %s\n", e.DownloadResult)
+	}
+	if len(e.Reports) == 0 {
+		fmt.Println("  отчёты: нет ни одного")
+	} else {
+		fmt.Printf("  отчёты: %s\n", strings.Join(e.Reports, ", "))
+	}
+	fmt.Printf("\n  Наблюдатель возьмёт этот пакет: %v — %s\n", e.Eligible(), e.Reason())
+	if e.Eligible() {
+		fmt.Println("  Если отчёта всё равно нет — смотрите логи api-go: прогон падает,")
+		fmt.Println("  и причина написана там (docker compose logs api-go | grep наблюдатель).")
+	}
+	return 0
 }
