@@ -9,7 +9,11 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
+
+	"moderation/internal/domain"
 )
 
 // Config — конфигурация сервиса. Список переменных растёт по мере переноса
@@ -28,6 +32,30 @@ type Config struct {
 	S3AccessKey string
 	S3SecretKey string
 	S3Region    string
+
+	// Сканеры содержимого. Имена переменных те же, что у python-версии
+	// (см. .env.example): обе версии читают один .env, и расхождение в именах
+	// означало бы, что шаг выключен в одной и включён в другой.
+	BannerScanEnabled bool
+	BannerRulesFile   string
+	BannerScanBin     string
+	BannerScanTimeout time.Duration
+	SASTEnabled       bool
+	SASTScannerBin    string
+	SASTRules         string
+	SASTTimeout       time.Duration
+	SASTMinSeverity   string
+
+	// Реестры пакетных менеджеров.
+	RegistryPyPIURL  string
+	RegistryNpmURL   string
+	RegistryGoProxy  string
+	RegistryNuGetURL string
+
+	// Лимиты.
+	MaxArtifactSizeBytes int64
+	ScanMaxUnpackedBytes int64
+	ScanMaxFiles         int
 }
 
 // Load читает конфигурацию через getenv (не os.Getenv напрямую — тестируемость,
@@ -44,6 +72,25 @@ func Load(getenv func(string) string) (*Config, error) {
 		S3AccessKey: getenv("S3_ACCESS_KEY"),
 		S3SecretKey: getenv("S3_SECRET_KEY"),
 		S3Region:    valueOr(getenv("S3_REGION"), "us-east-1"),
+
+		BannerScanEnabled: boolOr(getenv("BANNER_SCAN_ENABLED"), true),
+		BannerRulesFile:   valueOr(getenv("BANNER_RULES_FILE"), "/config/rules.yar"),
+		BannerScanBin:     valueOr(getenv("BANNER_SCANNER_BIN"), "yara"),
+		BannerScanTimeout: secondsOr(getenv("BANNER_SCAN_TIMEOUT_SECONDS"), 300),
+		SASTEnabled:       boolOr(getenv("SAST_ENABLED"), true),
+		SASTScannerBin:    valueOr(getenv("SAST_SCANNER_BIN"), "semgrep"),
+		SASTRules:         valueOr(getenv("SAST_RULES"), "p/default"),
+		SASTTimeout:       secondsOr(getenv("SAST_TIMEOUT_SECONDS"), 300),
+		SASTMinSeverity:   valueOr(getenv("SAST_MIN_SEVERITY"), "medium"),
+
+		RegistryPyPIURL:  valueOr(getenv("REGISTRY_PYPI_URL"), "https://pypi.org"),
+		RegistryNpmURL:   valueOr(getenv("REGISTRY_NPM_URL"), "https://registry.npmjs.org"),
+		RegistryGoProxy:  valueOr(getenv("REGISTRY_GO_PROXY"), "https://proxy.golang.org"),
+		RegistryNuGetURL: valueOr(getenv("REGISTRY_NUGET_URL"), "https://api.nuget.org"),
+
+		MaxArtifactSizeBytes: bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 512<<20),
+		ScanMaxUnpackedBytes: bytesOr(getenv("SCAN_MAX_UNPACKED_BYTES"), 512<<20),
+		ScanMaxFiles:         intOr(getenv("SCAN_MAX_FILES"), 20000),
 	}
 
 	if cfg.AppEnv != "dev" && cfg.AppEnv != "prod" {
@@ -61,6 +108,14 @@ func Load(getenv func(string) string) (*Config, error) {
 		}
 	}
 
+	// Порог SAST проверяем явно: опечатка в нём ("hight") молча превратилась бы
+	// в "medium" и тихо изменила бы то, какие находки блокируют публикацию.
+	if !domain.Contains([]string{"info", "low", "medium", "high", "critical"}, cfg.SASTMinSeverity) {
+		errs = append(errs, fmt.Errorf(
+			"SAST_MIN_SEVERITY: недопустимое значение %q, ожидается info|low|medium|high|critical",
+			cfg.SASTMinSeverity))
+	}
+
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("конфигурация невалидна (%d ошибок): %w", len(errs), errors.Join(errs...))
 	}
@@ -72,4 +127,38 @@ func valueOr(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+// valueOr и родственники: пустая переменная — это «не задано», а не «пусто».
+// Python-версия получала это бесплатно от pydantic_settings, в Go нужно явно.
+
+func boolOr(v string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func intOr(v string, fallback int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func bytesOr(v string, fallback int64) int64 {
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func secondsOr(v string, fallback int) time.Duration {
+	return time.Duration(intOr(v, fallback)) * time.Second
 }

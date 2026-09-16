@@ -2,7 +2,9 @@ package scanners
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -392,5 +394,61 @@ func TestSemgrepTimeoutIsUnavailable(t *testing.T) {
 	}
 	if out.Available {
 		t.Fatal("таймаут дал Available=true")
+	}
+}
+
+// TestYaraAgainstRealBinary — прогон НАСТОЯЩЕЙ yara, если она есть в PATH.
+//
+// Зачем отдельно от тестов на фейковом бинаре: те проверяют разбор вывода и
+// игнорируют аргументы, поэтому неверный флаг ими не ловится в принципе.
+// Именно так в код попал `--max-strings-per-rule 32`: в yara длинные опции
+// требуют формы `--опция=значение`, а само ограничение вдобавок не давало
+// скомпилироваться боевому набору правил (в нём есть правило с более чем 32
+// строками). Обнаружилось только живым прогоном.
+func TestYaraAgainstRealBinary(t *testing.T) {
+	if _, err := exec.LookPath("yara"); err != nil {
+		t.Skip("yara не установлена — пропускаю прогон на настоящем бинаре")
+	}
+
+	rules := filepath.Join(t.TempDir(), "rules.yar")
+	// Правило с числом строк заведомо больше 32: если в аргументы вернётся
+	// ограничение на строки, компиляция упадёт и тест это покажет.
+	var b strings.Builder
+	b.WriteString("rule many_strings {\n  strings:\n")
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&b, "    $s%d = \"маркер-%d\"\n", i, i)
+	}
+	b.WriteString("  condition:\n    any of them\n}\n")
+	if err := os.WriteFile(rules, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := scanTree(t, map[string]string{
+		"pkg/banner.js": "строка один\nconst msg = 'маркер-7';\nстрока три\n",
+		"pkg/clean.py":  "x = 1\n",
+	})
+
+	out, err := YaraScanner{RulesFile: rules}.Scan(context.Background(), root)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if !out.Available {
+		t.Fatalf("Available=false на настоящей yara: %s", out.Detail)
+	}
+	if len(out.Findings) != 1 {
+		t.Fatalf("находок %d, ожидалась 1: %+v", len(out.Findings), out.Findings)
+	}
+	f := out.Findings[0]
+	if f.RuleID != "many_strings" {
+		t.Errorf("RuleID = %q", f.RuleID)
+	}
+	if f.File != "pkg/banner.js" {
+		t.Errorf("File = %q, ожидался путь внутри пакета", f.File)
+	}
+	if f.Line != 2 {
+		t.Errorf("Line = %d, маркер на второй строке", f.Line)
+	}
+	if !strings.Contains(f.Matched, "маркер-7") {
+		t.Errorf("Matched = %q", f.Matched)
 	}
 }

@@ -24,15 +24,33 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/moderation ./cmd/moderation
 
 # --------------------------------------------------------------- рантайм
-FROM alpine:3.20
+# debian-slim, а не alpine: semgrep ставится через pip и официально musl не
+# поддерживает. Go-бинарник статический, ему база безразлична.
+FROM debian:12-slim
 
-# ca-certificates нужны для похода в реестры пакетных менеджеров и артефактори
-# по HTTPS. wget уже есть в busybox — им делается healthcheck.
-RUN apk add --no-cache ca-certificates
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ARG INSTALL_SEMGREP=true
+
+# yara — CLI для шага «Политические баннеры». В отличие от python-версии
+# (там yara-python, cgo-биндинг) здесь используется тот же бинарь, что и для
+# semgrep: два внешних сканера запускаются единообразно.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl yara python3 python3-pip \
+ && rm -rf /var/lib/apt/lists/*
+
+# semgrep — шаг SAST. Ставится отдельно и НЕ фатально: без него шаг честно
+# отдаёт «проверка не выполнена» и зовёт DevSecOps, а не притворяется, что
+# чисто. Тот же приём, что в backend/Dockerfile.
+RUN if [ "$INSTALL_SEMGREP" = "true" ]; then \
+      pip install --no-cache-dir --break-system-packages semgrep \
+      || echo "semgrep не установлен: шаг SAST будет требовать решения DevSecOps"; \
+    fi
 
 # Непривилегированный пользователь: сервис ничего не пишет на диск, кроме
 # временных каталогов распаковки.
-RUN adduser -D -u 10001 moderation
+RUN useradd -u 10001 -m moderation
 USER moderation
 
 COPY --from=build /out/moderation /usr/local/bin/moderation

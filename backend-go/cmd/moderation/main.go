@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,6 +25,24 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	// Подкоманды. Без аргументов — HTTP-сервер (поведение по умолчанию не
+	// меняется: так сервис запускается из docker-compose).
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "scan":
+			os.Exit(runScan(os.Args[2:], logger))
+		case "serve":
+			os.Args = append(os.Args[:1], os.Args[2:]...)
+		case "-h", "--help", "help":
+			usage()
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "неизвестная команда %q\n\n", os.Args[1])
+			usage()
+			os.Exit(2)
+		}
+	}
 
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -81,4 +100,17 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("ошибка при остановке HTTP-сервера", "error", err)
 	}
+}
+
+func usage() {
+	fmt.Fprint(os.Stderr, `Сервис модерации пакетов (Go-версия).
+
+Использование:
+  moderation [serve]          HTTP-сервер: health, метрики, выдача отчётов
+  moderation scan --item N    прогнать сканеры содержимого по пакету заявки N
+                              и записать отчёты
+
+Конфигурация — через переменные окружения, см. backend-go/README.md.
+Обязательна DATABASE_URL; для отчётов нужны также S3_*.
+`)
 }
