@@ -166,6 +166,40 @@ docker compose logs -f nginx api web
 | Кнопки входа нет | `LOCAL_AUTH_ENABLED=false` в `.env` (после правки — `make restart`) |
 | Шаг публикации падает | `ARTIFACT_DRY_RUN=false` без поднятого Nexus (`make up-all` поднимает и его) |
 | Каждый пакет уходит к DevSecOps | нет снапшота OSV — см. шаг 4 |
+| `pull access denied for minio/minio` при `make up`/`make up-all` | образ MinIO на Docker Hub закрыт — см. ниже |
+
+### Образ MinIO не скачивается
+
+```
+Error response from daemon: pull access denied for minio/minio,
+repository does not exist or may require 'docker login'
+```
+
+Это не про вашу машину и не про `docker login`: репозиторий `minio/minio` на
+Docker Hub больше не отдаётся анонимно. Проверяется в одну команду — Hub при
+этом работает:
+
+```bash
+docker pull postgres:16      # тянется
+docker pull minio/minio      # pull access denied
+```
+
+Рабочий путь — тот же MinIO из собственного реестра компании MinIO. Сначала
+убедитесь, что он тянется у вас, и только потом прописывайте в `.env`:
+
+```bash
+docker pull quay.io/minio/minio:latest
+echo 'MINIO_IMAGE=quay.io/minio/minio:latest' >> .env
+make up
+```
+
+Подойдёт и внутреннее зеркало образов, если оно у вас есть: сервису всё равно,
+откуда приехал контейнер, лишь бы это был MinIO — команда запуска в
+`docker-compose.yml` именно его (`server /data --console-address :9001`).
+
+Остальные образы стенда (`postgres:16`, `redis:7`, `sonatype/nexus3`) с Docker
+Hub тянутся анонимно — если не тянется вообще ничего, дело в сети или в
+корпоративном зеркале, а не в конкретном образе.
 
 ---
 
