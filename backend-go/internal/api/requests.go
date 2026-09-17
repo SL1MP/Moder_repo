@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"moderation/internal/auth"
 	"moderation/internal/config"
@@ -500,6 +502,18 @@ func (h *RequestsHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 
 	cancelled, err := h.Repo.CancelRequestItems(r.Context(), requestID)
 	if err != nil {
+		// Особый случай: база отвергла статус `cancelled`, потому что не
+		// накатили миграцию. Общее «Заявка не закрыта» тут бесполезно —
+		// пользователь видит ошибку и идти ему с ней некуда, а причина
+		// в развёртывании, а не в заявке. Поэтому ответ называет её прямо.
+		if isCheckViolation(err) {
+			writeError(w, r, errInternal(
+				"Закрытие заявки не настроено в базе: статус `cancelled` не разрешён "+
+					"CHECK-ограничением. Нужно накатить миграцию "+
+					"0011_cancel_request (или alembic 0006_cancel_request) — "+
+					"см. лог api-go при старте сервиса.").Because(err))
+			return
+		}
 		writeError(w, r, errInternal("Заявка не закрыта").Because(err))
 		return
 	}
@@ -576,4 +590,12 @@ func (h *RequestsHandler) auditCancel(r *http.Request, requestID int64, user *do
 		defaultLogger.Printf("[%s] аудит закрытия заявки #%d не записан: %v",
 			RequestID(r.Context()), requestID, err)
 	}
+}
+
+// isCheckViolation — база отвергла значение CHECK-ограничением (SQLSTATE
+// 23514). Почти всегда означает ненакатанную миграцию: код пишет значение,
+// которого в схеме ещё нет.
+func isCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
 }

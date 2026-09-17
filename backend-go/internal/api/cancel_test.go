@@ -189,3 +189,49 @@ func TestCancelledItemDropsOutOfRollup(t *testing.T) {
 		t.Errorf("статус второго пакета = %q — отмена тронула чужой пакет", item.Status)
 	}
 }
+
+// TestCancelExplainsMissingMigration — база не разрешает статус `cancelled`
+// (миграцию не накатили): ответ называет причину и миграцию, а не отдаёт
+// глухое «Заявка не закрыта».
+//
+// Тест написан по живому случаю: кнопка отвечала 500, и по ответу понять,
+// что дело в развёртывании, а не в заявке, было невозможно.
+func TestCancelExplainsMissingMigration(t *testing.T) {
+	f := newReadFixture(t)
+	ctx := context.Background()
+
+	const dropNew = `ALTER TABLE request_item DROP CONSTRAINT IF EXISTS request_item_status_check`
+	// NOT VALID: в общей тестовой базе уже есть строки со статусом
+	// `cancelled` от других тестов, и обычное ограничение на них не
+	// налезет. Проверку новых записей NOT VALID не отменяет — именно она
+	// здесь и нужна.
+	const addOld = `ALTER TABLE request_item ADD CONSTRAINT request_item_status_check CHECK (status IN (
+		'queued', 'running', 'quarantined', 'awaiting_legal', 'license_claimed',
+		'awaiting_security', 'approved', 'dry_run', 'rejected', 'revoked',
+		'blacklisted', 'failed')) NOT VALID`
+	const addNew = `ALTER TABLE request_item ADD CONSTRAINT request_item_status_check CHECK (status IN (
+		'queued', 'running', 'quarantined', 'awaiting_legal', 'license_claimed',
+		'awaiting_security', 'approved', 'dry_run', 'rejected', 'revoked',
+		'blacklisted', 'cancelled', 'failed'))`
+
+	if _, err := f.repo.Pool().Exec(ctx, dropNew); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.Pool().Exec(ctx, addOld); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := f.repo.Pool().Exec(context.Background(), dropNew); err != nil {
+			t.Fatalf("восстановление ограничения: %v", err)
+		}
+		if _, err := f.repo.Pool().Exec(context.Background(), addNew); err != nil {
+			t.Fatalf("восстановление ограничения: %v", err)
+		}
+	}()
+
+	rec := f.post(t, f.author, []string{"developer"}, f.cancelPath())
+	body := rec.Body.String()
+	if !strings.Contains(body, "0011_cancel_request") {
+		t.Fatalf("тело %s — ответ должен называть недостающую миграцию", body)
+	}
+}

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -181,6 +182,38 @@ def _yara_findings(match, data: bytes, relative: Path) -> list[CodeFinding]:
 # --------------------------------------------------------------- SAST (semgrep)
 _SEMGREP_SEVERITY = {"ERROR": "high", "WARNING": "medium", "INFO": "low"}
 
+_PROXY_VARS = (
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+)
+
+
+def _scanner_env(**extra: str) -> dict[str, str]:
+    """Окружение внешнего сканера: без ПУСТЫХ переменных прокси, плюс extra.
+
+    docker-compose прокидывает прокси как ``HTTP_PROXY: ${HTTP_PROXY:-}``, то
+    есть в контейнере переменная ЕСТЬ, но пустая, когда прокси не настроен.
+    Почти все инструменты читают это как «прокси нет», а semgrep-core (он на
+    OCaml) — падает::
+
+        [WARNING]: HTTPS_PROXY was supplied a URI with no scheme; augmenting it as https://
+        Fatal error: exception Invalid_argument: No host was provided in URI
+
+    Снаружи это выглядело как «SAST не работает», причём непонятно почему:
+    бинарь на месте, правила заданы, а отчёта нет. Пустая переменная и
+    отсутствующая означают одно и то же, поэтому пустую просто не передаём.
+
+    Непустые передаются как есть: за правилами ``p/default`` semgrep ходит в
+    реестр, и в закрытой сети без прокси он не работает.
+    """
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not (name in _PROXY_VARS and not value.strip())
+    }
+    env.update(extra)
+    return env
+
 
 class SemgrepSastScanner(ContentScanner):
     """SAST по исходникам пакета. Бинарь внешний — как и osv-scanner."""
@@ -212,6 +245,16 @@ class SemgrepSastScanner(ContentScanner):
                 text=True,
                 timeout=self.timeout + 60,
                 check=False,
+                # Окружение задаём явно: пустые переменные прокси semgrep-core
+                # роняют (см. _scanner_env), а телеметрия и проверка версии —
+                # сетевые вызовы, которых инструменту цепочки поставок здесь
+                # делать незачем. Переменными, а не флагами: незнакомый флаг
+                # старый semgrep отвергнет целиком, незнакомую переменную —
+                # просто не заметит.
+                env=_scanner_env(
+                    SEMGREP_SEND_METRICS="off",
+                    SEMGREP_ENABLE_VERSION_CHECK="0",
+                ),
             )
         except FileNotFoundError:
             return ScanOutcome(available=False, detail=f"сканер не установлен: {self.binary}")

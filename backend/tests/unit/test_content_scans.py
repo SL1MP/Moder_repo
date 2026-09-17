@@ -291,3 +291,37 @@ def test_severity_order_is_monotonic():
     """Порядок серьёзности — основа сравнения с порогом."""
     assert SEVERITY_ORDER.index("info") < SEVERITY_ORDER.index("high")
     assert SEVERITY_ORDER.index("high") < SEVERITY_ORDER.index("critical")
+
+
+# ------------------------------------------------- окружение внешнего сканера
+
+
+def test_scanner_env_drops_empty_proxy(monkeypatch):
+    """Пустые переменные прокси во внешний сканер не попадают.
+
+    Живой случай: docker-compose прокидывает ``HTTP_PROXY: ${HTTP_PROXY:-}``,
+    то есть в контейнере переменная есть, но пустая. semgrep-core на этом
+    падает («No host was provided in URI»), и SAST не работал вовсе, хотя
+    бинарь на месте и правила заданы.
+    """
+    from app.adapters.content_scan import _scanner_env
+
+    monkeypatch.setenv("HTTP_PROXY", "")
+    monkeypatch.setenv("HTTPS_PROXY", "   ")
+    monkeypatch.setenv("NO_PROXY", "localhost")
+
+    env = _scanner_env(SEMGREP_SEND_METRICS="off")
+
+    assert "HTTP_PROXY" not in env
+    assert "HTTPS_PROXY" not in env
+    # Непустые остаются: за правилами p/default semgrep ходит в реестр, и в
+    # закрытой сети без прокси он не работает.
+    assert env["NO_PROXY"] == "localhost"
+    assert env["SEMGREP_SEND_METRICS"] == "off"
+
+
+def test_scanner_env_keeps_real_proxy(monkeypatch):
+    from app.adapters.content_scan import _scanner_env
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.corp:3128")
+    assert _scanner_env()["HTTPS_PROXY"] == "http://proxy.corp:3128"

@@ -127,7 +127,7 @@ export function Pipeline({ steps }: { steps: Step[] }) {
           <div>
             <div className="title">{step.title}</div>
             {step.message ? <div className="msg">{step.message}</div> : null}
-            {step.details ? <StepDetails details={step.details} /> : null}
+            {step.details ? <StepDetails details={step.details} message={step.message} /> : null}
           </div>
           <div className="right nowrap">
             <Badge value={step.result} label={STEP_RESULT_LABELS[step.result]} />
@@ -177,12 +177,19 @@ const DETAIL_LABELS: Record<string, string> = {
   already_in_base: 'уже в базе',
 }
 
-function StepDetails({ details }: { details: Record<string, unknown> }) {
+function StepDetails({ details, message }: { details: Record<string, unknown>; message?: string | null }) {
   // report_json/report_html — ключи в объектном хранилище. Отчёты показаны
   // отдельным блоком со ссылками, а сырой ключ в деталях шага — шум.
   const hidden = ['findings', 'rule', 'report_json', 'report_html']
   const rows = Object.entries(details).filter(
-    ([key, value]) => value !== null && value !== undefined && !hidden.includes(key),
+    ([key, value]) =>
+      value !== null &&
+      value !== undefined &&
+      !hidden.includes(key) &&
+      // Деталь, которая целиком уже есть в сообщении шага, — повтор. Живой
+      // пример: упавший semgrep кладёт свой stderr и в сообщение, и в
+      // `detail`, и карточка показывала одну и ту же простыню дважды.
+      !(typeof value === 'string' && message && message.includes(value)),
   )
   const rule = details.rule as Record<string, unknown> | undefined
   if (!rows.length && !rule) return null

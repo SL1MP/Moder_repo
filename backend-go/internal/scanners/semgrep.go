@@ -71,6 +71,16 @@ func (s SemgrepScanner) Scan(ctx context.Context, root string) (Outcome, error) 
 		"--config", s.Rules,
 		root,
 	)
+	// Окружение задаём явно: пустые переменные прокси semgrep-core роняют
+	// (см. scannerEnv), а телеметрия и проверка версии — это сетевые вызовы,
+	// которых инструменту цепочки поставок здесь делать незачем. Настройки
+	// переменными, а не флагами: незнакомый флаг старый semgrep отвергнет
+	// целиком, а незнакомую переменную просто не заметит.
+	cmd.Env = scannerEnv(
+		"SEMGREP_SEND_METRICS=off",
+		"SEMGREP_ENABLE_VERSION_CHECK=0",
+	)
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -76,6 +76,11 @@ func (s YaraScanner) Scan(ctx context.Context, root string) (Outcome, error) {
 		s.RulesFile,
 		root,
 	)
+	// Тот же приём, что у semgrep: пустые переменные прокси во внешний
+	// процесс не передаём. yara в сеть не ходит, но единообразный запуск
+	// дешевле, чем два разных способа собрать окружение.
+	cmd.Env = scannerEnv()
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -7,6 +7,15 @@ name: moderation
 
 x-proxy-env: &proxy-env
   # Весь исходящий трафик наружу идёт через корпоративный прокси.
+  #
+  # Когда прокси не настроен, переменные попадают в контейнер ПУСТЫМИ (такова
+  # подстановка `${VAR:-}`), и это не безобидно: semgrep-core на пустом
+  # HTTP_PROXY падает с «No host was provided in URI», из-за чего SAST не
+  # работал вовсе. Пустые значения вычищаются перед запуском внешних сканеров
+  # (backend-go/internal/scanners/scanners.go::scannerEnv и
+  # backend/app/adapters/content_scan.py::_scanner_env) — здесь оставлено как
+  # есть, потому что список должен остаться словарём: его подмешивают в
+  # `environment:` сервисов ключом слияния.
   HTTP_PROXY: ${HTTP_PROXY:-}
   HTTPS_PROXY: ${HTTPS_PROXY:-}
   http_proxy: ${HTTP_PROXY:-}

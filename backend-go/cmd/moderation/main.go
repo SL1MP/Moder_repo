@@ -74,6 +74,14 @@ func main() {
 	options, blacklist := buildOptions(cfg, pool, logger)
 	_ = blacklist // политики попадают в конвейер вместе с переносом шагов 0-3
 
+	// Сверка схемы с тем, что пишет код. Не фатально — сервис обязан отвечать
+	// health и отдавать чтение даже на неполной схеме, — но громко: иначе
+	// расхождение всплывает как случайная ошибка при нажатии кнопки. Так и
+	// было: кнопка закрытия заявки отвечала 500, потому что в базе не
+	// применили миграцию со статусом `cancelled`, и понять это по ответу
+	// было невозможно.
+	checkSchema(ctx, pool, logger)
+
 	// Наблюдатель сканирования. Требует хранилища: отчёты некуда класть без
 	// него, и запускать прогон впустую незачем.
 	//
@@ -280,4 +288,29 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	}
 
 	return options, blacklist
+}
+
+// checkSchema сверяет CHECK-ограничения базы со значениями, которые пишет код,
+// и называет миграцию, которой не хватает.
+func checkSchema(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) {
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	gaps, err := repo.New(pool).MissingCheckValues(checkCtx)
+	if err != nil {
+		logger.Warn("схему сверить не удалось — расхождение с миграциями останется незамеченным",
+			"error", err)
+		return
+	}
+	if len(gaps) == 0 {
+		logger.Info("схема базы согласована с кодом")
+		return
+	}
+	for _, gap := range gaps {
+		logger.Error("СХЕМА БАЗЫ УСТАРЕЛА: "+gap.String(),
+			"таблица", gap.Table, "столбец", gap.Column,
+			"значение", gap.Value, "миграция", gap.Migration)
+	}
+	logger.Error("часть действий будет отвечать ошибкой, пока миграции не накатят",
+		"пробелов", len(gaps))
 }

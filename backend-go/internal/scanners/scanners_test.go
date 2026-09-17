@@ -452,3 +452,99 @@ func TestYaraAgainstRealBinary(t *testing.T) {
 		t.Errorf("Matched = %q", f.Matched)
 	}
 }
+
+// envDumpBinary кладёт скрипт, который сохраняет своё окружение в файл и
+// печатает пустой JSON-отчёт. Так проверяется именно то, ЧТО сканер получает
+// на вход, — а не то, что мы думаем, будто передали.
+//
+// Окружение пишется в файл, а не в stderr: stderr сканера читается только в
+// ветке неудачи, и успешный прогон его не сохраняет.
+func envDumpBinary(t *testing.T) (binary, envFile string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("фейковый бинарь собирается через sh — тест для unix-окружения")
+	}
+	dir := t.TempDir()
+	binary = filepath.Join(dir, "env-dump")
+	envFile = filepath.Join(dir, "env.txt")
+	script := "#!/bin/sh\nenv > " + envFile + "\n" +
+		`echo '{"results": [], "errors": [], "paths": {"scanned": []}}'` + "\n"
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatalf("запись фейкового бинаря: %v", err)
+	}
+	return binary, envFile
+}
+
+// scannerEnvFrom читает окружение, с которым запустился фейковый сканер.
+func scannerEnvFrom(t *testing.T, envFile string) map[string]string {
+	t.Helper()
+	body, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("чтение окружения сканера: %v", err)
+	}
+	env := map[string]string{}
+	for _, line := range strings.Split(string(body), "\n") {
+		name, value, ok := strings.Cut(line, "=")
+		if ok {
+			env[name] = value
+		}
+	}
+	return env
+}
+
+// Пустые переменные прокси во внешний сканер не попадают.
+//
+// Живой случай: docker-compose прокидывает `HTTP_PROXY: ${HTTP_PROXY:-}`, то
+// есть в контейнере переменная есть, но пустая. semgrep-core на этом падает
+// («No host was provided in URI»), и SAST не работал вовсе, хотя бинарь на
+// месте и правила заданы.
+func TestSemgrepDropsEmptyProxyVars(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "")
+	t.Setenv("HTTPS_PROXY", "")
+	t.Setenv("NO_PROXY", "localhost")
+
+	binary, envFile := envDumpBinary(t)
+	s := SemgrepScanner{Binary: binary, Rules: "p/default"}
+	out, err := s.Scan(context.Background(), scanTree(t, map[string]string{"a.py": "x = 1\n"}))
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if !out.Available {
+		t.Fatalf("сканер отчитался недоступным: %s", out.Detail)
+	}
+
+	env := scannerEnvFrom(t, envFile)
+	if _, ok := env["HTTP_PROXY"]; ok {
+		t.Error("пустой HTTP_PROXY передан сканеру — semgrep-core на этом падает")
+	}
+	if _, ok := env["HTTPS_PROXY"]; ok {
+		t.Error("пустой HTTPS_PROXY передан сканеру")
+	}
+	// Непустые остаются: за правилами p/default semgrep ходит в реестр, и в
+	// закрытой сети без прокси он не работает.
+	if env["NO_PROXY"] != "localhost" {
+		t.Errorf("NO_PROXY = %q, непустая переменная должна дойти до сканера", env["NO_PROXY"])
+	}
+	// Телеметрия и проверка версии — сетевые вызовы, которых здесь быть не должно.
+	if env["SEMGREP_SEND_METRICS"] != "off" {
+		t.Errorf("SEMGREP_SEND_METRICS = %q, ожидалось off", env["SEMGREP_SEND_METRICS"])
+	}
+	if env["SEMGREP_ENABLE_VERSION_CHECK"] != "0" {
+		t.Errorf("SEMGREP_ENABLE_VERSION_CHECK = %q, ожидался 0",
+			env["SEMGREP_ENABLE_VERSION_CHECK"])
+	}
+}
+
+// Непустой прокси доходит до сканера без изменений.
+func TestSemgrepKeepsRealProxy(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://proxy.corp:3128")
+
+	binary, envFile := envDumpBinary(t)
+	s := SemgrepScanner{Binary: binary, Rules: "p/default"}
+	if _, err := s.Scan(context.Background(), scanTree(t, map[string]string{"a.py": "x = 1\n"})); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if got := scannerEnvFrom(t, envFile)["HTTP_PROXY"]; got != "http://proxy.corp:3128" {
+		t.Fatalf("HTTP_PROXY = %q — настроенный прокси не дошёл до сканера", got)
+	}
+}

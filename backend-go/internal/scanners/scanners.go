@@ -231,3 +231,45 @@ func notFound(err error) bool {
 // сканера: убитый процесс закрывает свой конец трубы, а унаследовавший её
 // потомок — нет, и Run ждёт его молча, уже за пределами собственного таймаута.
 const waitDelay = 15 * time.Second
+
+// proxyVars — переменные, которыми настраивается исходящий прокси.
+var proxyVars = []string{
+	"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+	"http_proxy", "https_proxy", "all_proxy", "no_proxy",
+}
+
+// scannerEnv — окружение для внешнего сканера: окружение сервиса минус
+// ПУСТЫЕ переменные прокси, плюс extra.
+//
+// Зачем вычищать пустые. docker-compose прокидывает прокси как
+// `HTTP_PROXY: ${HTTP_PROXY:-}`, то есть в контейнере переменная ЕСТЬ, но
+// пустая, когда прокси не настроен. Почти все инструменты читают это как
+// «прокси нет», а semgrep-core (он на OCaml) — падает:
+//
+//	[WARNING]: HTTPS_PROXY was supplied a URI with no scheme; augmenting it as https://
+//	Fatal error: exception Invalid_argument: No host was provided in URI
+//
+// Снаружи это выглядело как «SAST не работает», причём непонятно почему:
+// бинарь на месте, правила заданы, а отчёта нет. Пустая переменная и
+// отсутствующая означают одно и то же, поэтому пустую просто не передаём.
+//
+// Непустые переменные передаются как есть: за правилами `p/default` semgrep
+// ходит в реестр, и в закрытой сети без прокси он не работает.
+func scannerEnv(extra ...string) []string {
+	empty := map[string]bool{}
+	for _, name := range proxyVars {
+		if value, ok := os.LookupEnv(name); ok && strings.TrimSpace(value) == "" {
+			empty[name] = true
+		}
+	}
+
+	env := make([]string, 0, len(os.Environ())+len(extra))
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if empty[name] {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env, extra...)
+}
