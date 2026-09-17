@@ -11,7 +11,8 @@
 // а не после решения юриста. Публикация не состоится, пока не сняты все
 // блокировки. Отдельной сущности «блокировка» нет: шаг считается непогашенным,
 // пока строка pipeline_step имеет результат warn (или fail у vuln_scan) —
-// см. blockers.go.
+// см. blockers.go. Из этой механики выведен SAST: он информационный, его
+// результат публикацию не блокирует никогда.
 //
 // Одно сознательное отличие от Python-версии: проверка security_override_at
 // там продублирована в каждом из трёх шагов сканирования (отмеченный в
@@ -21,7 +22,8 @@ package pipeline
 
 // StepOutcome — результат одного шага конвейера.
 type StepOutcome struct {
-	// Result — то, что пишется в pipeline_step.result: pass | warn | fail.
+	// Result — то, что пишется в pipeline_step.result:
+	// pass | info | warn | fail.
 	Result  string
 	Message string
 	Details map[string]any
@@ -67,6 +69,17 @@ func Fail(message string) StepOutcome {
 // остальных.
 func Pending(message string) StepOutcome {
 	return StepOutcome{Result: "warn", Message: message, Defer: true}
+}
+
+// Info — шаг выполнен, публикацию не блокирует, но сказать по нему есть что:
+// находки сохранены и попали в отчёт.
+//
+// Отдельный результат, а не pass, потому что «пройден» рядом с четырьмя
+// находками читается как «чисто». И не warn: warn означает непогашенное
+// согласование (см. blockers.go), а информационный шаг ничьего решения не
+// ждёт. Таким шагом сделан SAST: находки нужны для отчёта, а не для запрета.
+func Info(message string) StepOutcome {
+	return StepOutcome{Result: "info", Message: message}
 }
 
 // with-методы: шаги собирают исход цепочкой, чтобы не плодить конструкторы с

@@ -76,7 +76,10 @@ STEP_TITLES: dict[str, str] = {
     "publish": "Выгрузка в артефактори",
 }
 
-STEP_RESULTS: tuple[str, ...] = ("pending", "pass", "warn", "fail", "skipped")
+# info — шаг выполнен, публикацию не блокирует, но сказать по нему есть что:
+# так отдаёт результат SAST (см. app/pipeline/steps.py::SastScanStep). Отдельное
+# значение, а не pass: «пройден» рядом с находками читается как «чисто».
+STEP_RESULTS: tuple[str, ...] = ("pending", "pass", "info", "warn", "fail", "skipped")
 
 ARTIFACT_STATUSES: tuple[str, ...] = ("downloaded", "scanned", "published", "purged", "failed")
 

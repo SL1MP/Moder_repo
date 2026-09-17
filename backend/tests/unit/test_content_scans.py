@@ -182,32 +182,25 @@ def test_clean_package_passes_both_scans(session, users, content_scanners, store
 
 def test_unavailable_scanner_does_not_mean_clean(session, users, content_scanners):
     """Нет правил или бинаря — пакет уходит DevSecOps, а не проходит молча."""
-    content_scanners.sast.available = False
-    content_scanners.sast.detail = "сканер не установлен: semgrep"
+    content_scanners.banner.available = False
+    content_scanners.banner.detail = "правила не найдены: /config/rules.yar"
     _, item = make_request(session, users["developer"])
 
     run_pipeline(session, item)
 
     steps = steps_by_code(item)
-    assert steps["sast_scan"].result == "warn"
-    assert "не выполнена" in steps["sast_scan"].message
+    assert steps["banner_scan"].result == "warn"
+    assert "не выполнена" in steps["banner_scan"].message
     assert item.status == "awaiting_security"
 
 
-def test_sast_below_threshold_passes(session, users, content_scanners, finding_factory_code):
-    """Порог SAST настраиваемый: находки ниже него не блокируют публикацию."""
-    content_scanners.sast.findings = [
-        finding_factory_code(scanner="semgrep", severity="low", rule_id="python.lang.style")
-    ]
-    _, item = make_request(session, users["developer"])
+def test_sast_never_blocks_publication(session, users, content_scanners, finding_factory_code, store):
+    """SAST информационный: находки выше порога публикацию не задерживают.
 
-    run_pipeline(session, item)
-
-    assert steps_by_code(item)["sast_scan"].result == "pass"
-    assert item.status == "approved"
-
-
-def test_sast_above_threshold_blocks(session, users, content_scanners, finding_factory_code):
+    Причина — природа находок: semgrep на исходниках библиотеки размечает
+    eval/exec, которые для половины пакетов нормальная работа. Блокировка
+    означала бы ручное подтверждение каждого второго пакета.
+    """
     content_scanners.sast.findings = [
         finding_factory_code(scanner="semgrep", severity="critical", rule_id="python.lang.eval")
     ]
@@ -215,8 +208,45 @@ def test_sast_above_threshold_blocks(session, users, content_scanners, finding_f
 
     run_pipeline(session, item)
 
-    assert steps_by_code(item)["sast_scan"].result == "warn"
-    assert item.status == "awaiting_security"
+    steps = steps_by_code(item)
+    # info, а не pass: «пройден» рядом с находкой читается как «чисто».
+    assert steps["sast_scan"].result == "info"
+    assert "найдено срабатываний — 1" in steps["sast_scan"].message
+    assert "sast_scan" not in pending_blockers(item)
+    assert item.status == "approved"
+    assert store.published
+    # Находка при этом сохранена — она и есть смысл шага.
+    assert session.query(CodeFinding).filter_by(scanner="semgrep").count() == 1
+
+
+def test_sast_unavailable_is_not_silent_pass(session, users, content_scanners):
+    """Неотработавший SAST публикацию не держит, но и «чисто» не значит."""
+    content_scanners.sast.available = False
+    content_scanners.sast.detail = "сканер не установлен: semgrep"
+    _, item = make_request(session, users["developer"])
+
+    run_pipeline(session, item)
+
+    steps = steps_by_code(item)
+    assert steps["sast_scan"].result == "info"
+    assert "НЕ выполнена" in steps["sast_scan"].message
+    assert item.status == "approved"
+
+
+def test_sast_below_threshold_is_reported(session, users, content_scanners, finding_factory_code):
+    """Порог SAST остаётся в силе для отчёта: видно, сколько из находок выше него."""
+    content_scanners.sast.findings = [
+        finding_factory_code(scanner="semgrep", severity="low", rule_id="python.lang.style")
+    ]
+    _, item = make_request(session, users["developer"])
+
+    run_pipeline(session, item)
+
+    step = steps_by_code(item)["sast_scan"]
+    assert step.result == "info"
+    assert step.details["findings_total"] == 1
+    assert step.details["findings_blocking"] == 0
+    assert item.status == "approved"
 
 
 def test_disabled_step_is_skipped(session, users, content_scanners, monkeypatch):
@@ -234,14 +264,19 @@ def test_disabled_step_is_skipped(session, users, content_scanners, monkeypatch)
 def test_devsecops_decision_clears_all_its_checks(
     session, users, content_scanners, finding_factory_code, store
 ):
-    """Одно решение DevSecOps закрывает и уязвимости, и баннеры, и SAST."""
+    """Одно решение DevSecOps закрывает и уязвимости, и баннеры.
+
+    SAST в этот список не входит: он информационный, публикацию не держит, и
+    снимать по нему нечего.
+    """
     content_scanners.banner.findings = [finding_factory_code()]
     content_scanners.sast.findings = [
         finding_factory_code(scanner="semgrep", severity="critical", rule_id="python.lang.eval")
     ]
     _, item = make_request(session, users["developer"])
     run_pipeline(session, item)
-    assert {"banner_scan", "sast_scan"} <= set(pending_blockers(item))
+    assert "banner_scan" in pending_blockers(item)
+    assert "sast_scan" not in pending_blockers(item)
 
     decisions.decide_security(
         session, item, approve=True, actor=users["devsecops"], comment="Разобрано, ложное"

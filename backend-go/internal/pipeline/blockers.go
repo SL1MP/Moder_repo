@@ -16,13 +16,15 @@ import "moderation/internal/domain"
 // BlockerPriority — порядок по «блокирующей силе». Статус у пакета один, а
 // ждать он может двух решений сразу; показываем самое блокирующее, чтобы
 // статус не «слабел» при действиях по менее важному шагу.
-var BlockerPriority = []string{"vuln_scan", "banner_scan", "sast_scan", "license", "quarantine"}
+//
+// sast_scan здесь нет и быть не должно: SAST — информационный шаг, он ничьего
+// решения не ждёт (см. contentScanStep.advisory).
+var BlockerPriority = []string{"vuln_scan", "banner_scan", "license", "quarantine"}
 
 // BlockerStatus — статус пакета, пока шаг не погашен.
 var BlockerStatus = map[string]string{
 	"vuln_scan":   "awaiting_security",
 	"banner_scan": "awaiting_security",
-	"sast_scan":   "awaiting_security",
 	"license":     "awaiting_legal",
 	"quarantine":  "quarantined",
 }
@@ -32,12 +34,14 @@ var BlockerStatus = map[string]string{
 // порога. Оба уходят к DevSecOps, а не отклоняют пакет сами по себе.
 var OpenResults = map[string][]string{
 	"vuln_scan": {"warn", "fail"},
-	// Сканеры содержимого конвейер не останавливают: находка уходит DevSecOps
+	// Баннерный сканер конвейер не останавливает: находка уходит DevSecOps
 	// как warn, чтобы он увидел все срабатывания разом, а не по одному.
 	"banner_scan": {"warn"},
-	"sast_scan":   {"warn"},
-	"license":     {"warn"},
-	"quarantine":  {"warn"},
+	// sast_scan не указан СОЗНАТЕЛЬНО: результат SAST не блокирует публикацию
+	// ни при каком значении. Пустой список тут равносилен отсутствию ключа, но
+	// отсутствие — это ещё и то, что видно при чтении: шага в таблице нет.
+	"license":    {"warn"},
+	"quarantine": {"warn"},
 }
 
 // BlockerRole — кто выносит решение. У карантина роли нет: это срок, а не
@@ -45,7 +49,6 @@ var OpenResults = map[string][]string{
 var BlockerRole = map[string]string{
 	"vuln_scan":   "devsecops",
 	"banner_scan": "devsecops",
-	"sast_scan":   "devsecops",
 	"license":     "legal",
 	"quarantine":  "",
 }
@@ -54,7 +57,6 @@ var BlockerRole = map[string]string{
 var BlockerWaitingFor = map[string]string{
 	"vuln_scan":   "DevSecOps",
 	"banner_scan": "DevSecOps",
-	"sast_scan":   "DevSecOps",
 	"license":     "юристов",
 	"quarantine":  "окончания карантина",
 }
@@ -62,7 +64,12 @@ var BlockerWaitingFor = map[string]string{
 // SecurityBlockers — шаги, которые снимает одно решение DevSecOps: он
 // принимает решение по содержимому пакета целиком, а не по каждому сканеру
 // отдельно.
-var SecurityBlockers = []string{"vuln_scan", "banner_scan", "sast_scan"}
+//
+// sast_scan сюда не входит: снимать нечего, его результат публикацию не
+// держит. Строки sast_scan со старым результатом warn миграция 0010
+// перевела в info — без этого карточка показывала «остановка» по шагу,
+// который уже ничего не останавливает.
+var SecurityBlockers = []string{"vuln_scan", "banner_scan"}
 
 // PendingBlockers — шаги, ждущие решения роли, в порядке убывания блокирующей
 // силы.

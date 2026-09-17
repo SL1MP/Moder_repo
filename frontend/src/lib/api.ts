@@ -101,7 +101,8 @@ export interface Step {
   code: string
   order: number
   title: string
-  result: 'pending' | 'pass' | 'warn' | 'fail' | 'skipped'
+  // info — шаг выполнен, публикацию не блокирует (SAST), см. STEP_RESULT_LABELS
+  result: 'pending' | 'pass' | 'info' | 'warn' | 'fail' | 'skipped'
   message: string | null
   details: Record<string, unknown> | null
   started_at: string | null

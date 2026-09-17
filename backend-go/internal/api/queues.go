@@ -46,7 +46,9 @@ func MountQueues(r chi.Router, h *QueuesHandler, a *Auth) {
 func (h *QueuesHandler) Security(w http.ResponseWriter, r *http.Request) {
 	h.queue(w, r,
 		[]string{"awaiting_security", "quarantined"},
-		[]string{"vuln_scan", "banner_scan", "sast_scan", "quarantine"})
+		// sast_scan в списке нет: SAST информационный, решения DevSecOps по
+		// нему не требуется, и пакет не должен попадать в очередь из-за него.
+		[]string{"vuln_scan", "banner_scan", "quarantine"})
 }
 
 // Legal — GET /api/v1/queue/legal.

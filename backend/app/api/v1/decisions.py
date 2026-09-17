@@ -59,7 +59,9 @@ def queue_security(
     return _queue(
         session,
         ["awaiting_security", "quarantined"],
-        steps=["vuln_scan", "banner_scan", "sast_scan", "quarantine"],
+        # sast_scan в списке нет: SAST информационный, решения DevSecOps по
+        # нему не требуется, и пакет не должен попадать в очередь из-за него.
+        steps=["vuln_scan", "banner_scan", "quarantine"],
     )
 
 

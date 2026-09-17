@@ -212,10 +212,11 @@ func TestSecurityApprovalReachesSiblings(t *testing.T) {
 		t.Errorf("конвейер чужой заявки возобновлён с %q (ok=%v), ожидался download", from, ok)
 	}
 
-	// Одно решение DevSecOps снимает ВСЕ ТРИ блокировки в ОБЕИХ заявках: он
-	// решает по содержимому пакета целиком, а не по каждому сканеру отдельно.
+	// Одно решение DevSecOps снимает блокировки по содержимому в ОБЕИХ
+	// заявках: он решает по пакету целиком, а не по каждому сканеру отдельно.
+	// SAST в этот список не входит — он информационный, снимать там нечего.
 	for _, item := range []*domain.RequestItem{f.first, f.second} {
-		for _, code := range []string{"vuln_scan", "banner_scan", "sast_scan"} {
+		for _, code := range []string{"vuln_scan", "banner_scan"} {
 			if got := stepResult(t, r, item.ID, code); got != "pass" {
 				t.Errorf("заявка %d, шаг %s = %q, ожидался pass", item.ID, code, got)
 			}

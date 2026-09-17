@@ -21,6 +21,10 @@
   --warn: #e3ac48;
   --fail: #ff3b3b;
   --skip: #7a7a80;
+  /* info — шаг выполнен и публикацию не держит, но сказать по нему есть что
+     (находки SAST). Не зелёный: «пройден» рядом с находками читается как
+     «чисто». Не жёлтый: жёлтый в карточке значит «ждём решения». */
+  --info: #6aa7ff;
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   --radius: 3px;
   color-scheme: dark;
@@ -133,6 +137,7 @@ button.small { padding: 3px 7px; font-size: 12px; }
 .badge.fail, .badge.rejected, .badge.revoked, .badge.blacklisted, .badge.failed {
   background: #2c1618; border-color: #6e2f2c; color: #ff9d95;
 }
+.badge.info { background: #14212e; border-color: #2c4c6b; color: #8cc0ff; }
 .badge.skipped { background: #1c2027; border-color: var(--border-strong); color: var(--skip); }
 .badge.mono { font-family: var(--mono); border-radius: 4px; }
 
@@ -173,6 +178,7 @@ button.small { padding: 3px 7px; font-size: 12px; }
 .step.pass { border-left-color: var(--pass); }
 .step.warn { border-left-color: var(--warn); }
 .step.fail { border-left-color: var(--fail); }
+.step.info { border-left-color: var(--info); }
 .step.pending { border-left-color: var(--accent); }
 .step .idx { color: var(--text-faint); font-family: var(--mono); text-align: center; }
 .step .title { font-weight: 500; }

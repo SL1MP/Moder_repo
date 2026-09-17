@@ -109,6 +109,10 @@ export function Vulns({ items }: { items: Vulnerability[] }) {
 // возник вопрос «почему проверка застряла» — она не начиналась.
 const STEP_RESULT_LABELS: Record<string, string> = {
   pending: 'не начат',
+  // info — шаг выполнен, публикацию не блокирует, но по нему есть что сказать:
+  // так отдаёт результат SAST. «Пройден» здесь читалось бы как «чисто», хотя
+  // находки есть и лежат в отчёте.
+  info: 'информация',
 }
 
 export function Pipeline({ steps }: { steps: Step[] }) {
@@ -152,14 +156,30 @@ const DETAIL_LABELS: Record<string, string> = {
   license_raw: 'лицензия в метаданных',
   reason: 'причина',
   findings_count: 'найдено уязвимостей',
+  // Два числа у сканеров содержимого: сколько нашли всего и сколько из этого
+  // выше порога. Одного не хватало — «найдено 4, выше порога 0» самый частый
+  // случай, и по одному числу он читался неверно.
+  findings_total: 'находок сканера',
+  findings_blocking: 'из них выше порога',
+  advisory: 'информационный шаг',
+  scanner_unavailable: 'сканер не отработал',
+  state: 'состояние прогона',
+  rules: 'сработавшие правила',
+  detail: 'подробности прогона',
+  notes: 'замечания распаковки',
+  decided_by: 'решение принял',
+  count: 'срабатываний выше порога',
   age_days: 'возраст снапшота, дней',
   confirmed_for_other_version: 'подтверждена для версии',
   already_in_base: 'уже в базе',
 }
 
 function StepDetails({ details }: { details: Record<string, unknown> }) {
+  // report_json/report_html — ключи в объектном хранилище. Отчёты показаны
+  // отдельным блоком со ссылками, а сырой ключ в деталях шага — шум.
+  const hidden = ['findings', 'rule', 'report_json', 'report_html']
   const rows = Object.entries(details).filter(
-    ([key, value]) => value !== null && value !== undefined && key !== 'findings' && key !== 'rule',
+    ([key, value]) => value !== null && value !== undefined && !hidden.includes(key),
   )
   const rule = details.rule as Record<string, unknown> | undefined
   if (!rows.length && !rule) return null

@@ -210,11 +210,12 @@ def decide_security(
         # Разрешение записано на версии пакета — применяем ко всем заявкам с ней.
         _apply_to_siblings(
             session, item, ("awaiting_security",), actor=actor, source=source,
-            from_step="download", note=note, clear_step=("vuln_scan", "banner_scan", "sast_scan"),
+            from_step="download", note=note, clear_step=("vuln_scan", "banner_scan"),
         )
-        # Разрешение DevSecOps закрывает все его проверки разом: уязвимости,
-        # политические баннеры и SAST — по каждой из них решение уже принято.
-        for code in ("vuln_scan", "banner_scan", "sast_scan"):
+        # Разрешение DevSecOps закрывает обе его проверки разом: уязвимости и
+        # политические баннеры. SAST в список не входит — он информационный,
+        # публикацию не держит, и снимать там нечего (см. blockers.py).
+        for code in ("vuln_scan", "banner_scan"):
             clear_blocker(session, item, code, note)
         # Артефакт был удалён из MinIO при отклонении на шаге 5 — перекачиваем.
         return resume_item(session, item, actor=actor, source=source, from_step="download", note=note)

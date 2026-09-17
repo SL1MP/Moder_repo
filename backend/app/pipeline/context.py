@@ -17,7 +17,7 @@ from app.managers.registry import get_plugin
 class StepOutcome:
     """Результат шага конвейера."""
 
-    result: str  # pass | warn | fail
+    result: str  # pass | info | warn | fail
     message: str
     details: dict[str, Any] | None = None
     stop: bool = False
@@ -53,6 +53,18 @@ class StepOutcome:
         kwargs.setdefault("stop", False)
         kwargs.setdefault("defer", True)
         return cls(result="warn", message=message, **kwargs)
+
+    @classmethod
+    def info(cls, message: str, **kwargs: Any) -> StepOutcome:
+        """Шаг выполнен, публикацию не блокирует, но сказать по нему есть что.
+
+        Отдельный результат, а не `pass`: «пройден» рядом с четырьмя находками
+        читается как «чисто». И не `warn`: warn означает непогашенное
+        согласование (см. blockers.py), а информационный шаг ничьего решения не
+        ждёт. Таким шагом сделан SAST — находки нужны для отчёта, а не для
+        запрета.
+        """
+        return cls(result="info", message=message, **kwargs)
 
 
 @dataclass

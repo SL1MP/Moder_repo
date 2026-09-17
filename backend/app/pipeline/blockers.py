@@ -9,6 +9,9 @@
 непогашенным, пока строка `pipeline_step` имеет результат `warn`. Снятие —
 отметка шага пройденным. Так состояние остаётся в одном месте и сразу видно в
 карточке заявки.
+
+Из этой механики выведен SAST: он информационный, его результат публикацию не
+блокирует никогда, и в таблицах ниже его нет.
 """
 
 from __future__ import annotations
@@ -20,17 +23,17 @@ from app.db.models import RequestItem
 
 # Какой роли принадлежит решение по каждому шагу. Порядок кортежа —
 # по «блокирующей силе», он же используется в recompute_request_status.
+# sast_scan в этих таблицах нет и быть не должно: SAST — информационный шаг,
+# он ничьего решения не ждёт и публикацию не задерживает (см. SastScanStep).
 BLOCKER_STATUS: dict[str, str] = {
     "vuln_scan": "awaiting_security",
     "banner_scan": "awaiting_security",
-    "sast_scan": "awaiting_security",
     "license": "awaiting_legal",
     "quarantine": "quarantined",
 }
 BLOCKER_PRIORITY: tuple[str, ...] = (
     "vuln_scan",
     "banner_scan",
-    "sast_scan",
     "license",
     "quarantine",
 )
@@ -40,10 +43,9 @@ BLOCKER_PRIORITY: tuple[str, ...] = (
 # порога. Оба уходят к DevSecOps, а не отклоняют пакет сами по себе.
 OPEN_RESULTS: dict[str, tuple[str, ...]] = {
     "vuln_scan": ("warn", "fail"),
-    # Сканеры содержимого конвейер не останавливают: находка уходит DevSecOps
+    # Баннерный сканер конвейер не останавливает: находка уходит DevSecOps
     # как `warn`, чтобы он увидел все срабатывания разом, а не по одному.
     "banner_scan": ("warn",),
-    "sast_scan": ("warn",),
     "license": ("warn",),
     "quarantine": ("warn",),
 }
@@ -55,14 +57,12 @@ OPEN_RESULTS: dict[str, tuple[str, ...]] = {
 BLOCKER_ROLE: dict[str, str | None] = {
     "vuln_scan": "devsecops",
     "banner_scan": "devsecops",
-    "sast_scan": "devsecops",
     "license": "legal",
     "quarantine": None,  # срок, а не решение роли
 }
 BLOCKER_WAITING_FOR: dict[str, str] = {
     "vuln_scan": "DevSecOps",
     "banner_scan": "DevSecOps",
-    "sast_scan": "DevSecOps",
     "license": "юристов",
     "quarantine": "окончания карантина",
 }

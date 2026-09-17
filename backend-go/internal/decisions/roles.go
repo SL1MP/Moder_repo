@@ -63,9 +63,10 @@ func (s *Service) ReleaseQuarantine(ctx context.Context, item *domain.RequestIte
 // DecideSecurity — решение DevSecOps по пакету, остановленному на шаге
 // уязвимостей или сканирования содержимого.
 //
-// Одобрение снимает сразу ТРИ блокировки (vuln_scan, banner_scan, sast_scan):
-// DevSecOps принимает решение по содержимому пакета целиком, а не по каждому
-// сканеру отдельно.
+// Одобрение снимает обе блокировки по содержимому (vuln_scan, banner_scan):
+// DevSecOps принимает решение по пакету целиком, а не по каждому сканеру
+// отдельно. SAST в этот список не входит — он информационный (см.
+// pipeline.SecurityBlockers).
 func (s *Service) DecideSecurity(ctx context.Context, item *domain.RequestItem, approve bool, actorID int64, comment string) (*Result, error) {
 	if item.Status != "awaiting_security" {
 		return nil, fmt.Errorf("%w: пакет не ждёт решения DevSecOps (текущий статус: %s)",

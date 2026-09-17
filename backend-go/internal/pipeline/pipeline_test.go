@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"moderation/internal/domain"
 	"moderation/internal/osv"
 	"moderation/internal/pipeline"
 	"moderation/internal/policy"
@@ -377,7 +378,7 @@ func TestUnavailableScannerIsNotClean(t *testing.T) {
 	ctx := context.Background()
 
 	e := newEnv(t, r)
-	e.sast.outcome = scanners.Outcome{Available: false, Detail: "сканер не установлен: semgrep"}
+	e.banner.outcome = scanners.Outcome{Available: false, Detail: "правила не найдены: /config/rules.yar"}
 	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
 
 	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
@@ -388,13 +389,125 @@ func TestUnavailableScannerIsNotClean(t *testing.T) {
 		t.Fatalf("ItemStatus = %q — недоступный сканер прочитан как «чисто»", res.ItemStatus)
 	}
 	steps := stepsByCode(t, r, item.ID)
-	if steps["sast_scan"].Result != "warn" {
-		t.Fatalf("sast_scan = %q", steps["sast_scan"].Result)
+	if steps["banner_scan"].Result != "warn" {
+		t.Fatalf("banner_scan = %q", steps["banner_scan"].Result)
 	}
 	if len(e.artifacts.published) != 0 {
 		t.Error("пакет опубликован при неотработавшем сканере")
 	}
 	// И отчёт об этом есть, с явным состоянием unavailable.
+	report, err := r.GetScanReport(ctx, item.ID, "banner_scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report == nil || report.State != "unavailable" {
+		t.Fatalf("отчёт = %+v, ожидалось состояние unavailable", report)
+	}
+	// И никаких счётчиков находок: ноль по невыполненной проверке — не
+	// измерение, а его отсутствие. В карточке «найдено: 0» читалось ровно
+	// наоборот — «проверили, чисто».
+	if _, ok := steps["banner_scan"].Details["findings_total"]; ok {
+		t.Errorf("детали шага = %v — счётчик находок по невыполненной проверке",
+			steps["banner_scan"].Details)
+	}
+}
+
+// TestSastNeverBlocksPublication — SAST информационный: находки выше порога
+// сохраняются и попадают в отчёт, но публикацию не задерживают и в очередь
+// DevSecOps пакет из-за них не уходит.
+//
+// Именно этим SAST отличается от баннеров: срабатывание semgrep на
+// eval/exec в библиотеке — обычное дело, и блокировка означала бы ручное
+// подтверждение каждого второго пакета.
+func TestSastNeverBlocksPublication(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	e.sast.outcome = scanners.Outcome{Available: true, Detail: "файлов: 30",
+		Findings: []scanners.Finding{
+			{Scanner: "semgrep", RuleID: "exec-detected", Severity: "critical",
+				Message: "exec", File: "pkg/gen.py", Line: 53},
+			{Scanner: "semgrep", RuleID: "eval-detected", Severity: "high",
+				Message: "eval", File: "pkg/recompiler.py", Line: 80},
+		}}
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+
+	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Terminal || res.ItemStatus != "approved" {
+		t.Fatalf("результат = %+v — находки SAST задержали публикацию", res)
+	}
+	if len(e.artifacts.published) != 1 {
+		t.Fatal("пакет не опубликован — SAST не должен этому мешать")
+	}
+
+	steps := stepsByCode(t, r, item.ID)
+	// info, а не pass: «пройден» рядом с двумя находками читается как «чисто».
+	if steps["sast_scan"].Result != "info" {
+		t.Errorf("sast_scan = %q, ожидался info", steps["sast_scan"].Result)
+	}
+	if !strings.Contains(stepMessage(steps["sast_scan"]), "найдено срабатываний — 2") {
+		t.Errorf("сообщение шага = %q — число находок должно быть в карточке",
+			stepMessage(steps["sast_scan"]))
+	}
+	// Шаг не считается непогашенным согласованием ни при каком результате.
+	if pipeline.IsOpenResult("sast_scan", steps["sast_scan"].Result) {
+		t.Error("результат SAST считается непогашенной блокировкой")
+	}
+	// Находки и отчёт при этом на месте — они и есть смысл шага.
+	report, err := r.GetScanReport(ctx, item.ID, "sast_scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report == nil || report.FindingsTotal != 2 {
+		t.Fatalf("отчёт = %+v, ожидалось 2 находки", report)
+	}
+	findings, err := r.ListCodeFindings(ctx, ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 {
+		t.Errorf("находок сохранено %d, ожидалось 2", len(findings))
+	}
+}
+
+// TestSastUnavailableIsNotSilentPass — неотработавший SAST публикацию не
+// держит (шаг информационный), но и «чисто» не значит: pass здесь означал бы
+// «проверено, находок нет», а проверки не было.
+func TestSastUnavailableIsNotSilentPass(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	e.sast.outcome = scanners.Outcome{Available: false, Detail: "сканер не установлен: semgrep"}
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+
+	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Terminal || res.ItemStatus != "approved" {
+		t.Fatalf("результат = %+v — информационный шаг задержал публикацию", res)
+	}
+	steps := stepsByCode(t, r, item.ID)
+	if steps["sast_scan"].Result != "info" {
+		t.Errorf("sast_scan = %q, ожидался info", steps["sast_scan"].Result)
+	}
+	if !strings.Contains(stepMessage(steps["sast_scan"]), "НЕ выполнена") {
+		t.Errorf("сообщение шага = %q — в карточке должно быть видно, что проверки не было",
+			stepMessage(steps["sast_scan"]))
+	}
+	// Счётчика находок по невыполненной проверке быть не должно: ноль здесь
+	// читается как «проверили, чисто».
+	if _, ok := steps["sast_scan"].Details["findings_total"]; ok {
+		t.Errorf("детали шага = %v — счётчик находок по невыполненной проверке",
+			steps["sast_scan"].Details)
+	}
 	report, err := r.GetScanReport(ctx, item.ID, "sast_scan")
 	if err != nil {
 		t.Fatal(err)
@@ -517,7 +630,7 @@ func TestDisabledScanIsExplicit(t *testing.T) {
 		t.Fatalf("sast_scan = %q", steps["sast_scan"].Result)
 	}
 	if !strings.Contains(*steps["sast_scan"].Message, "SAST_ENABLED") {
-		t.Errorf("сообщение = %q — не названа настройка, которой шаг выключен", *steps["sast_scan"].Message)
+		t.Errorf("сообщение = %q — не названа настройка, которой шаг выключен", stepMessage(steps["sast_scan"]))
 	}
 	if e.sast.calls != 0 {
 		t.Error("выключенный сканер всё-таки вызван")
@@ -647,7 +760,8 @@ func TestSecurityOverrideUnblocksAllScanSteps(t *testing.T) {
 	ctx := context.Background()
 
 	e := newEnv(t, r)
-	// Всё сразу против пакета: уязвимость выше порога, баннер и находка SAST.
+	// Всё сразу против пакета: уязвимость выше порога, баннер и находка SAST
+	// (последняя публикацию не блокирует, но в карточке должна остаться).
 	e.banner.outcome = scanners.Outcome{Available: true, Detail: "1",
 		Findings: []scanners.Finding{{Scanner: "yara", RuleID: "banner", Severity: "high",
 			Message: "совпадение", File: "pkg/main.py", Line: 1}}}
@@ -662,7 +776,7 @@ func TestSecurityOverrideUnblocksAllScanSteps(t *testing.T) {
 		t.Fatalf("первый прогон: %v", err)
 	}
 	if len(e.artifacts.published) != 0 {
-		t.Fatal("пакет опубликован при трёх открытых блокировках")
+		t.Fatal("пакет опубликован при открытых блокировках")
 	}
 
 	// DevSecOps разрешает публикацию.
@@ -694,9 +808,14 @@ func TestSecurityOverrideUnblocksAllScanSteps(t *testing.T) {
 	steps := stepsByCode(t, r, item.ID)
 	for _, code := range pipeline.SecurityBlockers {
 		if steps[code].Result != "pass" {
-			t.Errorf("шаг %s = %q, решение DevSecOps должно закрывать все три сразу",
-				code, steps[code].Result)
+			t.Errorf("шаг %s = %q, решение DevSecOps должно закрывать блокировки "+
+				"по содержимому сразу", code, steps[code].Result)
 		}
+	}
+	// SAST решение DevSecOps не касается: он информационный, и его находки
+	// остаются записью о прогоне, а не «разрешёнными вручную».
+	if steps["sast_scan"].Result != "info" {
+		t.Errorf("sast_scan = %q, ожидался info", steps["sast_scan"].Result)
 	}
 	// Имя принявшего решение попало в отчёт.
 	report, err := r.GetScanReport(ctx, item.ID, "sast_scan")
@@ -845,3 +964,12 @@ func criticalRecord(t *testing.T, name string) osv.Record {
 }
 
 var _ = time.Now
+
+// stepMessage — сообщение шага. Поле nullable: у шага, который не выполнялся,
+// сообщения нет.
+func stepMessage(step domain.PipelineStep) string {
+	if step.Message == nil {
+		return ""
+	}
+	return *step.Message
+}

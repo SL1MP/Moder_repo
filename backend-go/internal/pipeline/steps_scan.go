@@ -16,10 +16,12 @@ import (
 // contentScanStep — общая часть сканеров содержимого: распаковка, прогон,
 // разбор находок, сохранение отчёта.
 //
-// Оба сканера отдают решение DevSecOps, а не отклоняют пакет сами: находка
-// SAST или политический баннер — повод посмотреть глазами, а не безусловный
-// запрет. Конвейер при этом не останавливается (Pending), чтобы DevSecOps
-// увидел все находки разом, а не по одной за прогон.
+// Блокирующий сканер отдаёт решение DevSecOps, а не отклоняет пакет сам:
+// политический баннер — повод посмотреть глазами, а не безусловный запрет.
+// Конвейер при этом не останавливается (Pending), чтобы DevSecOps увидел все
+// находки разом, а не по одной за прогон.
+//
+// Информационный сканер (advisory) не блокирует публикацию вообще — см. поле.
 type contentScanStep struct {
 	code      string
 	title     string
@@ -27,6 +29,20 @@ type contentScanStep struct {
 	scanner   func(pc *Context) scanners.Scanner
 	enabled   func(cfg Config) bool
 	threshold func(cfg Config) string
+	// advisory — шаг информационный: находки сохраняются и попадают в отчёт,
+	// но публикацию не задерживают и решения роли не требуют.
+	//
+	// Так устроен SAST. Причина в природе находок: semgrep на исходниках
+	// библиотеки размечает eval/exec, которые для половины пакетов —
+	// нормальная работа, а не закладка. Блокирующий SAST означал бы, что
+	// DevSecOps вручную подтверждает каждый второй пакет, и подтверждение
+	// перестаёт быть решением. Политические баннеры — обратный случай:
+	// совпадение правила там само по себе повод не публиковать, поэтому
+	// баннерный шаг блокирующий.
+	//
+	// Находки при этом никуда не деваются: таблица находок в карточке, отчёт
+	// JSON/HTML и строка scan_report заполняются одинаково для обоих видов.
+	advisory bool
 	// enabledSetting — имя настройки для сообщения о выключенном шаге.
 	enabledSetting string
 	// rules — какой набор правил применялся; попадает в отчёт.
@@ -121,11 +137,32 @@ func (s contentScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, err
 		"detail":    outcome.Detail,
 		"notes":     unpacked.Notes,
 		"state":     report.State(),
-		"findings":  report.Summary.Total,
+	}
+	// Счётчики находок — только когда сканер отработал. Ноль по непрошедшей
+	// проверке — не измерение, а отсутствие измерения, и в карточке он читался
+	// ровно наоборот: «проверили, ничего нет». Именно так неустановленный
+	// semgrep выглядел как чистый пакет.
+	//
+	// Два числа, а не одно: «нашли 4, выше порога 0» — обычный и важный
+	// случай. Ключ не `findings`: под этим именем карточка ждёт список
+	// уязвимостей и скрывает поле (см. StepDetails во фронте), из-за чего
+	// счётчик не показывался вообще.
+	if outcome.Available {
+		details["findings_total"] = report.Summary.Total
+		details["findings_blocking"] = report.Summary.Blocking
 	}
 	if reportErr == nil {
 		details["report_json"] = reportKeys.json
 		details["report_html"] = reportKeys.html
+	}
+
+	// Информационный шаг: вердикт ни на что не влияет, поэтому и решение
+	// DevSecOps здесь ни при чём — ветка стоит до проверки override. Раньше
+	// карточка после разрешения показывала «публикация разрешена вручную,
+	// находок: 0», хотя в отчёте по тому же пакету лежали четыре срабатывания:
+	// счёт брался из прогона, которого не было.
+	if s.advisory {
+		return s.advise(outcome, report, threshold, details, reportNote), nil
 	}
 
 	// Явное разрешение DevSecOps важнее вердикта шага (см. VulnScanStep).
@@ -186,6 +223,42 @@ func (s contentScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, err
 	return Pass(fmt.Sprintf("%s: срабатываний выше порога «%s» нет. %s.%s%s",
 		s.title, threshold, outcome.Detail, below, reportNote)).
 		WithDetails(details), nil
+}
+
+// advise — исход информационного шага. Публикацию не задерживает никогда;
+// единственная его задача — честно сказать, что нашли и проверяли ли вообще.
+func (s contentScanStep) advise(
+	outcome scanners.Outcome, report *reports.Report,
+	threshold string, details map[string]any, reportNote string,
+) StepOutcome {
+	details["advisory"] = true
+
+	if !outcome.Available {
+		// «Сканер не отработал» и «чисто» — разные вещи, и для
+		// информационного шага это тем более так: pass здесь означал бы
+		// «проверено, нет находок», а проверки не было. Позвать DevSecOps
+		// нельзя (шаг не блокирующий), поэтому единственная защита от
+		// незаметной потери проверки — сказать это в карточке.
+		details["reason"] = "scanner_unavailable"
+		return Info(fmt.Sprintf(
+			"%s: проверка НЕ выполнена (%s), поэтому отсутствие находок ничего не значит. "+
+				"Публикацию шаг не блокирует — он информационный.%s",
+			s.title, outcome.Detail, reportNote)).WithDetails(details)
+	}
+
+	if report.Summary.Total > 0 {
+		details["reason"] = "findings"
+		details["rules"] = report.Summary.RulesTriggered
+		return Info(fmt.Sprintf(
+			"%s: найдено срабатываний — %d (выше порога «%s»: %d; правила: %s). "+
+				"Публикацию не блокирует — шаг информационный, находки смотрите в отчёте.%s",
+			s.title, report.Summary.Total, threshold, report.Summary.Blocking,
+			joinComma(limitStrings(report.Summary.RulesTriggered, 20)), reportNote)).
+			WithDetails(details)
+	}
+
+	return Pass(fmt.Sprintf("%s: срабатываний нет. %s.%s",
+		s.title, outcome.Detail, reportNote)).WithDetails(details)
 }
 
 // storeFindings перезаписывает находки этого сканера для версии пакета.
@@ -300,12 +373,16 @@ var BannerScanStep = contentScanStep{
 }
 
 // SastScanStep — SAST по исходникам пакета (semgrep).
+//
+// Информационный: публикацию не блокирует, нужен для отчёта. Почему — см.
+// поле advisory в contentScanStep.
 var SastScanStep = contentScanStep{
-	code:    "sast_scan",
-	title:   "SAST-анализ",
-	kind:    reports.KindSAST,
-	scanner: func(pc *Context) scanners.Scanner { return pc.Deps.SAST },
-	enabled: func(cfg Config) bool { return cfg.SASTEnabled },
+	code:     "sast_scan",
+	title:    "SAST-анализ",
+	kind:     reports.KindSAST,
+	advisory: true,
+	scanner:  func(pc *Context) scanners.Scanner { return pc.Deps.SAST },
+	enabled:  func(cfg Config) bool { return cfg.SASTEnabled },
 	threshold: func(cfg Config) string {
 		if cfg.SASTMinSeverity == "" {
 			return "medium"

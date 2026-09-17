@@ -592,17 +592,64 @@ def _store_findings(ctx: PipelineContext, findings: list, index_row: VulnIndexVe
 class _ContentScanStep(PipelineStepHandler):
     """Общая часть сканеров содержимого: распаковка, прогон, разбор находок.
 
-    Оба сканера отдают решение DevSecOps, а не отклоняют пакет сами: находка
-    SAST или политический баннер — повод посмотреть глазами, а не безусловный
-    запрет. Конвейер при этом не останавливается (`pending`), чтобы DevSecOps
-    увидел все находки разом, а не по одной за прогон.
+    Блокирующий сканер отдаёт решение DevSecOps, а не отклоняет пакет сам:
+    политический баннер — повод посмотреть глазами, а не безусловный запрет.
+    Конвейер при этом не останавливается (`pending`), чтобы DevSecOps увидел
+    все находки разом, а не по одной за прогон.
+
+    Информационный сканер (``advisory``) публикацию не блокирует вообще —
+    см. одноимённое поле и SastScanStep.
     """
 
     scanner_name: str
     enabled_setting: str
+    # advisory — шаг информационный: находки сохраняются, но публикацию не
+    # задерживают и решения роли не требуют. Так устроен SAST, см. SastScanStep.
+    advisory: bool = False
 
     def _scanner(self):  # pragma: no cover - переопределяется наследником
         raise NotImplementedError
+
+    def _advise(self, ctx: PipelineContext, outcome: ScanOutcome) -> StepOutcome:
+        """Исход информационного шага: публикацию не задерживает никогда."""
+        threshold = self._min_severity(ctx)
+        total = len(outcome.findings)
+        if not outcome.available:
+            # `pass` здесь означал бы «проверено, находок нет», а проверки не
+            # было; позвать DevSecOps нельзя — шаг не блокирующий. Значит,
+            # единственная защита от незаметной потери проверки — сказать это
+            # в карточке.
+            return StepOutcome.info(
+                f"{self.title}: проверка НЕ выполнена ({outcome.detail}), поэтому "
+                "отсутствие находок ничего не значит. Публикацию шаг не блокирует — "
+                "он информационный.",
+                details={"reason": "scanner_unavailable", "advisory": True,
+                         "detail": outcome.detail},
+            )
+        if total:
+            blocking = [
+                f
+                for f in outcome.findings
+                if SEVERITY_ORDER.index(f.severity) >= SEVERITY_ORDER.index(threshold)
+            ]
+            rules = sorted({f.rule_id for f in outcome.findings[:20]})
+            return StepOutcome.info(
+                f"{self.title}: найдено срабатываний — {total} "
+                f"(выше порога «{threshold}»: {len(blocking)}; правила: {', '.join(rules)}). "
+                "Публикацию не блокирует — шаг информационный, находки смотрите в отчёте.",
+                details={
+                    "reason": "findings",
+                    "advisory": True,
+                    "findings_total": total,
+                    "findings_blocking": len(blocking),
+                    "threshold": threshold,
+                    "rules": rules,
+                },
+            )
+        return StepOutcome.ok(
+            f"{self.title}: срабатываний нет. {outcome.detail}.",
+            details={"advisory": True, "threshold": threshold, "detail": outcome.detail},
+        )
 
     def _min_severity(self, ctx: PipelineContext) -> str:
         return "info"
@@ -640,21 +687,35 @@ class _ContentScanStep(PipelineStepHandler):
 
         _store_code_findings(ctx, outcome.findings, self.scanner_name)
 
+        # Информационный шаг: вердикт ни на что не влияет, поэтому и решение
+        # DevSecOps здесь ни при чём — ветка стоит до проверки override.
+        if self.advisory:
+            return self._advise(ctx, outcome)
+
         # Явное разрешение DevSecOps важнее вердикта шага. Без этой проверки
         # одобрение зацикливалось бы: конвейер возобновляется с шага скачивания,
         # сканер находит то же самое и снова блокирует публикацию.
         if ctx.version.security_override_at is not None:
             decided = ctx.session.get(User, ctx.version.security_override_by_id or 0)
             who = decided.display_name if decided else "DevSecOps"
-            found = len(outcome.findings)
+            details: dict[str, object] = {"reason": "security_override", "decided_by": who}
+            # «Разрешено вручную» и «сканер не отработал» — разные вещи.
+            # Раньше эта ветка стояла ДО проверки outcome.available и всегда
+            # сообщала число находок: неустановленный semgrep выглядел в
+            # карточке как чистый пакет («Находок: 0»), хотя отчёт по тому же
+            # пакету показывал четыре срабатывания.
+            if not outcome.available:
+                details["scanner_unavailable"] = outcome.detail
+                verdict = (
+                    f" ВНИМАНИЕ: проверка не выполнялась ({outcome.detail}), "
+                    "поэтому отсутствие находок ничего не означает."
+                )
+            else:
+                details["findings_total"] = len(outcome.findings)
+                verdict = f" Находок: {len(outcome.findings)}."
             return StepOutcome.ok(
-                f"{self.title}: публикация разрешена вручную ({who})"
-                + (f". Находок: {found}." if found else "."),
-                details={
-                    "reason": "security_override",
-                    "decided_by": who,
-                    "findings_count": found,
-                },
+                f"{self.title}: публикация разрешена вручную ({who}).{verdict}",
+                details=details,
             )
 
         if not outcome.available:
@@ -722,10 +783,21 @@ class BannerScanStep(_ContentScanStep):
 
 
 class SastScanStep(_ContentScanStep):
+    """SAST по исходникам пакета.
+
+    Информационный шаг: публикацию не блокирует, нужен для отчёта. Причина в
+    природе находок — semgrep на исходниках библиотеки размечает eval/exec,
+    которые для половины пакетов нормальная работа, а не закладка. Блокирующий
+    SAST означал бы ручное подтверждение каждого второго пакета, и
+    подтверждение перестаёт быть решением. Политические баннеры — обратный
+    случай: совпадение правила там само по себе повод не публиковать.
+    """
+
     code = "sast_scan"
     title = "SAST-анализ"
     scanner_name = "semgrep"
     enabled_setting = "sast_enabled"
+    advisory = True
 
     def _scanner(self):
         return get_sast_scanner()
