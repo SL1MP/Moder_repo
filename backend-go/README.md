@@ -104,6 +104,9 @@ https://<хост>/api/v1/request-items/108/reports/banner_scan.html
 # что накатить — скажет сама сверка схемы (код возврата 1, если есть пробелы)
 docker compose run --rm api-go schema
 
+# накатывать можно и весь набор: миграции безопасно повторяемы
+# (IF NOT EXISTS, снятие ограничений по обоим именам — своему и alembic'овскому)
+
 # например, миграции 0005-0011 на уже существующую базу Alembic
 docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0005_scan_reports.up.sql
 docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0006_artifact_uniqueness.up.sql

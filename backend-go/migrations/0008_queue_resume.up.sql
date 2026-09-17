@@ -7,15 +7,15 @@
 -- публикацию, должен пойти с шага скачивания, а не с самого начала —
 -- иначе проверка наличия в базе снова остановит его как уже одобренного.
 -- NULL — начинать с первого шага.
-ALTER TABLE request_item ADD COLUMN resume_from_step VARCHAR(32);
+ALTER TABLE request_item ADD COLUMN IF NOT EXISTS resume_from_step VARCHAR(32);
 
 -- attempts: сколько раз прогон по этому пакету падал подряд. Нужен, чтобы
 -- отличить временный сбой (реестр не ответил — надо повторить) от
 -- безнадёжного (пакета нет в реестре — повторять бессмысленно). Без счётчика
 -- упавший пакет возвращался бы в очередь вечно и занимал воркер.
-ALTER TABLE request_item ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE request_item ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
 
 -- Выборка очереди идёт по статусу и возрасту строки. Без индекса воркер на
 -- каждом проходе читал бы всю таблицу заявок.
-CREATE INDEX ix_request_item_queue ON request_item (status, updated_at)
+CREATE INDEX IF NOT EXISTS ix_request_item_queue ON request_item (status, updated_at)
     WHERE status IN ('queued', 'running');

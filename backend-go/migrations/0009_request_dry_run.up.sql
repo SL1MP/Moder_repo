@@ -11,7 +11,8 @@
 -- вывод, что пакет запрещён, хотя проверка прошла полностью.
 --
 -- Список записан литералом намеренно — см. комментарий в 0004.
-ALTER TABLE moderation_request DROP CONSTRAINT moderation_request_status_check;
+ALTER TABLE moderation_request DROP CONSTRAINT IF EXISTS moderation_request_status_check;
+ALTER TABLE moderation_request DROP CONSTRAINT IF EXISTS ck_moderation_request_request_status;
 ALTER TABLE moderation_request ADD CONSTRAINT moderation_request_status_check CHECK (status IN (
     'pending', 'awaiting_security', 'awaiting_legal', 'quarantined',
     'approved', 'partially_approved', 'dry_run', 'rejected', 'failed'

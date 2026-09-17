@@ -12,7 +12,7 @@
 -- Список допустимых значений записан литералом намеренно: миграция — снимок
 -- состояния на своей ревизии, и сторожевой тест сверяет литералы с константами
 -- в коде. Не собирать в цикле — см. комментарий в 0004.
-CREATE TABLE scan_report (
+CREATE TABLE IF NOT EXISTS scan_report (
     id SERIAL PRIMARY KEY,
     request_item_id INTEGER NOT NULL REFERENCES request_item (id) ON DELETE CASCADE,
     package_version_id INTEGER NOT NULL REFERENCES package_version (id) ON DELETE CASCADE,
@@ -44,5 +44,5 @@ CREATE TABLE scan_report (
     -- дублировать её здесь незачем.
     CONSTRAINT uq_scan_report_item_step UNIQUE (request_item_id, step_code)
 );
-CREATE INDEX ix_scan_report_package_version_id ON scan_report (package_version_id);
-CREATE INDEX ix_scan_report_request_item_id ON scan_report (request_item_id);
+CREATE INDEX IF NOT EXISTS ix_scan_report_package_version_id ON scan_report (package_version_id);
+CREATE INDEX IF NOT EXISTS ix_scan_report_request_item_id ON scan_report (request_item_id);

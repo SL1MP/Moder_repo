@@ -9,7 +9,12 @@
 -- ИМЕННО эта миграция, а не Go-константа; при добавлении нового шага
 -- обязательна новая миграция, обновляющая это ограничение, никогда — правка
 -- этого файла задним числом.
-ALTER TABLE pipeline_step DROP CONSTRAINT pipeline_step_step_code_check;
+-- Оба имени и IF EXISTS: набор накатывается руками, а схему базы мог создать
+-- другой набор миграций (Alembic называет это ограничение
+-- ck_pipeline_step_step_code). Повторный прогон и чужое имя не должны
+-- ломать миграцию — см. тот же приём в 0010/0011.
+ALTER TABLE pipeline_step DROP CONSTRAINT IF EXISTS pipeline_step_step_code_check;
+ALTER TABLE pipeline_step DROP CONSTRAINT IF EXISTS ck_pipeline_step_step_code;
 ALTER TABLE pipeline_step ADD CONSTRAINT pipeline_step_step_code_check CHECK (step_code IN (
     'db_check', 'blacklist', 'quarantine', 'license', 'download',
     'vuln_scan', 'banner_scan', 'sast_scan', 'publish'

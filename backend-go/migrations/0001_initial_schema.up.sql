@@ -4,7 +4,7 @@
 -- уступкой ради переносимости на SQLite в юнит-тестах, см. docs/testing.md; pgx
 -- работает только с Postgres, уступка не нужна).
 
-CREATE TABLE license (
+CREATE TABLE IF NOT EXISTS license (
     id SERIAL PRIMARY KEY,
     spdx_id VARCHAR(128) NOT NULL UNIQUE,
     name VARCHAR(255),
@@ -13,7 +13,7 @@ CREATE TABLE license (
     notes TEXT
 );
 
-CREATE TABLE package (
+CREATE TABLE IF NOT EXISTS package (
     id SERIAL PRIMARY KEY,
     manager VARCHAR(16) NOT NULL CHECK (manager IN ('pypi', 'npm', 'go', 'nuget')),
     name VARCHAR(512) NOT NULL,
@@ -24,9 +24,9 @@ CREATE TABLE package (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_package_manager_name UNIQUE (manager, name)
 );
-CREATE INDEX ix_package_name ON package (name);
+CREATE INDEX IF NOT EXISTS ix_package_name ON package (name);
 
-CREATE TABLE package_manager (
+CREATE TABLE IF NOT EXISTS package_manager (
     id SERIAL PRIMARY KEY,
     code VARCHAR(16) NOT NULL UNIQUE CHECK (code IN ('pypi', 'npm', 'go', 'nuget')),
     title VARCHAR(64) NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE package_manager (
     enabled BOOLEAN NOT NULL
 );
 
-CREATE TABLE "user" (
+CREATE TABLE IF NOT EXISTS "user" (
     id SERIAL PRIMARY KEY,
     subject VARCHAR(255) UNIQUE,
     username VARCHAR(255) NOT NULL UNIQUE,
@@ -53,7 +53,7 @@ CREATE TABLE "user" (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE vuln_index_version (
+CREATE TABLE IF NOT EXISTS vuln_index_version (
     id SERIAL PRIMARY KEY,
     version VARCHAR(128) NOT NULL UNIQUE,
     source VARCHAR(32) NOT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE vuln_index_version (
     is_active BOOLEAN NOT NULL
 );
 
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
     id SERIAL PRIMARY KEY,
     actor_id INTEGER REFERENCES "user" (id) ON DELETE SET NULL,
     actor_name VARCHAR(255) NOT NULL,
@@ -82,10 +82,10 @@ CREATE TABLE audit_log (
     comment TEXT,
     created_at TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX ix_audit_log_created_at ON audit_log (created_at);
-CREATE INDEX ix_audit_log_entity ON audit_log (entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS ix_audit_log_created_at ON audit_log (created_at);
+CREATE INDEX IF NOT EXISTS ix_audit_log_entity ON audit_log (entity_type, entity_id);
 
-CREATE TABLE moderation_request (
+CREATE TABLE IF NOT EXISTS moderation_request (
     id SERIAL PRIMARY KEY,
     author_id INTEGER NOT NULL REFERENCES "user" (id),
     author_role VARCHAR(32),
@@ -103,9 +103,9 @@ CREATE TABLE moderation_request (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX ix_moderation_request_status ON moderation_request (status);
+CREATE INDEX IF NOT EXISTS ix_moderation_request_status ON moderation_request (status);
 
-CREATE TABLE package_version (
+CREATE TABLE IF NOT EXISTS package_version (
     id SERIAL PRIMARY KEY,
     package_id INTEGER NOT NULL REFERENCES package (id) ON DELETE CASCADE,
     version VARCHAR(128) NOT NULL,
@@ -129,10 +129,10 @@ CREATE TABLE package_version (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_package_version_package_id UNIQUE (package_id, version)
 );
-CREATE INDEX ix_package_version_quarantine_until ON package_version (quarantine_until);
-CREATE INDEX ix_package_version_status ON package_version (status);
+CREATE INDEX IF NOT EXISTS ix_package_version_quarantine_until ON package_version (quarantine_until);
+CREATE INDEX IF NOT EXISTS ix_package_version_status ON package_version (status);
 
-CREATE TABLE artifact (
+CREATE TABLE IF NOT EXISTS artifact (
     id SERIAL PRIMARY KEY,
     package_version_id INTEGER NOT NULL REFERENCES package_version (id) ON DELETE CASCADE,
     filename VARCHAR(512) NOT NULL,
@@ -149,9 +149,9 @@ CREATE TABLE artifact (
     published_at TIMESTAMPTZ,
     status VARCHAR(24) NOT NULL CHECK (status IN ('downloaded', 'scanned', 'published', 'purged', 'failed'))
 );
-CREATE INDEX ix_artifact_package_version_id ON artifact (package_version_id);
+CREATE INDEX IF NOT EXISTS ix_artifact_package_version_id ON artifact (package_version_id);
 
-CREATE TABLE request_item (
+CREATE TABLE IF NOT EXISTS request_item (
     id SERIAL PRIMARY KEY,
     request_id INTEGER NOT NULL REFERENCES moderation_request (id) ON DELETE CASCADE,
     package_version_id INTEGER NOT NULL REFERENCES package_version (id) ON DELETE CASCADE,
@@ -170,10 +170,10 @@ CREATE TABLE request_item (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX ix_request_item_request_id ON request_item (request_id);
-CREATE INDEX ix_request_item_status ON request_item (status);
+CREATE INDEX IF NOT EXISTS ix_request_item_request_id ON request_item (request_id);
+CREATE INDEX IF NOT EXISTS ix_request_item_status ON request_item (status);
 
-CREATE TABLE vulnerability (
+CREATE TABLE IF NOT EXISTS vulnerability (
     id SERIAL PRIMARY KEY,
     package_version_id INTEGER NOT NULL REFERENCES package_version (id) ON DELETE CASCADE,
     external_id VARCHAR(64) NOT NULL,
@@ -190,9 +190,9 @@ CREATE TABLE vulnerability (
     detected_at TIMESTAMPTZ,
     CONSTRAINT uq_vulnerability_package_version_id UNIQUE (package_version_id, external_id)
 );
-CREATE INDEX ix_vulnerability_external_id ON vulnerability (external_id);
+CREATE INDEX IF NOT EXISTS ix_vulnerability_external_id ON vulnerability (external_id);
 
-CREATE TABLE comment (
+CREATE TABLE IF NOT EXISTS comment (
     id SERIAL PRIMARY KEY,
     request_id INTEGER NOT NULL REFERENCES moderation_request (id) ON DELETE CASCADE,
     request_item_id INTEGER REFERENCES request_item (id) ON DELETE CASCADE,
@@ -206,9 +206,9 @@ CREATE TABLE comment (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX ix_comment_request_id ON comment (request_id);
+CREATE INDEX IF NOT EXISTS ix_comment_request_id ON comment (request_id);
 
-CREATE TABLE license_claim (
+CREATE TABLE IF NOT EXISTS license_claim (
     id SERIAL PRIMARY KEY,
     package_version_id INTEGER NOT NULL REFERENCES package_version (id) ON DELETE CASCADE,
     request_item_id INTEGER REFERENCES request_item (id) ON DELETE SET NULL,
@@ -226,7 +226,7 @@ CREATE TABLE license_claim (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE notification (
+CREATE TABLE IF NOT EXISTS notification (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES "user" (id) ON DELETE CASCADE,
     event VARCHAR(64) NOT NULL,
@@ -238,9 +238,9 @@ CREATE TABLE notification (
     created_at TIMESTAMPTZ NOT NULL,
     read_at TIMESTAMPTZ
 );
-CREATE INDEX ix_notification_user_id_read_at ON notification (user_id, read_at);
+CREATE INDEX IF NOT EXISTS ix_notification_user_id_read_at ON notification (user_id, read_at);
 
-CREATE TABLE pipeline_step (
+CREATE TABLE IF NOT EXISTS pipeline_step (
     id SERIAL PRIMARY KEY,
     request_item_id INTEGER NOT NULL REFERENCES request_item (id) ON DELETE CASCADE,
     step_code VARCHAR(32) NOT NULL CHECK (step_code IN (
