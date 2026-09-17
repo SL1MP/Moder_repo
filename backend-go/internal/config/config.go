@@ -33,6 +33,14 @@ type Config struct {
 	S3AccessKey string
 	S3SecretKey string
 	S3Region    string
+	// S3VirtualHost — адресация bucket.endpoint/key вместо endpoint/bucket/key.
+	//
+	// По умолчанию false (path-style): так работают MinIO и SeaweedFS, то есть
+	// то, что поднимается рядом в compose. Внешние хранилища — в том числе
+	// сертифицированные — часто требуют именно virtual-host, и без этой
+	// настройки подключить их было нельзя: клиент умел оба стиля, но выбрать
+	// было нечем.
+	S3VirtualHost bool
 
 	// Файлы политик. Те же, что читает python-версия, и монтируются они тем
 	// же томом (./config:/config:ro): расхождение в том, какая лицензия
@@ -158,6 +166,8 @@ func Load(getenv func(string) string) (*Config, error) {
 		S3AccessKey: getenv("S3_ACCESS_KEY"),
 		S3SecretKey: getenv("S3_SECRET_KEY"),
 		S3Region:    valueOr(getenv("S3_REGION"), "us-east-1"),
+		// Значение по умолчанию false: см. комментарий к полю.
+		S3VirtualHost: boolOr(getenv("S3_VIRTUAL_HOST"), false),
 
 		BlacklistFile:       valueOr(getenv("BLACKLIST_FILE"), "/config/blacklist.yml"),
 		AllowedLicensesFile: valueOr(getenv("ALLOWED_LICENSES_FILE"), "/config/licenses.yml"),

@@ -141,6 +141,7 @@ func newPipelineWorker(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logg
 	store, err := storage.NewS3(storage.S3Config{
 		Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
 		AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Region: cfg.S3Region,
+		VirtualHost: cfg.S3VirtualHost,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("хранилище: %w", err)

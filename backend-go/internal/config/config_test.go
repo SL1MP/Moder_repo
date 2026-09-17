@@ -151,3 +151,33 @@ func contains(haystack, needle string) bool {
 		return false
 	})()
 }
+
+// Стиль адресации S3 должен настраиваться: клиент умеет оба, а внешние
+// хранилища (в отличие от MinIO и SeaweedFS рядом в compose) часто требуют
+// virtual-host. Пока настройки не было, подключить такое хранилище было
+// нельзя — и это выяснялось уже на живом стенде.
+func TestS3AddressingStyleIsConfigurable(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL":  "postgres://localhost/moderation",
+		"S3_ENDPOINT":   "https://s3.example.com",
+		"S3_BUCKET":     "packages",
+		"S3_ACCESS_KEY": "key",
+		"S3_SECRET_KEY": "secret",
+	}
+	cfg, err := Load(func(k string) string { return base[k] })
+	if err != nil {
+		t.Fatalf("конфигурация: %v", err)
+	}
+	if cfg.S3VirtualHost {
+		t.Error("по умолчанию должен быть path-style: так работают MinIO и SeaweedFS")
+	}
+
+	base["S3_VIRTUAL_HOST"] = "true"
+	cfg, err = Load(func(k string) string { return base[k] })
+	if err != nil {
+		t.Fatalf("конфигурация: %v", err)
+	}
+	if !cfg.S3VirtualHost {
+		t.Error("S3_VIRTUAL_HOST=true не включил адресацию bucket.endpoint/key")
+	}
+}
