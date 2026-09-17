@@ -22,6 +22,8 @@ import (
 	"moderation/internal/auth"
 	"moderation/internal/config"
 	"moderation/internal/db"
+	"moderation/internal/decisions"
+	"moderation/internal/domain"
 	"moderation/internal/policy"
 	"moderation/internal/queue"
 	"moderation/internal/registry"
@@ -211,6 +213,10 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	}
 
 	options.Packages = &api.PackagesHandler{Repo: r, Registry: reg, Cfg: cfg}
+	// Очередь конвейера одна на весь сервис: и создание заявок, и решения
+	// ролей кладут работу в неё же.
+	pipelineQueue := queue.New(pool, cfg.PipelineStuckAfter*3)
+
 	options.Requests = &api.RequestsHandler{
 		Repo: r, Registry: reg, Cfg: cfg,
 		Requests: &requests.Service{
@@ -232,11 +238,25 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 				logger.Error("аудит создания заявки не записан", "error", err)
 			},
 		},
-		Queue: queue.New(pool, cfg.PipelineStuckAfter*3),
+		Queue: pipelineQueue,
 	}
 	options.Queues = &api.QueuesHandler{Repo: r}
 	options.Comments = &api.CommentsHandler{Repo: r, Cfg: cfg}
 	options.Notifications = &api.NotificationsHandler{Repo: r}
+
+	// Решения ролей. Возобновление конвейера уходит в очередь: воркер
+	// заберёт пакет и продолжит с нужного шага. Прямой прогон здесь, в
+	// процессе API, был бы вторым движком конвейера — и двумя реализациями,
+	// пишущими шаги одного пакета.
+	options.Decisions = &api.DecisionsHandler{
+		Repo: r,
+		Decisions: &decisions.Service{
+			Repo: r,
+			Resume: func(ctx context.Context, item *domain.RequestItem, fromStep string) error {
+				return pipelineQueue.Enqueue(ctx, item.ID, fromStep)
+			},
+		},
+	}
 
 	return options, blacklist
 }

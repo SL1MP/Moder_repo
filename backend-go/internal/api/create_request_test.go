@@ -411,3 +411,50 @@ func copyHeaders(in map[string]string) map[string]string {
 	}
 	return out
 }
+
+// Перезапуск трогает только упавшие пакеты: перезапуск одобренного отозвал бы
+// решение, а ждущего роли — обнулил бы ожидание.
+func TestRetryOnlyFailedItems(t *testing.T) {
+	f := newCreateFixture(t)
+	ctx := context.Background()
+	body := fmt.Sprintf(`{"manager":"pypi","packages":["r1-%s==1.0.0","r2-%s==1.0.0"]}`, f.slug, f.slug)
+	created := decodeObject(t, f.post(t, body, nil))
+	requestID := int64(created["request_id"].(float64))
+
+	items, err := f.repo.ListItemsByRequest(ctx, requestID)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("пакеты заявки: %v (%d)", err, len(items))
+	}
+	if err := f.repo.UpdateRequestItemStatus(ctx, items[0].ID, "failed", nil, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.UpdateRequestItemStatus(ctx, items[1].ID, "approved", nil, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/api/v1/requests/%d/retry", requestID), strings.NewReader(""))
+	f.authorize(t, req, map[string]string{})
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	if decodeObject(t, rec)["restarted"] != float64(1) {
+		t.Fatalf("перезапущено %v, ожидался один упавший пакет", decodeObject(t, rec)["restarted"])
+	}
+
+	after, _ := f.repo.ListItemsByRequest(ctx, requestID)
+	for _, item := range after {
+		switch item.ID {
+		case items[0].ID:
+			if item.Status != "queued" {
+				t.Errorf("упавший пакет должен вернуться в очередь: %q", item.Status)
+			}
+		case items[1].ID:
+			if item.Status != "approved" {
+				t.Errorf("одобренный пакет трогать нельзя: %q", item.Status)
+			}
+		}
+	}
+}

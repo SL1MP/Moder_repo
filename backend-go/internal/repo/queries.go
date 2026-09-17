@@ -487,6 +487,11 @@ func (r *Repo) RecomputeRequestStatus(ctx context.Context, requestID int64) (str
 				THEN 'awaiting_legal'
 			WHEN EXISTS (SELECT 1 FROM s WHERE status = 'quarantined') THEN 'quarantined'
 			WHEN NOT EXISTS (SELECT 1 FROM s WHERE status <> 'approved') THEN 'approved'
+			-- Все пакеты прошли в режиме «без записи»: проверка выполнена
+			-- целиком, но публикации не было. Ни approved (команда установки
+			-- вела бы в никуда), ни rejected (ничего не отклоняли).
+			WHEN NOT EXISTS (SELECT 1 FROM s WHERE status NOT IN ('approved', 'dry_run'))
+				THEN 'dry_run'
 			WHEN EXISTS (SELECT 1 FROM s WHERE status = 'approved') THEN 'partially_approved'
 			WHEN EXISTS (SELECT 1 FROM s WHERE status = 'failed') THEN 'failed'
 			ELSE 'rejected'

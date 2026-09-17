@@ -44,6 +44,9 @@ func MountRequests(r chi.Router, h *RequestsHandler, a *Auth) {
 		if h.Requests != nil {
 			sub.Post("/", h.Create)
 		}
+		if h.Queue != nil {
+			sub.Post("/{requestID}/retry", h.Retry)
+		}
 	})
 }
 
@@ -336,4 +339,83 @@ func nilIfEmpty(v string) any {
 		return nil
 	}
 	return v
+}
+
+// Retry — POST /api/v1/requests/{requestID}/retry.
+//
+// Перезапускаются только упавшие пакеты: перезапуск уже одобренного отозвал бы
+// решение, а перезапуск ждущего роли обнулил бы ожидание.
+func (h *RequestsHandler) Retry(w http.ResponseWriter, r *http.Request) {
+	requestID, ok := pathInt64(w, r, "requestID")
+	if !ok {
+		return
+	}
+	user, ok := CurrentUser(r.Context())
+	if !ok {
+		writeError(w, r, errInternal("Маршрут перезапуска не закрыт проверкой токена"))
+		return
+	}
+	req, err := h.Repo.GetModerationRequest(r.Context(), requestID)
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось прочитать заявку").Because(err))
+		return
+	}
+	if req == nil {
+		writeError(w, r, errNotFound("Заявка #"+strconv.FormatInt(requestID, 10)+" не найдена"))
+		return
+	}
+	if !canSeeAllRequests(user) && req.AuthorID != user.ID {
+		writeError(w, r, errForbidden("Заявка доступна её автору, DevSecOps, юристам и администратору"))
+		return
+	}
+	if !user.HasRole("admin", "devsecops") && req.AuthorID != user.ID {
+		writeError(w, r, errForbidden(
+			"Перезапустить заявку может её автор, DevSecOps или администратор"))
+		return
+	}
+
+	items, err := h.Repo.ListItemsByRequest(r.Context(), requestID)
+	if err != nil {
+		writeError(w, r, errInternal("Пакеты заявки не прочитаны").Because(err))
+		return
+	}
+	restarted := 0
+	for _, item := range items {
+		if item.Status != "failed" {
+			continue
+		}
+		// С начала, а не с прежнего шага: причина падения может быть выше по
+		// конвейеру, чем место, где оно проявилось.
+		if h.Queue != nil {
+			if err := h.Queue.Enqueue(r.Context(), item.ID, ""); err != nil {
+				writeError(w, r, errInternal("Пакет не поставлен в очередь").Because(err))
+				return
+			}
+		}
+		restarted++
+	}
+	if restarted > 0 {
+		if _, err := h.Repo.RecomputeRequestStatus(r.Context(), requestID); err != nil {
+			defaultLogger.Printf("[%s] статус заявки #%d не пересчитан: %v",
+				RequestID(r.Context()), requestID, err)
+		}
+	}
+
+	payload, err := h.requestPayload(r, mustReread(r, h, requestID, req))
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось собрать карточку заявки").Because(err))
+		return
+	}
+	payload["restarted"] = restarted
+	writeJSON(w, http.StatusOK, payload)
+}
+
+// mustReread перечитывает заявку после перезапуска; при ошибке возвращает то,
+// что было — карточка важнее идеальной свежести одного поля.
+func mustReread(r *http.Request, h *RequestsHandler, requestID int64, fallback *domain.ModerationRequest) *domain.ModerationRequest {
+	fresh, err := h.Repo.GetModerationRequest(r.Context(), requestID)
+	if err != nil || fresh == nil {
+		return fallback
+	}
+	return fresh
 }

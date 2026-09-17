@@ -31,9 +31,10 @@ var VersionStatuses = []string{
 }
 
 // RequestStatuses — агрегированный статус moderation_request.
+// Держать 1:1 с CHECK-ограничением в migrations/0009.
 var RequestStatuses = []string{
 	"pending", "awaiting_security", "awaiting_legal", "quarantined",
-	"approved", "partially_approved", "rejected", "failed",
+	"approved", "partially_approved", "dry_run", "rejected", "failed",
 }
 
 // ItemStatuses — статус request_item, гранулярнее RequestStatuses (см.
@@ -123,11 +124,16 @@ var StatusTitles = map[string]string{
 	"awaiting_security":  "Ждёт DevSecOps",
 	"approved":           "Одобрен",
 	"partially_approved": "Одобрен частично",
-	"rejected":           "Отклонён",
-	"revoked":            "Отозван",
-	"blacklisted":        "Запрещён (blacklist)",
-	"failed":             "Ошибка проверки",
-	"pending":            "Проверяется",
+	// dry_run — проверка прошла целиком, но публикации не было
+	// (ARTIFACT_DRY_RUN). Название обязано это объяснять: без него в карточке
+	// стоит непонятное «dry_run», а раньше такой пакет и вовсе ронял заявку
+	// в «Отклонена» — см. migrations/0009.
+	"dry_run":     "Проверен, публикация не выполнялась",
+	"rejected":    "Отклонён",
+	"revoked":     "Отозван",
+	"blacklisted": "Запрещён (blacklist)",
+	"failed":      "Ошибка проверки",
+	"pending":     "Проверяется",
 }
 
 // Contains — есть ли значение в списке допустимых (замена Python-паттерна
