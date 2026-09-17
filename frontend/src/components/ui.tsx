@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
+import { fetchFile } from '../lib/api'
 import type { Step, Vulnerability } from '../lib/api'
 
 export function Badge({ value, title, label }: { value: string; title?: string; label?: string }) {
@@ -139,6 +140,108 @@ export function Pipeline({ steps }: { steps: Step[] }) {
       ))}
     </div>
   )
+}
+
+/**
+ * Просмотр файла отчёта: HTML — в песочнице, JSON — текстом.
+ *
+ * Отчёт лежит за токеном, поэтому открыть его ссылкой нельзя: браузер по
+ * обычному <a href> заголовок Authorization не отправляет, и маршрут отвечал
+ * 401. Файл загружается запросом с токеном и показывается здесь же.
+ *
+ * HTML показывается в iframe с sandbox="" — без скриптов и с отдельным
+ * origin. Отчёт наш и содержимое пакета в нём экранировано (html/template),
+ * но это отчёт о ПОДОЗРИТЕЛЬНОМ пакете: в нём лежат совпавшие фрагменты кода
+ * и имена файлов из недоверенного источника. Показывать такое в своём origin,
+ * где в sessionStorage лежит токен, незачем — тем более что скрипты отчёту не
+ * нужны, он самодостаточен по стилям.
+ */
+export function ReportViewer({
+  title,
+  url,
+  kind,
+  onClose,
+}: {
+  title: string
+  url: string
+  kind: 'html' | 'json'
+  onClose: () => void
+}) {
+  const [body, setBody] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    setBody(null)
+    setError(null)
+    fetchFile(url)
+      .then((file) => {
+        if (alive) setBody(file.body)
+      })
+      .catch((e: Error) => {
+        if (alive) setError(e.message)
+      })
+    return () => {
+      alive = false
+    }
+  }, [url])
+
+  // Esc закрывает: модальное окно без выхода с клавиатуры — ловушка.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <strong>{title}</strong>
+          <div className="row">
+            {body !== null ? (
+              // Скачивание из памяти, а не ссылкой на маршрут: ссылка снова
+              // ушла бы без токена.
+              <a
+                className="small"
+                download={url.split('/').pop()}
+                href={URL.createObjectURL(
+                  new Blob([body], {
+                    type: kind === 'html' ? 'text/html' : 'application/json',
+                  }),
+                )}
+              >
+                скачать
+              </a>
+            ) : null}
+            <button className="ghost small" onClick={onClose}>
+              закрыть
+            </button>
+          </div>
+        </div>
+        {error ? <Alert kind="error">{error}</Alert> : null}
+        {body === null && !error ? <Loader /> : null}
+        {body !== null && kind === 'html' ? (
+          <iframe className="report-frame" title={title} sandbox="" srcDoc={body} />
+        ) : null}
+        {body !== null && kind === 'json' ? (
+          <pre className="report-json">{prettyJSON(body)}</pre>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+// prettyJSON форматирует отчёт для чтения. Неразобранный текст отдаётся как
+// есть: показать сырой ответ полезнее, чем «ошибка разбора» вместо содержимого.
+function prettyJSON(body: string): string {
+  try {
+    return JSON.stringify(JSON.parse(body), null, 2)
+  } catch {
+    return body
+  }
 }
 
 const DETAIL_LABELS: Record<string, string> = {

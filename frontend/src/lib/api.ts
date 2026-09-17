@@ -64,6 +64,40 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T
 }
 
+// fetchFile — загрузка файла по защищённому маршруту с токеном.
+//
+// Зачем отдельно от request(): отчёт это не JSON-ответ API, а файл, и ссылкой
+// его не открыть. Браузер по обычному <a href> заголовок Authorization НЕ
+// отправляет, поэтому ссылка на защищённый маршрут отвечала 401 — ровно это и
+// происходило с кнопками «смотреть» и «JSON» у отчётов сканирования.
+export async function fetchFile(url: string): Promise<{ body: string; contentType: string }> {
+  const headers = new Headers({ 'X-Client': 'web' })
+  const token = tokenGetter()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+
+  const resp = await fetch(url, { headers })
+  const body = await resp.text()
+  if (!resp.ok) {
+    let message = `Ошибка запроса (${resp.status})`
+    try {
+      const payload = JSON.parse(body) as {
+        error?: { message?: string; code?: string; request_id?: string }
+      }
+      if (payload.error?.message) {
+        message = payload.error.request_id
+          ? `${payload.error.message} (request_id: ${payload.error.request_id})`
+          : payload.error.message
+      }
+      if (resp.status === 401) onUnauthorized()
+      throw new ApiError(resp.status, payload.error?.code ?? 'http_error', message)
+    } catch (e) {
+      if (e instanceof ApiError) throw e
+      throw new ApiError(resp.status, 'http_error', message)
+    }
+  }
+  return { body, contentType: resp.headers.get('Content-Type') ?? '' }
+}
+
 // --------------------------------------------------------------------------- типы
 export type Manager = 'pypi' | 'npm' | 'go' | 'nuget'
 

@@ -217,3 +217,36 @@ button.small { padding: 3px 7px; font-size: 12px; }
   .sidebar { position: static; height: auto; flex-direction: row; overflow-x: auto; }
   .nav-group { display: none; }
 }
+
+/* Просмотр файла отчёта: окно поверх карточки. Отчёт лежит за токеном, и
+   ссылкой его не открыть (браузер не отправляет Authorization), поэтому он
+   загружается запросом и показывается здесь. */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50;
+}
+.modal {
+  background: var(--bg-elev-1); border: 1px solid var(--border-strong); border-radius: 6px;
+  width: min(1100px, 100%);
+  /* Высота задана, а не «по содержимому»: содержимое — отчёт произвольного
+     размера, и без определённой высоты flex-элементы внутри либо сжимаются в
+     полоску, либо вылезают за экран. */
+  height: min(900px, 100%); display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; overflow: hidden;
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.modal-head .row { align-items: center; }
+/* Песочница отдаёт iframe отдельный origin, поэтому фон задаём сами: иначе
+   прозрачный документ отчёта читается поверх тёмной подложки. */
+/* min-height: 0 обязателен: без него flex-элемент не сжимается меньше своего
+   содержимого, и окно вылезает за пределы экрана вместо того, чтобы дать
+   прокрутку внутри. */
+.report-frame {
+  flex: 1; min-height: 0; width: 100%; border: 1px solid var(--border-strong);
+  border-radius: 4px; background: #fff;
+}
+.report-json {
+  flex: 1; min-height: 0; overflow: auto; margin: 0;
+  background: var(--bg-elev-2); border: 1px solid var(--border-strong); border-radius: 4px;
+  padding: 10px; font-family: var(--mono); font-size: 12px; white-space: pre;
+}

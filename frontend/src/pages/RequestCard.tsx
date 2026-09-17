@@ -8,6 +8,7 @@ import {
   Empty,
   Loader,
   Pipeline,
+  ReportViewer,
   Vulns,
   formatDate,
   formatTime,
@@ -272,6 +273,9 @@ function PackageBlock({
  */
 function ScanReports({ itemId }: { itemId: number }) {
   const reports = useAsync(() => api.scanReports(itemId), [itemId])
+  const [open, setOpen] = useState<{ title: string; url: string; kind: 'html' | 'json' } | null>(
+    null,
+  )
 
   // Сервис не поднят или маршрут не проброшен — молча ничего не показываем.
   if (reports.error) return null
@@ -322,13 +326,25 @@ function ScanReports({ itemId }: { itemId: number }) {
                 {r.rules ? <span className="muted"> · {r.rules}</span> : null}
               </td>
               <td className="nowrap">
-                <a href={r.html_url} target="_blank" rel="noreferrer">
+                {/* Кнопки, а не ссылки: отчёт лежит за токеном, а браузер по
+                    обычному href заголовок Authorization не отправляет — такая
+                    ссылка отвечала 401. */}
+                <button
+                  className="ghost small"
+                  onClick={() =>
+                    setOpen({ title: `${r.step_title}: отчёт`, url: r.html_url, kind: 'html' })
+                  }
+                >
                   смотреть
-                </a>
-                <span className="muted"> · </span>
-                <a href={r.json_url} target="_blank" rel="noreferrer">
+                </button>
+                <button
+                  className="ghost small"
+                  onClick={() =>
+                    setOpen({ title: `${r.step_title}: JSON`, url: r.json_url, kind: 'json' })
+                  }
+                >
                   JSON
-                </a>
+                </button>
               </td>
             </tr>
           ))}
@@ -338,6 +354,14 @@ function ScanReports({ itemId }: { itemId: number }) {
         Отчёт — снимок прогона: по нему видно, чем и по каким правилам
         проверяли, даже если находок нет.
       </p>
+      {open ? (
+        <ReportViewer
+          title={open.title}
+          url={open.url}
+          kind={open.kind}
+          onClose={() => setOpen(null)}
+        />
+      ) : null}
     </>
   )
 }
