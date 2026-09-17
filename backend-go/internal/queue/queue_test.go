@@ -438,3 +438,66 @@ func TestClaimStaleLeavesLiveRunAlone(t *testing.T) {
 		t.Fatalf("сторож отобрал живой прогон: err = %v", err)
 	}
 }
+
+// Отменённый пакет воркеру не достаётся: автор закрыл заявку, работы больше
+// нет. Проверка именно на очереди, а не на маршруте: захват смотрит на статус
+// строки, и если бы `cancelled` попал в список забираемых, отмена ничего бы не
+// значила — пакет всё равно проехал бы конвейер.
+func TestCancelledItemIsNotClaimed(t *testing.T) {
+	q, r, cleanup := setup(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	itemID := newItem(t, r, "queued")
+	parkOlder(t, r, itemID)
+	if _, err := r.Pool().Exec(ctx,
+		`UPDATE request_item SET status = 'cancelled' WHERE id = $1`, itemID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := q.Claim(ctx); !errors.Is(err, queue.ErrEmpty) {
+		t.Fatalf("воркер забрал отменённый пакет: err = %v", err)
+	}
+	// И сторож тоже: он смотрит на те же статусы, только с порогом ожидания.
+	backdate(t, r, itemID, 5*time.Minute)
+	if _, err := q.ClaimStale(ctx, time.Minute); !errors.Is(err, queue.ErrEmpty) {
+		t.Fatalf("сторож забрал отменённый пакет: err = %v", err)
+	}
+}
+
+// Упавший прогон не воскрешает отменённый пакет.
+//
+// Порядок событий: воркер забрал пакет → автор закрыл заявку → прогон упал.
+// Без проверки статуса в Retry/Fail пакет вернулся бы в очередь (или получил
+// «Ошибка проверки») и поехал бы дальше — то есть отмена не значила бы ничего.
+func TestRetryAndFailLeaveCancelledItemAlone(t *testing.T) {
+	q, r, cleanup := setup(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	itemID := newItem(t, r, "queued")
+	parkOlder(t, r, itemID)
+	if _, err := q.Claim(ctx); err != nil {
+		t.Fatalf("захват: %v", err)
+	}
+	if _, err := r.Pool().Exec(ctx,
+		`UPDATE request_item SET status = 'cancelled' WHERE id = $1`, itemID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := q.Retry(ctx, itemID, 3); !errors.Is(err, queue.ErrNotOurs) {
+		t.Fatalf("Retry вернул %v, ожидался ErrNotOurs", err)
+	}
+	if err := q.Fail(ctx, itemID, "причина", "что делать"); !errors.Is(err, queue.ErrNotOurs) {
+		t.Fatalf("Fail вернул %v, ожидался ErrNotOurs", err)
+	}
+
+	var status string
+	if err := r.Pool().QueryRow(ctx,
+		`SELECT status FROM request_item WHERE id = $1`, itemID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "cancelled" {
+		t.Fatalf("статус = %q — упавший прогон переписал отмену", status)
+	}
+}

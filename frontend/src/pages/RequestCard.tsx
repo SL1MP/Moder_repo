@@ -28,6 +28,8 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
   const requestId = Number(id)
   const { data, error, loading, reload } = useAsync(() => api.requestById(requestId), [requestId])
   const [expanded, setExpanded] = useState<number | null>(null)
+  const [closing, setClosing] = useState(false)
+  const [closeError, setCloseError] = useState<string | null>(null)
 
   // Пока заявка в работе — обновляем состояние: конвейер выполняется асинхронно.
   useEffect(() => {
@@ -68,11 +70,43 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
               перезапустить проверку
             </button>
           ) : null}
+          {data.can_cancel ? (
+            <button
+              className="danger small"
+              disabled={closing}
+              // Подтверждение обязательно: кнопка стоит рядом с «обновить», а
+              // отменённые пакеты назад не вернуть — только новой заявкой.
+              onClick={() => {
+                const left = data.summary.cancellable
+                if (!window.confirm(
+                  `Закрыть заявку #${requestId}? Проверка ${left} ` +
+                    'незавершённых пакетов будет прекращена. Вернуть их можно только новой заявкой.',
+                )) {
+                  return
+                }
+                setClosing(true)
+                setCloseError(null)
+                api
+                  .cancelRequest(requestId)
+                  .then(() => {
+                    reload()
+                    // Счётчики очередей ролей меняются: заявка из них ушла.
+                    onChange()
+                  })
+                  .catch((e: Error) => setCloseError(e.message))
+                  .finally(() => setClosing(false))
+              }}
+            >
+              {closing ? 'закрываю…' : 'закрыть заявку'}
+            </button>
+          ) : null}
           <button className="ghost small" onClick={reload}>
             обновить
           </button>
         </div>
       </div>
+
+      {closeError ? <Alert kind="error">{closeError}</Alert> : null}
 
       <div className="card tight">
         <div className="row">
@@ -82,6 +116,7 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
           <Summary label="Ждут юристов" value={s.awaiting_legal} warn />
           <Summary label="В карантине" value={s.quarantined} warn />
           <Summary label="Отклонено" value={s.rejected} bad />
+          {s.cancelled ? <Summary label="Закрыто автором" value={s.cancelled} /> : null}
           {s.failed ? <Summary label="Ошибка проверки" value={s.failed} bad /> : null}
         </div>
         {data.reason ? <div className="small dim">Обоснование: {data.reason}</div> : null}

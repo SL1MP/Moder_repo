@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"moderation/internal/auth"
 	"moderation/internal/config"
 	"moderation/internal/domain"
 	"moderation/internal/pipeline"
@@ -47,6 +50,7 @@ func MountRequests(r chi.Router, h *RequestsHandler, a *Auth) {
 		if h.Queue != nil {
 			sub.Post("/{requestID}/retry", h.Retry)
 		}
+		sub.Post("/{requestID}/cancel", h.Cancel)
 	})
 }
 
@@ -237,11 +241,17 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 	}
 
 	return map[string]any{
-		"request_id":         req.ID,
-		"manager":            req.Manager,
-		"status":             req.Status,
-		"status_title":       statusTitle(req.Status),
-		"approved":           allApproved,
+		"request_id":   req.ID,
+		"manager":      req.Manager,
+		"status":       req.Status,
+		"status_title": statusTitle(req.Status),
+		"approved":     allApproved,
+		// can_cancel — можно ли закрыть заявку прямо сейчас и именно этому
+		// пользователю. Решает сервер, а не интерфейс: правило одно и то же
+		// (автор или администратор, есть что закрывать), и повторять его во
+		// фронте значило бы завести второй источник правды, который начнёт
+		// расходиться с маршрутом.
+		"can_cancel":         h.canCancel(r, req, statusCounts),
 		"author":             nilIfEmpty(author),
 		"author_role":        req.AuthorRole,
 		"reason":             req.Reason,
@@ -277,8 +287,12 @@ func requestSummary(total int, counts map[string]int) map[string]any {
 		byStatus[status] = n
 	}
 	return map[string]any{
-		"total":             total,
-		"by_status":         byStatus,
+		"total":     total,
+		"by_status": byStatus,
+		// cancellable — сколько пакетов ещё можно закрыть. Считается по тому же
+		// списку статусов, что и сам UPDATE в репозитории.
+		"cancellable":       cancellableCount(counts),
+		"cancelled":         counts["cancelled"],
 		"approved":          counts["approved"],
 		"awaiting_security": counts["awaiting_security"],
 		"awaiting_legal":    counts["awaiting_legal"] + counts["license_claimed"],
@@ -286,6 +300,28 @@ func requestSummary(total int, counts map[string]int) map[string]any {
 		"rejected":          counts["rejected"] + counts["blacklisted"] + counts["revoked"],
 		"failed":            counts["failed"],
 	}
+}
+
+// cancellableCount — сколько пакетов заявки ещё можно закрыть.
+func cancellableCount(counts map[string]int) int {
+	total := 0
+	for _, status := range repo.CancellableItemStatuses {
+		total += counts[status]
+	}
+	return total
+}
+
+// canCancel — доступна ли этому пользователю кнопка закрытия заявки. Условие
+// то же, что проверяет сам маршрут Cancel.
+func (h *RequestsHandler) canCancel(r *http.Request, req *domain.ModerationRequest, counts map[string]int) bool {
+	user, ok := CurrentUser(r.Context())
+	if !ok {
+		return false
+	}
+	if req.AuthorID != user.ID && !user.HasRole("admin") {
+		return false
+	}
+	return cancellableCount(counts) > 0
 }
 
 // stepViews — снимок конвейера для карточки. Порт runner.step_snapshot:
@@ -418,4 +454,126 @@ func mustReread(r *http.Request, h *RequestsHandler, requestID int64, fallback *
 		return fallback
 	}
 	return fresh
+}
+
+// Cancel — POST /api/v1/requests/{requestID}/cancel.
+//
+// Автор закрывает свою заявку: пакеты больше не нужны (взяли другую
+// библиотеку, переписали код, ошиблись версией). Без этого заявка висела в
+// очереди роли и выглядела как работа, которую кто-то должен сделать, а
+// закрыть её было нечем.
+//
+// Это НЕ отклонение: `rejected` — решение роли («нельзя»), `cancelled` —
+// отказ автора («уже не нужно»). Путать их в отчётности нельзя, поэтому
+// статус отдельный.
+//
+// Отменяются только незавершённые пакеты. Уже одобренный, отклонённый или
+// отозванный не трогаем: отмена не отзывает чужое решение и не снимает
+// опубликованный пакет (для этого есть revoke).
+func (h *RequestsHandler) Cancel(w http.ResponseWriter, r *http.Request) {
+	requestID, ok := pathInt64(w, r, "requestID")
+	if !ok {
+		return
+	}
+	user, ok := CurrentUser(r.Context())
+	if !ok {
+		writeError(w, r, errInternal("Маршрут отмены не закрыт проверкой токена"))
+		return
+	}
+	req, err := h.Repo.GetModerationRequest(r.Context(), requestID)
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось прочитать заявку").Because(err))
+		return
+	}
+	if req == nil {
+		writeError(w, r, errNotFound("Заявка #"+strconv.FormatInt(requestID, 10)+" не найдена"))
+		return
+	}
+	// Закрыть заявку может только её автор (и администратор — для поддержки).
+	// DevSecOps и юрист сюда не входят СОЗНАТЕЛЬНО: у них есть отклонение,
+	// которое означает решение по существу, и подменять его отменой от чужого
+	// имени нельзя — в журнале исчезло бы, кто на самом деле отказал.
+	if req.AuthorID != user.ID && !user.HasRole("admin") {
+		writeError(w, r, errForbidden("Закрыть заявку может её автор или администратор"))
+		return
+	}
+
+	cancelled, err := h.Repo.CancelRequestItems(r.Context(), requestID)
+	if err != nil {
+		writeError(w, r, errInternal("Заявка не закрыта").Because(err))
+		return
+	}
+	if cancelled == 0 {
+		// Отменять нечего — но причины разные, и ответ обязан их различать:
+		// «уже закрыта» это повторное нажатие кнопки, а «всё завершено» —
+		// попытка отозвать готовое решение.
+		writeError(w, r, cancelNothingToDo(r.Context(), h, requestID))
+		return
+	}
+
+	if _, err := h.Repo.RecomputeRequestStatus(r.Context(), requestID); err != nil {
+		// Статус заявки — свёртка статусов пакетов; без пересчёта заявка
+		// осталась бы «в обработке» с отменёнными пакетами внутри.
+		defaultLogger.Printf("[%s] статус заявки #%d не пересчитан: %v",
+			RequestID(r.Context()), requestID, err)
+	}
+	h.auditCancel(r, requestID, user, cancelled)
+
+	payload, err := h.requestPayload(r, mustReread(r, h, requestID, req))
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось собрать карточку заявки").Because(err))
+		return
+	}
+	payload["cancelled"] = cancelled
+	writeJSON(w, http.StatusOK, payload)
+}
+
+// cancelNothingToDo объясняет, почему отменять нечего.
+func cancelNothingToDo(ctx context.Context, h *RequestsHandler, requestID int64) *Error {
+	statuses, err := h.Repo.ItemStatusByRequest(ctx, requestID)
+	if err != nil {
+		return errInternal("Заявка не закрыта").Because(err)
+	}
+	if len(statuses) == 0 {
+		return &Error{Code: "conflict", Status: http.StatusConflict,
+			Message: "В заявке нет пакетов — закрывать нечего"}
+	}
+	allCancelled := true
+	for _, status := range statuses {
+		if status != "cancelled" {
+			allCancelled = false
+			break
+		}
+	}
+	if allCancelled {
+		return &Error{Code: "conflict", Status: http.StatusConflict,
+			Message: "Заявка уже закрыта"}
+	}
+	return &Error{Code: "conflict", Status: http.StatusConflict,
+		Message: "Закрывать нечего: по всем пакетам заявки проверка уже завершена. " +
+			"Опубликованный пакет снимает DevSecOps (отзыв версии)."}
+}
+
+// auditCancel пишет журнал. Отдельно от обработчика: отказ автора — событие,
+// которое потом объясняет, почему заявка не доехала до решения роли.
+func (h *RequestsHandler) auditCancel(r *http.Request, requestID int64, user *domain.User, cancelled int) {
+	entityID := strconv.FormatInt(requestID, 10)
+	entry := domain.AuditLog{
+		ActorID: &user.ID, ActorName: user.Username,
+		Action: "request_cancelled", EntityType: "moderation_request", EntityID: &entityID,
+		NewValue: map[string]any{"cancelled_items": cancelled},
+		Source:   "ui", IP: ClientIP(r), CreatedAt: time.Now().UTC(),
+	}
+	if role := auth.PrimaryRole(user.Roles); role != "" {
+		entry.ActorRole = &role
+	}
+	if rid := RequestID(r.Context()); rid != "" {
+		entry.RequestID = &rid
+	}
+	if err := h.Repo.InsertAuditLog(r.Context(), entry); err != nil {
+		// Журнал не должен ронять действие: заявка уже закрыта, и отвечать
+		// ошибкой означало бы предложить нажать кнопку ещё раз.
+		defaultLogger.Printf("[%s] аудит закрытия заявки #%d не записан: %v",
+			RequestID(r.Context()), requestID, err)
+	}
 }

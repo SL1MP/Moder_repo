@@ -12,6 +12,7 @@ const STATUS_FILTERS = [
   { value: 'awaiting_security', label: 'Ждут DevSecOps' },
   { value: 'approved', label: 'Одобрены' },
   { value: 'rejected', label: 'Отклонены' },
+  { value: 'cancelled', label: 'Закрыты автором' },
 ]
 
 export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'mine' | 'all' }) {

@@ -187,16 +187,23 @@ erDiagram
 `awaiting_security`, `approved`, `rejected`, `revoked`, `blacklisted`, `failed`.
 
 `moderation_request.status` (агрегат по пакетам): `pending`, `quarantined`, `awaiting_legal`,
-`awaiting_security`, `approved`, `partially_approved`, `rejected`, `failed`.
+`awaiting_security`, `approved`, `partially_approved`, `dry_run`, `rejected`, `cancelled`,
+`failed`.
 
 `request_item.status` — более гранулярный, чем агрегат заявки: помимо статусов версии пакета
-включает `queued`/`running` (пока идёт конвейер) и `license_claimed` (лицензия заявлена
-разработчиком, ждёт решения юриста). `recompute_request_status` сворачивает статусы всех
-`request_item` заявки в один статус `moderation_request` по приоритету: `queued`/`running` →
-`awaiting_security` → `awaiting_legal`/`license_claimed` → `quarantined` → `approved` →
+включает `queued`/`running` (пока идёт конвейер), `license_claimed` (лицензия заявлена
+разработчиком, ждёт решения юриста) и `cancelled` (автор закрыл заявку — пакет больше не
+нужен). `recompute_request_status` сворачивает статусы всех `request_item` заявки в один
+статус `moderation_request` по приоритету: `queued`/`running` → `awaiting_security` →
+`awaiting_legal`/`license_claimed` → `quarantined` → `approved` → `dry_run` →
 `partially_approved` → `failed` → `rejected`. Это единственное место, где определён порядок
 приоритета — при добавлении нового статуса его нужно вписать в эту функцию явно, иначе заявка с
 пакетом в новом статусе агрегируется непредсказуемо.
+
+`cancelled` в свёртке не участвует вовсе: отменённые пакеты исключаются из выборки, и если
+отменены все — заявка получает статус `cancelled`. Иначе закрытая автором заявка уезжала бы
+в `rejected`, то есть выглядела бы как запрет со стороны роли. Отмена — не удаление: строки,
+аудит и обсуждение остаются.
 
 ## Интерфейсы адаптеров
 

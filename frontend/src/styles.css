@@ -138,6 +138,7 @@ button.small { padding: 3px 7px; font-size: 12px; }
   background: #2c1618; border-color: #6e2f2c; color: #ff9d95;
 }
 .badge.info { background: #14212e; border-color: #2c4c6b; color: #8cc0ff; }
+.badge.cancelled { background: #1f2024; border-color: var(--border-strong); color: var(--text-dim); }
 .badge.skipped { background: #1c2027; border-color: var(--border-strong); color: var(--skip); }
 .badge.mono { font-family: var(--mono); border-radius: 4px; }
 

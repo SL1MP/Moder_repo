@@ -477,10 +477,15 @@ func (r *Repo) FindVersion(ctx context.Context, manager, name, version string) (
 func (r *Repo) RecomputeRequestStatus(ctx context.Context, requestID int64) (string, error) {
 	var status string
 	row := r.pool.QueryRow(ctx, `
-		WITH s AS (SELECT status FROM request_item WHERE request_id = $1)
+		WITH all_items AS (SELECT status FROM request_item WHERE request_id = $1),
+		-- Отменённые пакеты в свёртке не участвуют: автор сказал, что они не
+		-- нужны, и тянуть из-за них заявку в «отклонена» неверно. Если
+		-- отменены все — заявка отменена, это первая ветка ниже.
+		s AS (SELECT status FROM all_items WHERE status <> 'cancelled')
 		UPDATE moderation_request mr
 		SET status = CASE
-			WHEN NOT EXISTS (SELECT 1 FROM s) THEN 'pending'
+			WHEN NOT EXISTS (SELECT 1 FROM all_items) THEN 'pending'
+			WHEN NOT EXISTS (SELECT 1 FROM s) THEN 'cancelled'
 			WHEN EXISTS (SELECT 1 FROM s WHERE status IN ('queued', 'running')) THEN 'pending'
 			WHEN EXISTS (SELECT 1 FROM s WHERE status = 'awaiting_security') THEN 'awaiting_security'
 			WHEN EXISTS (SELECT 1 FROM s WHERE status IN ('awaiting_legal', 'license_claimed'))
@@ -504,4 +509,62 @@ func (r *Repo) RecomputeRequestStatus(ctx context.Context, requestID int64) (str
 		return "", fmt.Errorf("пересчёт статуса заявки #%d: %w", requestID, err)
 	}
 	return status, nil
+}
+
+// CancellableItemStatuses — из каких статусов пакет можно отменить.
+//
+// Отмена — не отзыв решения: пакет, по которому вердикт уже вынесен
+// (одобрен, отклонён, отозван, запрещён), не отменяется — для снятия
+// опубликованного есть revoke. `failed` отменить можно: техническая ошибка
+// это не вердикт, и автор вправе сказать «уже не надо» вместо перезапуска.
+var CancellableItemStatuses = []string{
+	"queued", "running", "quarantined", "awaiting_legal", "license_claimed",
+	"awaiting_security", "failed",
+}
+
+// CancelRequestItems отменяет пакеты заявки и возвращает число отменённых.
+//
+// Одним запросом: между «посмотреть, что можно отменить» и «отменить» пакет
+// мог уйти воркеру или получить решение роли, и отменять его тогда нельзя.
+// Условие по статусу стоит в самом UPDATE, поэтому гонка невозможна — так же,
+// как в захвате очереди.
+//
+// Пакет в статусе `running` отменяется тоже: прогон это заметит. Отметка о
+// жизни (Queue.Heartbeat) обновляет строку только пока она `running`, и
+// увидев, что строку «отобрали», воркер прекращает прогон — дописывать шаги
+// отменённого пакета незачем. Публикация защищена отдельно, в самом шаге.
+func (r *Repo) CancelRequestItems(ctx context.Context, requestID int64) (int, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE request_item
+		SET status = 'cancelled', finished_at = now(), updated_at = now(),
+		    waiting_since = NULL, next_action = NULL,
+		    blocked_reason = 'Заявка закрыта автором: пакет больше не нужен',
+		    resume_from_step = NULL
+		WHERE request_id = $1 AND status = ANY($2)
+	`, requestID, CancellableItemStatuses)
+	if err != nil {
+		return 0, fmt.Errorf("отмена пакетов заявки #%d: %w", requestID, err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// ItemStatusByRequest — статусы пакетов заявки. Нужен маршруту отмены, чтобы
+// объяснить, почему отменять нечего: «всё уже одобрено» и «заявка уже
+// отменена» — разные ответы.
+func (r *Repo) ItemStatusByRequest(ctx context.Context, requestID int64) ([]string, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT status FROM request_item WHERE request_id = $1 ORDER BY id`, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("статусы пакетов заявки #%d: %w", requestID, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var status string
+		if err := rows.Scan(&status); err != nil {
+			return nil, err
+		}
+		out = append(out, status)
+	}
+	return out, rows.Err()
 }

@@ -215,9 +215,18 @@ def _notify(session: Session, ctx: PipelineContext, outcome: StepOutcome) -> Non
 
 def recompute_request_status(session: Session, request: ModerationRequest) -> str:
     """Агрегированный статус заявки по её пакетам."""
-    statuses = [item.status for item in request.items]
-    if not statuses:
+    all_statuses = [item.status for item in request.items]
+    if not all_statuses:
         request.status = "pending"
+        return request.status
+
+    # Отменённые пакеты в свёртке не участвуют: автор сказал, что они не нужны,
+    # и тянуть из-за них заявку в «отклонена» неверно. Отменены все — заявка
+    # отменена.
+    statuses = [s for s in all_statuses if s != "cancelled"]
+    if not statuses:
+        request.status = "cancelled"
+        session.flush()
         return request.status
 
     if any(s in ("queued", "running") for s in statuses):

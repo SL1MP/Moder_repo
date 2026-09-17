@@ -28,7 +28,15 @@ REQUEST_STATUSES: tuple[str, ...] = (
     "quarantined",
     "approved",  # все пакеты одобрены
     "partially_approved",
+    # dry_run выставляет go-версия: проверка прошла целиком, публикации не было
+    # (ARTIFACT_DRY_RUN). Свёртка статусов здесь его не ставит — известное
+    # расхождение, см. docs/migration-to-go.md; но читать и хранить такую
+    # заявку python-версия обязана.
+    "dry_run",
     "rejected",
+    # cancelled — автор закрыл заявку: пакеты больше не нужны. Не rejected:
+    # то решение роли («нельзя»), а это отказ автора («уже не нужно»).
+    "cancelled",
     "failed",
 )
 
@@ -40,9 +48,11 @@ ITEM_STATUSES: tuple[str, ...] = (
     "license_claimed",
     "awaiting_security",
     "approved",
+    "dry_run",  # проверен целиком, публикации не было (ARTIFACT_DRY_RUN)
     "rejected",
     "revoked",
     "blacklisted",
+    "cancelled",  # автор закрыл заявку: пакет больше не нужен
     "failed",
 )
 

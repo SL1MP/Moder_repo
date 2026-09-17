@@ -23,6 +23,9 @@ export const STATUS_LABELS: Record<string, string> = {
   approved: 'Одобрен',
   partially_approved: 'Одобрен частично',
   rejected: 'Отклонён',
+  // cancelled — автор закрыл заявку: пакеты больше не нужны. Отдельно от
+  // «Отклонён»: то решение роли («нельзя»), а это отказ автора.
+  cancelled: 'Закрыто автором',
   revoked: 'Отозван',
   blacklisted: 'Blacklist',
   failed: 'Ошибка',

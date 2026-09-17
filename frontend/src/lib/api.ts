@@ -198,6 +198,10 @@ export interface ModerationRequest {
   status: string
   status_title: string
   approved: boolean
+  // Можно ли закрыть заявку прямо сейчас и именно этому пользователю. Считает
+  // сервер: правило одно и то же с маршрутом, и дублировать его здесь значило
+  // бы завести второй источник правды.
+  can_cancel: boolean
   author: string | null
   author_role: string | null
   reason: string | null
@@ -215,6 +219,8 @@ export interface ModerationRequest {
     quarantined: number
     rejected: number
     failed: number
+    cancellable: number
+    cancelled: number
     by_status: Record<string, number>
   }
   packages: RequestItem[]
@@ -405,6 +411,10 @@ export const api = {
     request<RequestListRow[]>(`/requests?${new URLSearchParams(params)}`),
   requestById: (id: number) => request<ModerationRequest>(`/requests/${id}`),
   retryRequest: (id: number) => request<ModerationRequest>(`/requests/${id}/retry`, { method: 'POST' }),
+  // Закрытие заявки автором: пакеты больше не нужны. Не отклонение — то
+  // решение роли, а это отказ автора.
+  cancelRequest: (id: number) =>
+    request<ModerationRequest>(`/requests/${id}/cancel`, { method: 'POST' }),
 
   packages: (params: Record<string, string>) =>
     request<{ total: number; limit: number; offset: number; items: PackageVersion[] }>(

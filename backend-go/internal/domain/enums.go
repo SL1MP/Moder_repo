@@ -31,10 +31,10 @@ var VersionStatuses = []string{
 }
 
 // RequestStatuses — агрегированный статус moderation_request.
-// Держать 1:1 с CHECK-ограничением в migrations/0009.
+// Держать 1:1 с CHECK-ограничением в migrations/0011.
 var RequestStatuses = []string{
 	"pending", "awaiting_security", "awaiting_legal", "quarantined",
-	"approved", "partially_approved", "dry_run", "rejected", "failed",
+	"approved", "partially_approved", "dry_run", "rejected", "cancelled", "failed",
 }
 
 // ItemStatuses — статус request_item, гранулярнее RequestStatuses (см.
@@ -42,10 +42,12 @@ var RequestStatuses = []string{
 // dry_run — шаг публикации отработал в режиме ARTIFACT_DRY_RUN: обработка
 // завершена, но публикации не было, и помечать пакет approved нельзя (иначе
 // команда установки вела бы в никуда). Держать 1:1 с CHECK-ограничением в
-// migrations/0007.
+// migrations/0011.
+// cancelled — автор закрыл заявку, пакет больше не нужен.
 var ItemStatuses = []string{
 	"queued", "running", "quarantined", "awaiting_legal", "license_claimed",
-	"awaiting_security", "approved", "dry_run", "rejected", "revoked", "blacklisted", "failed",
+	"awaiting_security", "approved", "dry_run", "rejected", "revoked", "blacklisted",
+	"cancelled", "failed",
 }
 
 var RequestSources = []string{"api", "ui", "cli", "gitlab"}
@@ -128,8 +130,12 @@ var StatusTitles = map[string]string{
 	// (ARTIFACT_DRY_RUN). Название обязано это объяснять: без него в карточке
 	// стоит непонятное «dry_run», а раньше такой пакет и вовсе ронял заявку
 	// в «Отклонена» — см. migrations/0009.
-	"dry_run":     "Проверен, публикация не выполнялась",
-	"rejected":    "Отклонён",
+	"dry_run":  "Проверен, публикация не выполнялась",
+	"rejected": "Отклонён",
+	// cancelled — автор закрыл заявку: пакеты больше не нужны. Отдельно от
+	// rejected: то решение роли («нельзя»), а это отказ автора («уже не
+	// нужно»), и в отчётности их путать нельзя.
+	"cancelled":   "Отменено автором",
 	"revoked":     "Отозван",
 	"blacklisted": "Запрещён (blacklist)",
 	"failed":      "Ошибка проверки",

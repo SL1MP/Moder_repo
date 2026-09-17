@@ -72,6 +72,15 @@ func New(pool *pgxpool.Pool, staleAfter time.Duration) *Queue {
 // разыменовать его в вызывающем коде.
 var ErrEmpty = errors.New("очередь пуста")
 
+// ErrNotOurs — строка пакета больше не принадлежит этому прогону: статус
+// сменили снаружи (автор закрыл заявку) или её перехватил другой воркер.
+//
+// Отдельная ошибка, а не тихое «ничего не сделал»: воркер обязан различать
+// «повтор не назначен, потому что попытки кончились» и «повторять нечего,
+// потому что пакет уже не наш». В первом случае пакет надо пометить неудачей,
+// во втором — не трогать вовсе.
+var ErrNotOurs = errors.New("пакет больше не принадлежит этому прогону")
+
 // Claim забирает один пакет. Возвращает ErrEmpty, если работы нет.
 //
 // Эксклюзивность держится на двух вещах сразу, и обе нужны:
@@ -292,14 +301,23 @@ func (q *Queue) Retry(ctx context.Context, itemID int64, maxAttempts int) (bool,
 		maxAttempts = 3
 	}
 	var attempts int
+	// Условие `status = 'running'` обязательно: пакет мог уйти из-под прогона,
+	// пока он шёл. Самый частый случай — автор закрыл заявку (`cancelled`), и
+	// без этой проверки упавший прогон вернул бы отменённый пакет в очередь,
+	// то есть отмена не значила бы ничего. То же и с перехватом строки другим
+	// воркером после таймаута: чужую работу переназначать нельзя.
 	err := q.pool.QueryRow(ctx, `
 		UPDATE request_item
 		SET attempts = attempts + 1,
 		    status = CASE WHEN attempts + 1 < $2 THEN 'queued' ELSE status END,
 		    updated_at = now()
-		WHERE id = $1
+		WHERE id = $1 AND status = 'running'
 		RETURNING attempts
 	`, itemID, maxAttempts).Scan(&attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Строка больше не наша. Не ошибка: просто делать с ней нечего.
+		return false, ErrNotOurs
+	}
 	if err != nil {
 		return false, fmt.Errorf("повтор пакета #%d: %w", itemID, err)
 	}
@@ -312,13 +330,20 @@ func (q *Queue) Retry(ctx context.Context, itemID int64, maxAttempts int) (bool,
 // Fail помечает пакет неудачей окончательно. Причина уходит в карточку: без
 // неё разработчик видит «не прошло» и не знает, что делать дальше.
 func (q *Queue) Fail(ctx context.Context, itemID int64, reason, nextAction string) error {
-	if _, err := q.pool.Exec(ctx, `
+	// Тот же guard, что в Retry: помечать неудачей можно только пакет, который
+	// всё ещё за этим прогоном. Иначе закрытая автором заявка получила бы
+	// «Ошибка проверки» от прогона, который уже никому не нужен.
+	tag, err := q.pool.Exec(ctx, `
 		UPDATE request_item
 		SET status = 'failed', blocked_reason = $2, next_action = $3,
 		    finished_at = now(), updated_at = now()
-		WHERE id = $1
-	`, itemID, reason, nextAction); err != nil {
+		WHERE id = $1 AND status = 'running'
+	`, itemID, reason, nextAction)
+	if err != nil {
 		return fmt.Errorf("пометка пакета #%d неудачей: %w", itemID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotOurs
 	}
 	return nil
 }

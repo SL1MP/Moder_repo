@@ -259,6 +259,14 @@ func (w *pipelineWorker) handle(ctx context.Context, job queue.Job) {
 	}
 
 	retried, retryErr := w.queue.Retry(ctx, job.ItemID, defaultMaxAttempts)
+	if errors.Is(retryErr, queue.ErrNotOurs) {
+		// Пакет ушёл из-под прогона, пока он шёл: чаще всего автор закрыл
+		// заявку. Возвращать его в очередь или помечать неудачей нельзя — это
+		// отменило бы отмену.
+		w.logger.Info("прогон не удался, но пакет уже не наш — оставляю как есть",
+			"item", job.ItemID, "error", err)
+		return
+	}
 	if retryErr != nil {
 		w.logger.Error("повтор не назначен", "item", job.ItemID, "error", retryErr)
 		return
@@ -269,8 +277,13 @@ func (w *pipelineWorker) handle(ctx context.Context, job queue.Job) {
 		return
 	}
 	reason := fmt.Sprintf("Проверка не выполнена после %d попыток: %v", defaultMaxAttempts, err)
-	if failErr := w.queue.Fail(ctx, job.ItemID, reason,
-		"Техническая ошибка проверки. Перезапустите заявку или обратитесь к администратору."); failErr != nil {
+	failErr := w.queue.Fail(ctx, job.ItemID, reason,
+		"Техническая ошибка проверки. Перезапустите заявку или обратитесь к администратору.")
+	switch {
+	case errors.Is(failErr, queue.ErrNotOurs):
+		w.logger.Info("пакет уже не наш — неудачей не помечаю", "item", job.ItemID)
+		return
+	case failErr != nil:
 		w.logger.Error("пакет не помечен неудачей", "item", job.ItemID, "error", failErr)
 	}
 	w.logger.Error("прогон не удался окончательно", "item", job.ItemID, "error", err)

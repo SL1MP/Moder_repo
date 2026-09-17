@@ -856,6 +856,46 @@ func TestPublishBlockedByOpenLicense(t *testing.T) {
 	}
 }
 
+// TestPublishRefusesCancelledItem — заявку закрыли, пока шёл прогон: пакет не
+// публикуется.
+//
+// Отмена и так снимает пакет с обработки (воркер видит по отметке о жизни,
+// что строку «отобрали»), но отметка редкая — раз в 30 секунд, — и публикация
+// могла бы проскочить в этот зазор. Публикация — запись во внешний
+// артефактори, её потом не отозвать одним UPDATE, поэтому шаг проверяет
+// статус заново сам.
+func TestPublishRefusesCancelledItem(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+
+	// Отмена приходит после захвата: pc.Item — снимок, в нём её не видно.
+	pc := e.context(pkg, ver, item)
+	if _, err := r.Pool().Exec(ctx,
+		`UPDATE request_item SET status = 'cancelled' WHERE id = $1`, item.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := pipeline.Run(ctx, pc, "publish")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(e.artifacts.published) != 0 {
+		t.Fatal("опубликован пакет из закрытой заявки")
+	}
+	if res.ItemStatus != "cancelled" {
+		t.Errorf("ItemStatus = %q, ожидался cancelled", res.ItemStatus)
+	}
+	steps := stepsByCode(t, r, item.ID)
+	if !strings.Contains(stepMessage(steps["publish"]), "закрыта автором") {
+		t.Errorf("сообщение publish = %q — в карточке должно быть видно, почему не опубликовали",
+			stepMessage(steps["publish"]))
+	}
+}
+
 func TestDryRunDoesNotApprove(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()

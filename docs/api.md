@@ -221,6 +221,7 @@ jq -r '.packages[] | "\(.status_title)\t\(.name) \(.version)\t\(.next_action // 
 | --- | --- | --- | --- |
 | `GET` | `/requests?mine=true&status=&manager=` | любая | список заявок (developer видит свои) |
 | `POST` | `/requests/{id}/retry` | автор, devsecops, admin | перезапуск пакетов со статусом `failed` |
+| `POST` | `/requests/{id}/cancel` | автор, admin | закрыть заявку: пакеты больше не нужны (статус `cancelled`) |
 | `GET` | `/packages?q=&manager=&version=&status=` | любая | поиск по базе пакетов |
 | `GET` | `/packages/{version_id}` | любая | карточка версии: шаги, CVE, артефакты, команда установки |
 | `POST` | `/packages/check` | любая | проверка наличия в базе без создания заявки |
@@ -228,7 +229,18 @@ jq -r '.packages[] | "\(.status_title)\t\(.name) \(.version)\t\(.next_action // 
 | `GET` | `/managers`, `/managers/detect?filename=` | любая | форматы записей и определение менеджера по файлу |
 | `GET` | `/licenses` | любая | справочник SPDX для автодополнения |
 
+Закрытие заявки (`cancel`) — отказ **автора**, а не решение роли: `rejected` значит «нельзя»,
+`cancelled` — «уже не нужно», и путать их в отчётности нельзя. Закрываются только
+незавершённые пакеты; одобренный, отклонённый или отозванный не трогается (опубликованный
+снимает DevSecOps через `revoke`). Повторный вызов отвечает `409` («Заявка уже закрыта»), а
+заявка, где закрывать нечего, — `409` с объяснением. Ответ — та же карточка заявки плюс поле
+`cancelled` с числом закрытых пакетов.
+
 ```bash
+# Закрыть свою заявку
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  https://moderation.example.com/api/v1/requests/42/cancel
+
 # Проверка по базе
 curl -sS -X POST http://localhost:8080/api/v1/packages/check \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
