@@ -167,6 +167,56 @@ docker compose logs -f nginx api web
 | Шаг публикации падает | `ARTIFACT_DRY_RUN=false` без поднятого Nexus (`make up-all` поднимает и его) |
 | Каждый пакет уходит к DevSecOps | нет снапшота OSV — см. шаг 4 |
 | `pull access denied for minio/minio` при `make up`/`make up-all` | образ MinIO на Docker Hub закрыт — см. ниже |
+| «Не удалось получить конфигурацию OIDC-издателя» на странице входа | Keycloak не поднят или ещё стартует — см. ниже |
+
+### Вход не работает: «Не удалось получить конфигурацию OIDC-издателя»
+
+Страница входа показывает красное сообщение и одну кнопку «Войти через SSO».
+Это значит, что SPA не смогла прочитать
+`OIDC_PUBLIC_ISSUER/.well-known/openid-configuration`. Сообщение называет код
+ответа — по нему причина видна однозначно:
+
+* **502 или 504** — контейнера `keycloak` нет или он ещё стартует. Keycloak
+  поднимается профилем `sso` (`make up-all`, не `make up`) и на первом запуске
+  занимает 1-2 минуты; nginx на эти пути отвечает 502, пока его нет.
+* **404** — realm в `OIDC_PUBLIC_ISSUER` назван не так, как импортированный в
+  Keycloak (по умолчанию `moderation`).
+* **«Издатель OIDC недоступен»** без кода — в `OIDC_PUBLIC_ISSUER` внутренний
+  адрес (`http://keycloak:8080/...`). Он резолвится только внутри compose-сети;
+  браузеру нужен внешний: `http://localhost:8080/realms/moderation`.
+
+Проверка в три команды:
+
+```bash
+docker compose --profile sso ps keycloak
+docker compose --profile sso logs keycloak | tail -30
+curl -s -o /dev/null -w '%{http_code}\n' \
+  http://localhost:8080/realms/moderation/.well-known/openid-configuration
+# 200 — Keycloak готов; 502 — его нет или он ещё стартует
+```
+
+Образ Keycloak собирается `FROM quay.io/keycloak/keycloak:25.0`. Если quay.io у
+вас не отдаёт слои (`TLS handshake timeout` на `cdn01.quay.io`), сборка профиля
+`sso` не пройдёт, а остальной стенд поднимется — ровно эта картина и даёт
+неработающий вход.
+
+**Вход без Keycloak** (и самый быстрый способ проверить стенд): в `.env`
+
+```ini
+LOCAL_AUTH_ENABLED=true
+LOCAL_AUTH_SECRET=любая-длинная-строка
+```
+
+затем
+
+```bash
+make restart
+docker compose run --rm api bootstrap --demo --service-password 'пароль'
+```
+
+На странице входа появится форма «Сервисная учётная запись». Учётки:
+`dev.ivanov` (автор заявок), `sec.petrov` (DevSecOps), `legal.sidorova`
+(юрист), `admin` — пароль общий, тот, что задали в `--service-password`.
 
 ### Образ MinIO не скачивается
 

@@ -40,10 +40,34 @@ export function clearSession() {
   sessionStorage.removeItem(VERIFIER_KEY)
 }
 
+// Диагностируемая ошибка вместо «что-то пошло не так»: на локальном стенде
+// discovery падает почти всегда по одной из трёх причин, и по коду ответа их
+// видно точно. 502/504 даёт nginx, когда контейнера keycloak нет вовсе или он
+// ещё стартует (профиль sso, первый запуск — 1-2 минуты); 404 значит, что
+// realm в OIDC_PUBLIC_ISSUER назван не так, как импортированный; сетевая
+// ошибка fetch — что адрес издателя указывает не на этот origin.
+function discoveryError(url: string, status: number): string {
+  if (status === 502 || status === 504) {
+    return `Keycloak не отвечает (${status} на ${url}). Он поднимается профилем sso и стартует 1-2 минуты: docker compose --profile sso ps keycloak. Вход без Keycloak: LOCAL_AUTH_ENABLED=true в .env и make restart.`
+  }
+  if (status === 404) {
+    return `Realm не найден (404 на ${url}). Проверьте OIDC_PUBLIC_ISSUER в .env — имя realm должно совпадать с импортированным в Keycloak.`
+  }
+  return `Не удалось получить конфигурацию OIDC-издателя (${status} на ${url}).`
+}
+
 async function discover(config: AuthConfig): Promise<Discovery> {
   if (discoveryCache) return discoveryCache
-  const resp = await fetch(`${config.issuer.replace(/\/$/, '')}/.well-known/openid-configuration`)
-  if (!resp.ok) throw new Error('Не удалось получить конфигурацию OIDC-издателя')
+  const url = `${config.issuer.replace(/\/$/, '')}/.well-known/openid-configuration`
+  let resp: Response
+  try {
+    resp = await fetch(url)
+  } catch {
+    throw new Error(
+      `Издатель OIDC недоступен: ${url}. Проверьте OIDC_PUBLIC_ISSUER в .env — адрес должен открываться из браузера.`,
+    )
+  }
+  if (!resp.ok) throw new Error(discoveryError(url, resp.status))
   discoveryCache = (await resp.json()) as Discovery
   return discoveryCache
 }
