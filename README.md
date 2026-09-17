@@ -37,6 +37,11 @@ Actor → nginx → Web UI
 
 ## Быстрый старт
 
+Разворачиваете на своей машине впервые — берите
+[`docs/local-setup.md`](docs/local-setup.md): там тот же путь по шагам, вместе
+с учётками, снапшотом базы уязвимостей и разбором типичных «почему не
+работает».
+
 ```bash
 git clone <repo> && cd Moder_repo
 make env                  # создаст .env из .env.example
@@ -50,7 +55,12 @@ make up
 
 make bootstrap            # миграции, справочники, бакет MinIO, репозитории Nexus, демо-данные
 make logs                 # логи api, worker, beat
+
+docker compose run --rm api-go schema   # схема базы против кода: чего не хватает
 ```
+
+Для входа логином/паролем (без Keycloak) учётки заводятся с паролем:
+`docker compose run --rm api bootstrap --demo --service-password '<пароль>'`.
 
 После старта:
 
