@@ -98,6 +98,27 @@ func main() {
 		go w.run(ctx)
 	}
 
+	// Сторож очереди конвейера. Подбирает пакеты, которые не забрал выделенный
+	// воркер, — см. cmd/moderation/watchdog.go, там же причина, почему он
+	// обязателен, а не «на всякий случай».
+	//
+	// Каждая ветка что-то пишет в лог по той же причине, что и у наблюдателя
+	// сканирования: страховка, которая не запустилась молча, снаружи
+	// неотличима от работающей.
+	switch {
+	case !cfg.PipelineWatchdogEnabled:
+		logger.Warn("сторож очереди выключен (PIPELINE_WATCHDOG_ENABLED=false) — " +
+			"пакеты разбирает только выделенный воркер; если он не поднят, заявки будут ждать вечно")
+	default:
+		worker, err := newPipelineWorker(cfg, pool, logger)
+		if err != nil {
+			logger.Error("сторож очереди НЕ запущен — пакеты разберёт только выделенный воркер",
+				"error", err)
+			break
+		}
+		go newWatchdog(worker, cfg.PipelineWatchdogInterval, cfg.PipelineStuckAfter, logger).run(ctx)
+	}
+
 	server := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: api.NewRouter(pool, options),

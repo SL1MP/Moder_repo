@@ -34,21 +34,23 @@ restart: ## Применить правки .env и config/ (пересозда�
 	# SCAN_*), и без пересоздания правки доступа применятся только к python-версии.
 	$(COMPOSE) up -d api api-go worker beat
 
-logs: ## Логи api, api-go, worker и beat
-	$(COMPOSE) logs -f api api-go worker beat
+logs: ## Логи api, api-go, worker-go, worker и beat
+	$(COMPOSE) logs -f api api-go worker-go worker beat
 
-go-worker: ## Переключить обработку конвейера на go-воркер (останавливает python-воркер)
-	# Явное переключение, а не параллельная работа: захват пакета у обоих
-	# воркеров общий и безопасный, но поведение отличается в мелочах, и
-	# «какой движок обработал этот пакет» не должно решаться гонкой.
+go-worker: ## Оставить обработку конвейера только go-воркеру (останавливает python-воркер)
+	# go-воркер поднимается вместе со всем остальным и обязателен: заявки
+	# создаёт go-версия, а её постановку в очередь (request_item + pg_notify)
+	# Celery не слышит. Эта цель — только про то, чтобы убрать python-воркер,
+	# когда весь конвейер уже ведёт go-версия.
 	$(COMPOSE) stop worker beat
-	$(COMPOSE) --profile go-worker up -d --build worker-go
+	$(COMPOSE) up -d --build worker-go
 	@echo "Конвейер ведёт go-воркер. Логи: docker compose logs -f worker-go"
 
-py-worker: ## Вернуть обработку конвейера python-воркеру
-	$(COMPOSE) --profile go-worker stop worker-go
+py-worker: ## Вернуть python-воркер (заявки из маршрутов GitLab идут через него)
+	# go-воркер НЕ останавливаем: без него пакеты, созданные go-версией,
+	# будут ждать сторожа в процессе api-go вместо обработки сразу.
 	$(COMPOSE) up -d worker beat
-	@echo "Конвейер ведёт python-воркер."
+	@echo "Подняты оба воркера: go-версия разбирает свою очередь, python — задачи Celery."
 
 ps: ## Состояние контейнеров
 	$(COMPOSE) $(PROFILES) ps

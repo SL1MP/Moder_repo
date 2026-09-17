@@ -121,6 +121,51 @@ func (q *Queue) Claim(ctx context.Context) (Job, error) {
 	return job, nil
 }
 
+// ClaimStale забирает пакет, который ждёт дольше minAge.
+//
+// Нужен сторожу в процессе API: выделенный воркер, если он есть, забирает
+// пакеты сразу, и сторож их не видит. Если выделенного воркера нет или он
+// умер — пакет пролежит minAge и достанется сторожу. Так постановка в очередь
+// не может кончиться тем, что работу не делает никто.
+func (q *Queue) ClaimStale(ctx context.Context, minAge time.Duration) (Job, error) {
+	if minAge <= 0 {
+		return q.Claim(ctx)
+	}
+	now := q.now().UTC()
+	queuedBefore := now.Add(-minAge)
+	staleBefore := now.Add(-q.StaleAfter)
+	row := q.pool.QueryRow(ctx, `
+		WITH candidate AS (
+			SELECT id FROM request_item
+			WHERE (status = 'queued' AND updated_at < $1)
+			   OR (status = 'running' AND updated_at < $2)
+			ORDER BY id
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		)
+		UPDATE request_item ri
+		SET status = 'running', updated_at = now()
+		FROM candidate
+		WHERE ri.id = candidate.id
+		  AND ((ri.status = 'queued' AND ri.updated_at < $1)
+		       OR (ri.status = 'running' AND ri.updated_at < $2))
+		RETURNING ri.id, ri.resume_from_step
+	`, queuedBefore, staleBefore)
+
+	var job Job
+	var fromStep *string
+	if err := row.Scan(&job.ItemID, &fromStep); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Job{}, ErrEmpty
+		}
+		return Job{}, fmt.Errorf("захват залежавшегося пакета: %w", err)
+	}
+	if fromStep != nil {
+		job.FromStep = *fromStep
+	}
+	return job, nil
+}
+
 // Heartbeat отмечает, что прогон жив. Возвращает false, если строку уже
 // перехватили: тогда прогон надо прекратить — иначе два процесса будут писать
 // шаги одного пакета.

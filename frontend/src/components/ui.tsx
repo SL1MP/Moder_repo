@@ -2,10 +2,10 @@ import { useEffect, useState, type ReactNode } from 'react'
 
 import type { Step, Vulnerability } from '../lib/api'
 
-export function Badge({ value, title }: { value: string; title?: string }) {
+export function Badge({ value, title, label }: { value: string; title?: string; label?: string }) {
   return (
     <span className={`badge ${value}`} title={title}>
-      {STATUS_LABELS[value] ?? title ?? value}
+      {label ?? STATUS_LABELS[value] ?? title ?? value}
     </span>
   )
 }
@@ -101,6 +101,16 @@ export function Vulns({ items }: { items: Vulnerability[] }) {
   )
 }
 
+// Результат шага и статус заявки — разные шкалы, но слово `pending` есть в
+// обеих, а таблица подписей была одна. У заявки `pending` значит «идёт
+// модерация», у шага — «шаг ещё не выполнялся», и общая подпись врала: пакет
+// стоял в очереди, никто его не обрабатывал, а все девять шагов показывали
+// «Проверяется». Снаружи это выглядело как идущая проверка, из-за которой и
+// возник вопрос «почему проверка застряла» — она не начиналась.
+const STEP_RESULT_LABELS: Record<string, string> = {
+  pending: 'не начат',
+}
+
 export function Pipeline({ steps }: { steps: Step[] }) {
   return (
     <div className="pipeline">
@@ -113,7 +123,7 @@ export function Pipeline({ steps }: { steps: Step[] }) {
             {step.details ? <StepDetails details={step.details} /> : null}
           </div>
           <div className="right nowrap">
-            <Badge value={step.result} />
+            <Badge value={step.result} label={STEP_RESULT_LABELS[step.result]} />
             {step.finished_at ? (
               <div className="muted small">{formatTime(step.finished_at)}</div>
             ) : null}

@@ -126,6 +126,12 @@ type Config struct {
 	// сколько у python-версии: STALE_RUNNING_FACTOR = 3).
 	PipelineStuckAfter time.Duration
 
+	// Сторож очереди в процессе API: подбирает пакеты, которые не забрал
+	// выделенный воркер. Включён по умолчанию — выключенный сторож означает,
+	// что при мёртвом воркере пакет ждёт вечно.
+	PipelineWatchdogEnabled  bool
+	PipelineWatchdogInterval time.Duration
+
 	// Окно, в течение которого правка сообщения не помечается как «изменено».
 	CommentEditWindow time.Duration
 
@@ -209,7 +215,9 @@ func Load(getenv func(string) string) (*Config, error) {
 
 		OSVLocalDBPath: valueOr(getenv("OSV_LOCAL_DB_PATH"), "/var/lib/osv-db"),
 
-		PipelineStuckAfter: secondsOr(getenv("PIPELINE_STUCK_AFTER_SECONDS"), 120),
+		PipelineStuckAfter:       secondsOr(getenv("PIPELINE_STUCK_AFTER_SECONDS"), 120),
+		PipelineWatchdogEnabled:  boolOr(getenv("PIPELINE_WATCHDOG_ENABLED"), true),
+		PipelineWatchdogInterval: secondsOr(getenv("PIPELINE_WATCHDOG_INTERVAL_SECONDS"), 30),
 
 		CommentEditWindow: time.Duration(intOr(getenv("COMMENT_EDIT_WINDOW_MINUTES"), 15)) * time.Minute,
 

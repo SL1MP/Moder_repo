@@ -335,3 +335,106 @@ func TestDepth(t *testing.T) {
 		t.Fatal("в очереди должен быть хотя бы один пакет")
 	}
 }
+
+// backdate сдвигает отметку пакета в прошлое: так проверяется ожидание в
+// очереди без того, чтобы тест реально ждал минуты.
+func backdate(t *testing.T, r *repo.Repo, itemID int64, d time.Duration) {
+	t.Helper()
+	_, err := r.Pool().Exec(context.Background(),
+		`UPDATE request_item SET updated_at = now() - $2::interval WHERE id = $1`,
+		itemID, fmt.Sprintf("%d seconds", int(d.Seconds())))
+	if err != nil {
+		t.Fatalf("сдвиг отметки пакета: %v", err)
+	}
+}
+
+// Свежий пакет сторожу не виден: сначала работу должен получить выделенный
+// воркер. Без этого свойства сторож в процессе API отбирал бы пакеты у
+// воркера и гонял бы конвейер внутри HTTP-сервиса всегда, а не только когда
+// воркера нет.
+func TestClaimStaleSkipsFreshItems(t *testing.T) {
+	q, r, cleanup := setup(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	itemID := newItem(t, r, "queued")
+	parkOlder(t, r, itemID)
+
+	if _, err := q.ClaimStale(ctx, time.Minute); !errors.Is(err, queue.ErrEmpty) {
+		t.Fatalf("сторож забрал свежий пакет: err = %v", err)
+	}
+	// Обычный захват его при этом видит — иначе тест выше проходил бы и на
+	// пустой очереди.
+	job, err := q.Claim(ctx)
+	if err != nil {
+		t.Fatalf("выделенный воркер не увидел свежий пакет: %v", err)
+	}
+	if job.ItemID != itemID {
+		t.Fatalf("забран не тот пакет: %d, ожидался %d", job.ItemID, itemID)
+	}
+}
+
+// Пакет, пролежавший дольше порога, сторож забирает. Это и есть страховка:
+// выделенного воркера нет — работу делает процесс API.
+func TestClaimStaleTakesWaitingItem(t *testing.T) {
+	q, r, cleanup := setup(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	itemID := newItem(t, r, "queued")
+	parkOlder(t, r, itemID)
+	backdate(t, r, itemID, 5*time.Minute)
+
+	job, err := q.ClaimStale(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("сторож не забрал залежавшийся пакет: %v", err)
+	}
+	if job.ItemID != itemID {
+		t.Fatalf("забран не тот пакет: %d, ожидался %d", job.ItemID, itemID)
+	}
+
+	// И забирает ровно один раз: захват у сторожа и воркера общий.
+	if _, err := q.ClaimStale(ctx, time.Minute); !errors.Is(err, queue.ErrEmpty) {
+		t.Fatalf("тот же пакет достался сторожу дважды: err = %v", err)
+	}
+	if _, err := q.Claim(ctx); !errors.Is(err, queue.ErrEmpty) {
+		t.Fatalf("пакет, забранный сторожем, достался и воркеру: err = %v", err)
+	}
+}
+
+// Брошенный прогон (`running`, отметка о жизни не обновляется) сторож
+// подбирает по своему порогу — StaleAfter, а не minAge. Иначе упавший на
+// середине воркер оставлял бы пакет висеть, пока кто-нибудь не запустит
+// второго воркера руками.
+func TestClaimStaleReclaimsAbandonedRun(t *testing.T) {
+	q, r, cleanup := setup(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	itemID := newItem(t, r, "running")
+	parkOlder(t, r, itemID)
+	backdate(t, r, itemID, 5*time.Minute) // StaleAfter в setup — минута
+
+	job, err := q.ClaimStale(ctx, time.Hour) // порог ожидания заведомо больше
+	if err != nil {
+		t.Fatalf("сторож не подобрал брошенный прогон: %v", err)
+	}
+	if job.ItemID != itemID {
+		t.Fatalf("забран не тот пакет: %d, ожидался %d", job.ItemID, itemID)
+	}
+}
+
+// Живой прогон сторож не отбирает: пока отметка обновляется, пакетом
+// занимается другой процесс.
+func TestClaimStaleLeavesLiveRunAlone(t *testing.T) {
+	q, r, cleanup := setup(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	itemID := newItem(t, r, "running")
+	parkOlder(t, r, itemID)
+
+	if _, err := q.ClaimStale(ctx, time.Second); !errors.Is(err, queue.ErrEmpty) {
+		t.Fatalf("сторож отобрал живой прогон: err = %v", err)
+	}
+}
