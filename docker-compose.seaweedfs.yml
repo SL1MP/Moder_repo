@@ -1,0 +1,63 @@
+# Замена MinIO на SeaweedFS — когда образ MinIO не скачивается.
+#
+# Образ `minio/minio` на Docker Hub больше не отдаётся анонимно (`pull access
+# denied … may require docker login`), и стенд не поднимается вовсе. Первый путь
+# — тот же MinIO из другого реестра (`MINIO_IMAGE=quay.io/minio/minio:latest`,
+# см. .env.example). Этот файл — второй путь: другое S3-совместимое хранилище,
+# образ которого тянется с Docker Hub без авторизации.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.seaweedfs.yml up -d
+#
+# Имя сервиса намеренно остаётся `minio`: это адрес в .env
+# (S3_ENDPOINT=http://minio:9000) и в NO_PROXY, и менять их не нужно — меняется
+# только то, что внутри контейнера. Порты внутри те же: 9000 — S3, 9001 —
+# веб-интерфейс (у SeaweedFS это консоль мастера, а не консоль MinIO; наружу
+# их публикует docker-compose.override.yml, MINIO_PORT/MINIO_CONSOLE_PORT).
+#
+# Проверено: бинарь SeaweedFS той же версии, запущенный этой же командой,
+# проходит полный круг клиента хранилища (создание бакета, запись, чтение,
+# HEAD, список, удаление — internal/storage.TestLiveS3RoundTrip) и весь
+# конвейер целиком: артефакт скачан и сохранён, сканеры отработали, отчёты
+# записаны, публикация выполнена. В контейнере команда не проверялась: Docker в
+# среде проверки недоступен.
+services:
+  minio:
+    image: ${S3_IMAGE:-chrislusf/seaweedfs:latest}
+    # Учётные данные S3 у SeaweedFS задаются файлом, а не переменными, поэтому
+    # файл собирается на старте из тех же S3_ACCESS_KEY/S3_SECRET_KEY — чтобы
+    # ключи остались в одном месте, в .env.
+    #
+    # $$ — экранирование для compose: это переменные shell внутри контейнера,
+    # а не подстановка compose.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /etc/seaweedfs
+        cat > /etc/seaweedfs/s3.json <<EOF
+        {"identities":[{"name":"moderation",
+          "credentials":[{"accessKey":"$${S3_ACCESS_KEY}","secretKey":"$${S3_SECRET_KEY}"}],
+          "actions":["Admin","Read","Write","List","Tagging"]}]}
+        EOF
+        exec weed server -dir=/data -s3 -s3.port=9000 \
+          -s3.config=/etc/seaweedfs/s3.json \
+          -master.port=9001 -volume.port=9002 -filer.port=9003 \
+          -volume.max=30
+    command: []
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY обязателен}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY обязателен}
+    healthcheck:
+      # /status на самом порту S3 отвечает 200 без авторизации; корень отдаёт
+      # 403 (доступ по ключу), и проверять по нему нельзя.
+      #
+      # wget с запасным curl: какой из них есть в образе SeaweedFS, в среде
+      # проверки выяснить было нечем (Docker недоступен). Если не окажется ни
+      # того, ни другого, контейнер будет числиться unhealthy, но стенд от
+      # этого не сломается: зависимости от minio объявлены как service_started.
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:9000/status >/dev/null 2>&1 || curl -fsS http://localhost:9000/status >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s

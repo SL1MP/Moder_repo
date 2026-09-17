@@ -5,10 +5,12 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -401,4 +403,98 @@ func TestContentTypeFor(t *testing.T) {
 	if got := ContentTypeFor("bin"); got != "application/octet-stream" {
 		t.Errorf("ContentTypeFor(bin) = %q", got)
 	}
+}
+
+// Проверка на НАСТОЯЩЕМ S3-совместимом хранилище. Включается переменными:
+//
+//	MODERATION_TEST_S3_ENDPOINT=http://127.0.0.1:9000
+//	MODERATION_TEST_S3_ACCESS_KEY=... MODERATION_TEST_S3_SECRET_KEY=...
+//	MODERATION_TEST_S3_BUCKET=moderation-test   (по умолчанию)
+//
+// Зачем, если есть тесты на httptest-заглушке: заглушка проверяет, что клиент
+// шлёт то, что мы задумали, но не то, что это принимает настоящий сервер.
+// Расхождения в SigV4, в адресации bucket'а и в кодировании ключа вылезают
+// только на живом хранилище — и именно этим тестом проверяется замена MinIO
+// на любое другое S3-совместимое хранилище, прежде чем менять compose.
+func TestLiveS3RoundTrip(t *testing.T) {
+	endpoint := os.Getenv("MODERATION_TEST_S3_ENDPOINT")
+	if endpoint == "" {
+		t.Skip("MODERATION_TEST_S3_ENDPOINT не задан — пропускаю проверку на живом хранилище")
+	}
+	bucket := os.Getenv("MODERATION_TEST_S3_BUCKET")
+	if bucket == "" {
+		bucket = "moderation-test"
+	}
+	client, err := NewS3(S3Config{
+		Endpoint:  endpoint,
+		Bucket:    bucket,
+		AccessKey: os.Getenv("MODERATION_TEST_S3_ACCESS_KEY"),
+		SecretKey: os.Getenv("MODERATION_TEST_S3_SECRET_KEY"),
+		Region:    valueOrDefault(os.Getenv("MODERATION_TEST_S3_REGION"), "us-east-1"),
+	})
+	if err != nil {
+		t.Fatalf("клиент не собран: %v", err)
+	}
+	ctx := context.Background()
+
+	// Бакет заводит bootstrap, но на чистом хранилище его ещё нет.
+	if err := client.EnsureBucket(ctx); err != nil {
+		t.Fatalf("EnsureBucket: %v", err)
+	}
+
+	// Ключ с подкаталогами и версией — как настоящие ключи артефактов.
+	key := fmt.Sprintf("pypi/тест-пакет/1.0.0/artifact-%d.whl", time.Now().UnixNano())
+	payload := []byte("содержимое артефакта")
+
+	obj, err := client.Put(ctx, key, payload, "application/octet-stream")
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if obj.SizeBytes != int64(len(payload)) {
+		t.Errorf("размер в ответе = %d, ожидался %d", obj.SizeBytes, len(payload))
+	}
+
+	got, err := client.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("прочитано %q, записано %q", got, payload)
+	}
+
+	stat, err := client.Stat(ctx, key)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if stat.SizeBytes != int64(len(payload)) {
+		t.Errorf("Stat.SizeBytes = %d, ожидался %d", stat.SizeBytes, len(payload))
+	}
+
+	listed, err := client.List(ctx, "pypi/тест-пакет/")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var found bool
+	for _, o := range listed {
+		if o.Key == key {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ключ %q не найден в выдаче List (%d объектов)", key, len(listed))
+	}
+
+	if err := client.Delete(ctx, key); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := client.Get(ctx, key); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("после удаления Get вернул %v, ожидался ErrNotFound", err)
+	}
+}
+
+func valueOrDefault(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	return v
 }
