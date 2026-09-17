@@ -101,15 +101,30 @@ https://<хост>/api/v1/request-items/108/reports/banner_scan.html
 ссылки `json_url` и `html_url` из отчётов работают как есть.
 
 ```bash
-# один раз: миграции 0005-0007 на уже существующую базу Alembic
+# что накатить — скажет сама сверка схемы (код возврата 1, если есть пробелы)
+docker compose run --rm api-go schema
+
+# например, миграции 0005-0011 на уже существующую базу Alembic
 docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0005_scan_reports.up.sql
 docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0006_artifact_uniqueness.up.sql
 docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0007_dry_run_status.up.sql
+docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0008_queue_resume.up.sql
+docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0009_request_dry_run.up.sql
+docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0010_sast_advisory.up.sql
+docker compose exec -T db psql -U moderation -d moderation < backend-go/migrations/0011_cancel_request.up.sql
 
 # собрать и поднять
 docker compose up -d --build api-go
 docker compose up -d --build nginx
 ```
+
+**Не пропускайте сверку схемы.** Пропущенная миграция проявляется не как
+«схема устарела», а как случайная ошибка при нажатии кнопки: без
+`0011_cancel_request` закрытие заявки отвечает «Заявка не закрыта», без
+`0008_queue_resume` решение DevSecOps — «Решение не применено». `moderation
+schema` называет и пробел, и миграцию; то же пишется в лог api-go при старте,
+а сами ответы API с версии 44c49f1 говорят «Схема базы не соответствует
+версии сервиса» вместо общей ошибки.
 
 Проверка:
 

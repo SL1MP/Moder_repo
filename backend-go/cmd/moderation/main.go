@@ -43,6 +43,8 @@ func main() {
 			os.Exit(runScan(os.Args[2:], logger))
 		case "worker":
 			os.Exit(runWorker(os.Args[2:], logger))
+		case "schema":
+			os.Exit(runSchemaCheck(os.Args[2:], logger))
 		case "serve":
 			os.Args = append(os.Args[:1], os.Args[2:]...)
 		case "-h", "--help", "help":
@@ -160,7 +162,8 @@ func usage() {
   moderation scan --why N     почему по пакету N нет отчёта
   moderation worker           обработка очереди конвейера
   moderation worker --once    разобрать очередь и выйти
-                              и записать отчёты
+  moderation schema           сверить схему базы с кодом: чего не хватает и
+                              какую миграцию накатить
 
 Конфигурация — через переменные окружения, см. backend-go/README.md.
 Обязательна DATABASE_URL; для отчётов нужны также S3_*.
@@ -296,7 +299,7 @@ func checkSchema(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) {
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	gaps, err := repo.New(pool).MissingCheckValues(checkCtx)
+	gaps, err := repo.New(pool).MissingSchemaObjects(checkCtx)
 	if err != nil {
 		logger.Warn("схему сверить не удалось — расхождение с миграциями останется незамеченным",
 			"error", err)

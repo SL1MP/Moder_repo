@@ -191,8 +191,9 @@ func TestCancelledItemDropsOutOfRollup(t *testing.T) {
 }
 
 // TestCancelExplainsMissingMigration — база не разрешает статус `cancelled`
-// (миграцию не накатили): ответ называет причину и миграцию, а не отдаёт
-// глухое «Заявка не закрыта».
+// (миграцию не накатили): ответ говорит, что отстала схема, называет
+// ограничение и команду, которая покажет недостающие миграции, — вместо
+// глухого «Заявка не закрыта».
 //
 // Тест написан по живому случаю: кнопка отвечала 500, и по ответу понять,
 // что дело в развёртывании, а не в заявке, было невозможно.
@@ -231,7 +232,13 @@ func TestCancelExplainsMissingMigration(t *testing.T) {
 
 	rec := f.post(t, f.author, []string{"developer"}, f.cancelPath())
 	body := rec.Body.String()
-	if !strings.Contains(body, "0011_cancel_request") {
-		t.Fatalf("тело %s — ответ должен называть недостающую миграцию", body)
+	if !strings.Contains(body, "Схема базы не соответствует") {
+		t.Fatalf("тело %s — ответ должен называть причину", body)
+	}
+	if !strings.Contains(body, "request_item_status_check") {
+		t.Errorf("тело %s — ответ должен называть ограничение", body)
+	}
+	if !strings.Contains(body, "schema") {
+		t.Errorf("тело %s — ответ должен называть команду сверки схемы", body)
 	}
 }

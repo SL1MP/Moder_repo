@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Единый формат ошибки — тот же, что у python-версии
@@ -65,6 +68,39 @@ func errNotFound(message string) *Error {
 
 func errValidation(message string) *Error {
 	return &Error{Code: "validation_error", Status: http.StatusUnprocessableEntity, Message: message}
+}
+
+// schemaError — ошибка не в данных, а в схеме базы: она не разрешает значение
+// (23514), не знает столбца (42703) или таблицы (42P01). Практически всегда
+// это значит «не накатили миграцию».
+//
+// Возвращает nil, если ошибка не про схему.
+//
+// Такие ошибки обязаны называть себя. Живой случай: кнопки «закрыть заявку» и
+// «разрешить публикацию» отвечали «Заявка не закрыта» и «Решение не
+// применено», и по ответу было невозможно понять, что дело в развёртывании, а
+// не в заявке. Имя ограничения или столбца — это метаданные схемы, а не
+// данные пользователя, поэтому показать их можно.
+func schemaError(err error) *Error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return nil
+	}
+	var what string
+	switch pgErr.Code {
+	case "23514": // check_violation
+		what = "значение не разрешено ограничением " + pgErr.ConstraintName
+	case "42703": // undefined_column
+		what = "в базе нет нужного столбца"
+	case "42P01": // undefined_table
+		what = "в базе нет нужной таблицы"
+	default:
+		return nil
+	}
+	return errInternal(fmt.Sprintf(
+		"Схема базы не соответствует версии сервиса: %s. Накатите пропущенные миграции — "+
+			"какие именно, покажет `docker compose run --rm api-go schema` "+
+			"(и лог api-go при старте). Подробности: %s", what, pgErr.Message)).Because(err)
 }
 
 func errInternal(message string) *Error {

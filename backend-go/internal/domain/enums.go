@@ -90,7 +90,10 @@ var StepTitles = map[string]string{
 	"publish":     "Выгрузка в артефактори",
 }
 
-var StepResults = []string{"pending", "pass", "warn", "fail", "skipped"}
+// StepResults — результаты шага. info — шаг выполнен, публикацию не блокирует,
+// но сказать по нему есть что (так отдаёт результат SAST). Держать 1:1 с
+// CHECK-ограничением в migrations/0010.
+var StepResults = []string{"pending", "pass", "info", "warn", "fail", "skipped"}
 
 var ArtifactStatuses = []string{"downloaded", "scanned", "published", "purged", "failed"}
 

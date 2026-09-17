@@ -317,6 +317,14 @@ func (h *DecisionsHandler) writeDecisionError(w http.ResponseWriter, r *http.Req
 		writeError(w, r, errValidation(
 			strings.TrimPrefix(err.Error(), "решение сформулировано неверно: ")))
 	default:
+		// Схема базы отстала от кода — ошибка называет это прямо: иначе
+		// «Решение не применено» отправляет искать проблему в заявке, а она
+		// в развёртывании. Живой случай: решение DevSecOps не применялось,
+		// потому что в базе не было столбца очереди конвейера.
+		if schemaErr := schemaError(err); schemaErr != nil {
+			writeError(w, r, schemaErr)
+			return
+		}
 		writeError(w, r, errInternal("Решение не применено").Because(err))
 	}
 }

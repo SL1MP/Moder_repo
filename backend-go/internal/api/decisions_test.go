@@ -455,3 +455,42 @@ func TestRequestStatusHandlesDryRun(t *testing.T) {
 		t.Fatalf("approved + dry_run дали %q: публикации не было не у всех, «одобрена» здесь неверно", status)
 	}
 }
+
+// TestSecurityDecisionExplainsStaleSchema — решение не применилось, потому что
+// в базе нет столбца очереди конвейера (не накатили миграцию 0008): ответ
+// говорит именно это, а не «Решение не применено».
+//
+// Тест написан по живому случаю: DevSecOps не мог ни разрешить публикацию, ни
+// закрыть заявку, и по ответам понять, что схема отстала от кода, было
+// невозможно.
+func TestSecurityDecisionExplainsStaleSchema(t *testing.T) {
+	f := newDecisionFixture(t, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+	ctx := context.Background()
+
+	// Столбец возвращается сразу после теста: он нужен и очереди, и другим
+	// тестам общей базы.
+	if _, err := f.repo.Pool().Exec(ctx,
+		`ALTER TABLE request_item DROP COLUMN resume_from_step`); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := f.repo.Pool().Exec(context.Background(),
+			`ALTER TABLE request_item ADD COLUMN resume_from_step VARCHAR(32)`); err != nil {
+			t.Fatalf("восстановление столбца: %v", err)
+		}
+	}()
+
+	rec := f.do(t, "devsecops", http.MethodPost,
+		fmt.Sprintf("/api/v1/items/%d/security-decision", f.itemID),
+		`{"approve":true,"comment":"проверено"}`)
+	body := rec.Body.String()
+	if !strings.Contains(body, "Схема базы не соответствует") {
+		t.Fatalf("тело %s — ответ должен называть причину", body)
+	}
+	if !strings.Contains(body, "resume_from_step") {
+		t.Errorf("тело %s — ответ должен называть, чего именно нет в базе", body)
+	}
+	if !strings.Contains(body, "schema") {
+		t.Errorf("тело %s — ответ должен называть команду сверки схемы", body)
+	}
+}

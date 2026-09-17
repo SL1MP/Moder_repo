@@ -13,11 +13,11 @@ import (
 // что в базе не была применена миграция со статусом `cancelled`. Снаружи это
 // выглядело как случайная ошибка, а не как «схема устарела».
 
-func TestMissingCheckValuesOnCurrentSchema(t *testing.T) {
+func TestSchemaHasNoGapsOnCurrentSchema(t *testing.T) {
 	r, cleanup := mustPool(t)
 	defer cleanup()
 
-	gaps, err := r.MissingCheckValues(context.Background())
+	gaps, err := r.MissingSchemaObjects(context.Background())
 	if err != nil {
 		t.Fatalf("сверка схемы: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestMissingCheckValuesOnCurrentSchema(t *testing.T) {
 //
 // Ограничение подменяется на прежний список в транзакции теста — база при
 // этом остаётся согласованной: в конце всё возвращается на место.
-func TestMissingCheckValuesFindsStaleConstraint(t *testing.T) {
+func TestSchemaGapFoundForStaleConstraint(t *testing.T) {
 	r, cleanup := mustPool(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -66,7 +66,7 @@ func TestMissingCheckValuesFindsStaleConstraint(t *testing.T) {
 		}
 	}()
 
-	gaps, err := r.MissingCheckValues(ctx)
+	gaps, err := r.MissingSchemaObjects(ctx)
 	if err != nil {
 		t.Fatalf("сверка схемы: %v", err)
 	}
@@ -82,4 +82,38 @@ func TestMissingCheckValuesFindsStaleConstraint(t *testing.T) {
 	if !found {
 		t.Fatalf("пробел по статусу cancelled не найден, получено: %v", gaps)
 	}
+}
+
+// Пропущенный столбец тоже находится — и это не теория: без
+// `resume_from_step` (миграция 0008) молча перестают работать и захват пакета
+// воркером, и решение роли, которое ставит пакет в очередь с нужного шага.
+func TestSchemaGapFoundForMissingColumn(t *testing.T) {
+	r, cleanup := mustPool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	if _, err := r.Pool().Exec(ctx,
+		`ALTER TABLE request_item DROP COLUMN resume_from_step`); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := r.Pool().Exec(context.Background(),
+			`ALTER TABLE request_item ADD COLUMN resume_from_step VARCHAR(32)`); err != nil {
+			t.Fatalf("восстановление столбца: %v", err)
+		}
+	}()
+
+	gaps, err := r.MissingSchemaObjects(ctx)
+	if err != nil {
+		t.Fatalf("сверка схемы: %v", err)
+	}
+	for _, gap := range gaps {
+		if gap.Kind == GapColumn && gap.Column == "resume_from_step" {
+			if !strings.Contains(gap.Migration, "0008_queue_resume") {
+				t.Errorf("пробел не называет миграцию: %s", gap)
+			}
+			return
+		}
+	}
+	t.Fatalf("пропущенный столбец не найден, получено: %v", gaps)
 }
