@@ -24,6 +24,8 @@ class NpmPlugin(PackageManagerPlugin):
     title = "npm (Node.js)"
     entry_format = "[@scope/]name@version"
     dependency_files = ("package-lock.json", "yarn.lock", "package.json")
+    # Формат не различает прямые и транзитивные — см. golang.py.
+    indeterminate_kind_files = ("yarn.lock",)
 
     def normalize_name(self, name: str) -> str:
         return name.strip().lower()

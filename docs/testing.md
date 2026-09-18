@@ -79,6 +79,38 @@
    написанный один раз и переиспользуемый и для проверки переноса, и как постоянный regression
    suite после.
 
+## Дифференциальная проверка против эталона
+
+Там, где мы реализуем чужие правила, свои тесты проверяют наше понимание правил, а не сами
+правила. Для версий это особенно опасно: semver и PEP 440 полны исключений, о которых узнаёшь
+только когда они уже стоили инцидента.
+
+Поэтому `backend-go/internal/version` проверяется не только таблицами, но и прогоном против
+эталонных реализаций — `packaging` (PEP 440) и `semver` (npm). Корпус собирается из настоящих
+реестров: требования берутся из метаданных популярных пакетов, версии — из их истории релизов.
+
+```bash
+cd backend-go
+# корпус (нужны packaging и npm-пакет semver)
+VERCHECK_OUT=/tmp/vercheck python internal/version/vercheck/gen_pypi.py
+VERCHECK_OUT=/tmp/vercheck python internal/version/vercheck/gen_pypi_cmp.py
+SEMVER_PATH=$(node -p "require.resolve('semver')") VERCHECK_OUT=/tmp/vercheck \
+  node internal/version/vercheck/gen_npm.mjs
+
+go run ./internal/version/vercheck /tmp/vercheck/pypi_cases.json   pypi
+go run ./internal/version/vercheck /tmp/vercheck/pypi_compare.json pypi compare
+go run ./internal/version/vercheck /tmp/vercheck/npm_cases.json    npm
+go run ./internal/version/vercheck /tmp/vercheck/npm_compare.json  npm compare
+```
+
+Последний прогон: pypi — 73 200 пар «требование/версия» и 6 537 сравнений, npm — 2 185 500 пар и
+4 349 сравнений, расхождений нет. Проверка нашла два настоящих расхождения, оба исправлены:
+правило PEP 440 про строгие сравнения («<2.0» не допускает 2.0.0a1) и оператор, отделённый от
+версии пробелом («>= 0.3.0»), которых в npm тысячи.
+
+В CI это не прогоняется: нужен интернет и два чужих рантайма. Прогонять — при правке
+`internal/version`.
+
 ## Что взять из Python-тестов как сценарии (не как код)
 
 Существующие фикстуры/сценарии — ценный актив независимо от языка: `tests/e2e/test_main_flow.py`

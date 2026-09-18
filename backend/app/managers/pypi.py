@@ -26,6 +26,8 @@ class PypiPlugin(PackageManagerPlugin):
     title = "PyPI (Python)"
     entry_format = "name==version"
     dependency_files = ("requirements*.txt", "poetry.lock", "pyproject.toml")
+    # Формат не различает прямые и транзитивные — см. golang.py.
+    indeterminate_kind_files = ("poetry.lock",)
 
     # ------------------------------------------------------------------ нормализация
     def normalize_name(self, name: str) -> str:
