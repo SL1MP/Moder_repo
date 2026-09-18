@@ -114,7 +114,10 @@ type ModerationRequest struct {
 	IdempotencyKey    *string
 	OriginFile        *string
 	IncludeTransitive bool
-	Warnings          []string // JSONB
+	// ResolveDepth и ResolveSummary — как раскрывали зависимости и что вышло.
+	ResolveDepth   *int
+	ResolveSummary *string
+	Warnings       []string // JSONB
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -127,12 +130,18 @@ type RequestItem struct {
 	RequestedName    string
 	RequestedVersion string
 	DependencyKind   string
-	Status           string
-	CurrentStep      *string
-	NextAction       *string // блок «Что делать» для разработчика
-	BlockedReason    *string
-	WaitingSince     *time.Time
-	FinishedAt       *time.Time
+	// ParentItemID — кто притащил этот пакет. nil у заявленного напрямую.
+	ParentItemID *int64
+	// Depth — 0 у заявленного пакета, 1 у его прямой зависимости и так далее.
+	Depth int
+	// RequiredRange — требование родителя как есть («^4.17.21», «>=2,<4»).
+	RequiredRange *string
+	Status        string
+	CurrentStep   *string
+	NextAction    *string // блок «Что делать» для разработчика
+	BlockedReason *string
+	WaitingSince  *time.Time
+	FinishedAt    *time.Time
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

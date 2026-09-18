@@ -19,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -183,6 +184,11 @@ class ModerationRequest(Base, TimestampMixin):
     idempotency_key: Mapped[str | None] = mapped_column(String(255))
     origin_file: Mapped[str | None] = mapped_column(String(512))
     include_transitive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Итог раскрытия зависимостей: до какой глубины разошлись и что вышло.
+    # Без этого нельзя показать «дерево обрезано по пределу» — а молчать об
+    # этом нельзя: неполное дерево выглядит как полное.
+    resolve_depth: Mapped[int | None] = mapped_column(SmallInteger)
+    resolve_summary: Mapped[str | None] = mapped_column(Text)
     warnings: Mapped[list[str] | None] = mapped_column(JSON)
 
     author: Mapped[User] = relationship()
@@ -210,6 +216,16 @@ class RequestItem(Base, TimestampMixin):
     requested_name: Mapped[str] = mapped_column(String(512), nullable=False)
     requested_version: Mapped[str] = mapped_column(String(128), nullable=False)
     dependency_kind: Mapped[str] = mapped_column(String(16), default="direct", nullable=False)
+    # Дерево зависимостей внутри заявки: кто притащил этот пакет. Юристу и
+    # DevSecOps это нужно постоянно — «эта GPL пришла через вот тот пакет»
+    # другой разговор, чем «у нас в заявке GPL».
+    parent_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("request_item.id", ondelete="SET NULL"), nullable=True
+    )
+    depth: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    # required_range — требование родителя как есть («^4.17.21», «>=2,<4»):
+    # по нему видно, почему выбрана именно эта версия.
+    required_range: Mapped[str | None] = mapped_column(String(256))
     status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
     current_step: Mapped[str | None] = mapped_column(String(32))
     next_action: Mapped[str | None] = mapped_column(Text)  # блок «Что делать» для разработчика

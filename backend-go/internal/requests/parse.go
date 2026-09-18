@@ -16,6 +16,7 @@ import (
 	"moderation/internal/domain"
 	"moderation/internal/registry"
 	"moderation/internal/repo"
+	"moderation/internal/resolve"
 )
 
 // Состояния разобранного пакета.
@@ -36,7 +37,15 @@ type Parsed struct {
 	State string
 	Ref   *registry.Ref
 
-	DependencyKind    string
+	DependencyKind string
+	// Key и ParentKey связывают записи в дерево зависимостей: ключ узла и
+	// ключ того, кто его затребовал. У заявленного пакета ParentKey пуст.
+	Key       string
+	ParentKey string
+	// Depth — 0 у заявленного пакета, 1 у его прямой зависимости и так далее.
+	Depth int
+	// RequiredRange — требование родителя, по которому выбрана версия.
+	RequiredRange     string
 	Message           string
 	ExpectedFormat    string
 	ExistingVersionID *int64
@@ -72,8 +81,11 @@ type Input struct {
 	// Filename и Content — файл зависимостей.
 	Filename string
 	Content  []byte
-	// IncludeTransitive — брать ли транзитивные записи из файла.
+	// IncludeTransitive — раскрывать ли транзитивные зависимости: брать их из
+	// файла, если он их перечисляет, и достраивать дерево по данным реестра.
 	IncludeTransitive bool
+	// ResolveDepth — глубина раскрытия. 0 — взять из настроек сервиса.
+	ResolveDepth int
 	// Reason — зачем пакет нужен. Читается вместе с остальным входом, хотя
 	// разбору не нужен: способов передать его два, и разбирать их дважды —
 	// верный способ однажды потерять его в одном из них.
@@ -97,6 +109,9 @@ type Service struct {
 	Repo     *repo.Repo
 	Registry *registry.Registry
 	Limits   Limits
+	// Resolver раскрывает транзитивные зависимости. nil — раскрытие
+	// выключено: сервис обязан работать и без похода в реестр за графом.
+	Resolver *resolve.Resolver
 	// InstallCommand собирает команду установки для уже одобренного пакета.
 	// Функцией, а не зависимостью от конфига: сервису нужен один вызов, а не
 	// весь конфиг артефактори.
@@ -278,7 +293,8 @@ func (s *Service) fromFile(plugin registry.Plugin, in Input) ([]entry, []string,
 
 // classify сверяет запись с базой: уже одобрен, запрещён или новый.
 func (s *Service) classify(ctx context.Context, ref registry.Ref, raw, kind string) (Parsed, error) {
-	parsed := Parsed{Raw: raw, State: StateNew, Ref: &ref, DependencyKind: valueOr(kind, depfile.KindDirect)}
+	parsed := Parsed{Raw: raw, State: StateNew, Ref: &ref,
+		DependencyKind: valueOr(kind, depfile.KindDirect), Key: resolve.Key(ref)}
 
 	existing, err := s.Repo.FindVersion(ctx, ref.Manager, ref.Name, ref.Version)
 	if err != nil {

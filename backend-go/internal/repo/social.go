@@ -42,7 +42,8 @@ var finishedStatuses = []string{"approved", "rejected", "blacklisted", "revoked"
 func (r *Repo) QueueItems(ctx context.Context, statuses, stepCodes []string) ([]QueueRow, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT ri.id, ri.request_id, ri.package_version_id, ri.requested_name, ri.requested_version,
-		       ri.dependency_kind, ri.status, ri.current_step, ri.next_action, ri.blocked_reason,
+		       ri.dependency_kind, ri.parent_item_id, ri.depth, ri.required_range,
+		       ri.status, ri.current_step, ri.next_action, ri.blocked_reason,
 		       ri.waiting_since, ri.finished_at, ri.created_at, ri.updated_at,
 		       p.manager, u.username, pv.license_spdx, pv.max_vuln_score, claim.id
 		FROM request_item ri

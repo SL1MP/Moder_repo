@@ -15,6 +15,7 @@ import (
 	"moderation/internal/domain"
 	"moderation/internal/registry"
 	"moderation/internal/requests"
+	"moderation/internal/resolve"
 )
 
 // Создание заявки. Порт POST /api/v1/requests из
@@ -52,6 +53,19 @@ func (h *RequestsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Раскрытие идёт до создания заявки: завести пакеты, а потом дописать к
+	// ним зависимости значит на секунду показать пользователю неполную
+	// заявку и заставить конвейер дважды пересчитывать свёртку статусов.
+	var walk *resolve.Result
+	if in.IncludeTransitive {
+		parsed, walk, err = h.Requests.Expand(r.Context(), parsed, h.resolveOptions(in.ResolveDepth))
+		if err != nil {
+			writeError(w, r, errBadGateway(
+				"Не удалось раскрыть транзитивные зависимости: реестр не ответил").Because(err))
+			return
+		}
+	}
+
 	source := "api"
 	if r.Header.Get("x-client") == "web" {
 		source = "ui"
@@ -62,6 +76,7 @@ func (h *RequestsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey:    r.Header.Get("Idempotency-Key"),
 		OriginFile:        in.Filename,
 		IncludeTransitive: in.IncludeTransitive,
+		Resolve:           walk,
 	}, h.Queue)
 	if err != nil {
 		var conflict *requests.ConflictError
@@ -110,9 +125,11 @@ func (h *RequestsHandler) readJSON(r *http.Request) (requests.Input, *Error) {
 	}
 
 	var payload struct {
-		Manager  string            `json:"manager"`
-		Reason   string            `json:"reason"`
-		Packages []json.RawMessage `json:"packages"`
+		Manager           string            `json:"manager"`
+		Reason            string            `json:"reason"`
+		Packages          []json.RawMessage `json:"packages"`
+		IncludeTransitive bool              `json:"include_transitive"`
+		ResolveDepth      int               `json:"resolve_depth"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return requests.Input{}, errValidation(
@@ -126,7 +143,8 @@ func (h *RequestsHandler) readJSON(r *http.Request) (requests.Input, *Error) {
 		return requests.Input{}, errValidation("Список packages пуст или имеет неверный тип")
 	}
 
-	in := requests.Input{Manager: manager}
+	in := requests.Input{Manager: manager,
+		IncludeTransitive: payload.IncludeTransitive, ResolveDepth: payload.ResolveDepth}
 	// Элемент списка бывает строкой («requests==2.31.0») и объектом
 	// {name, version}: обе формы уже используются, и поддержать нужно обе.
 	for _, raw := range payload.Packages {
@@ -175,6 +193,9 @@ func (h *RequestsHandler) readMultipart(r *http.Request, boundary string) (reque
 		case "include_transitive":
 			value, _ := io.ReadAll(io.LimitReader(part, 16))
 			in.IncludeTransitive = isTrue(string(value))
+		case "resolve_depth":
+			value, _ := io.ReadAll(io.LimitReader(part, 8))
+			in.ResolveDepth, _ = strconv.Atoi(strings.TrimSpace(string(value)))
 		case "file":
 			content, err := io.ReadAll(io.LimitReader(part, limit+1))
 			if err != nil {
@@ -289,6 +310,11 @@ func parsedPackageView(p requests.Parsed) map[string]any {
 	if p.InstallCommand != "" {
 		view["install_command"] = p.InstallCommand
 	}
+	if p.Depth > 0 {
+		view["depth"] = p.Depth
+		view["required_range"] = p.RequiredRange
+		view["required_by"] = parentEntry(p.ParentKey)
+	}
 	return view
 }
 
@@ -335,4 +361,35 @@ func valueOrDirect(kind string) string {
 		return "direct"
 	}
 	return kind
+}
+
+// resolveOptions — пределы раскрытия для одного запроса: настройки сервиса
+// плюс глубина, которую попросил пользователь. Просить БОЛЬШЕ настроенного
+// нельзя: глубина — это не удобство, а стоимость, которую платит и реестр, и
+// очередь людей, разбирающих заявку.
+func (h *RequestsHandler) resolveOptions(depth int) resolve.Options {
+	opts := resolve.DefaultOptions()
+	if h.Cfg != nil {
+		opts = resolve.Options{
+			MaxDepth:        h.Cfg.ResolveMaxDepth,
+			MaxNodes:        h.Cfg.ResolveMaxPackages,
+			IncludeOptional: h.Cfg.ResolveIncludeOptional,
+			Concurrency:     h.Cfg.ResolveConcurrency,
+		}
+	}
+	if depth > 0 && depth < opts.MaxDepth {
+		opts.MaxDepth = depth
+	}
+	return opts
+}
+
+// parentEntry — человеческое имя родителя из ключа узла
+// («pypi:urllib3:2.0.7» -> «urllib3 2.0.7»). Ключ наружу не отдаётся: он
+// внутренний и в интерфейсе не значит ничего.
+func parentEntry(key string) string {
+	parts := strings.Split(key, ":")
+	if len(parts) < 3 {
+		return ""
+	}
+	return strings.Join(parts[1:len(parts)-1], ":") + " " + parts[len(parts)-1]
 }

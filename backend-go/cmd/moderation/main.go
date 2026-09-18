@@ -29,6 +29,7 @@ import (
 	"moderation/internal/registry"
 	"moderation/internal/repo"
 	"moderation/internal/requests"
+	"moderation/internal/resolve"
 	"moderation/internal/storage"
 )
 
@@ -257,6 +258,15 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 			Limits: requests.Limits{
 				MaxPackages: cfg.MaxPackagesPerRequest, MaxUploadSize: cfg.MaxUploadSizeBytes,
 			},
+			// Раскрытие зависимостей ходит в те же реестры и тем же клиентом,
+			// что и остальной сервис: один прокси, один таймаут, один
+			// источник правды про доступность реестра.
+			Resolver: resolve.New(reg, resolve.Options{
+				MaxDepth:        cfg.ResolveMaxDepth,
+				MaxNodes:        cfg.ResolveMaxPackages,
+				IncludeOptional: cfg.ResolveIncludeOptional,
+				Concurrency:     cfg.ResolveConcurrency,
+			}, logger),
 			InstallCommand: func(manager, name, displayName, version, rawVersion string) string {
 				plugin, err := reg.Get(manager)
 				if err != nil {

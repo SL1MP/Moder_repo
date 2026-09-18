@@ -77,6 +77,9 @@ type Result struct {
 	MaxDepth  int
 	Requests  int
 	CacheHits int
+	// Options — с какими пределами шёл обход. Нужны, чтобы объяснить
+	// обрезанное дерево: «предел 200» — ответ, «дерево неполное» — нет.
+	Options Options
 }
 
 // Transitive — узлы глубже нуля.
@@ -161,6 +164,13 @@ func Key(ref registry.Ref) string {
 // зависимости, потом их зависимости. Обход именно вширь, а не вглубь, чтобы
 // упор в MaxNodes обрезал самые дальние узлы, а не случайную ветку целиком.
 func (r *Resolver) Walk(ctx context.Context, manager string, roots []registry.Ref) (Result, error) {
+	return r.WalkWith(ctx, manager, roots, r.Options)
+}
+
+// WalkWith — то же с пределами на один вызов: у предпросмотра и у создания
+// заявки они разные (предел заявки главнее настроек обхода).
+func (r *Resolver) WalkWith(ctx context.Context, manager string, roots []registry.Ref, opts Options) (Result, error) {
+	opts = opts.normalized()
 	plugin, err := r.Registry.Get(manager)
 	if err != nil {
 		return Result{}, err
@@ -175,7 +185,7 @@ func (r *Resolver) Walk(ctx context.Context, manager string, roots []registry.Re
 	}
 
 	state := &walkState{
-		resolver: r, plugin: plugin, source: source, scheme: scheme,
+		resolver: r, options: opts, plugin: plugin, source: source, scheme: scheme,
 		index: map[string]int{}, versionsByName: map[string][]string{},
 	}
 	for _, ref := range roots {
@@ -183,7 +193,7 @@ func (r *Resolver) Walk(ctx context.Context, manager string, roots []registry.Re
 	}
 
 	frontier := append([]Node(nil), state.result.Nodes...)
-	for depth := 1; depth <= r.Options.MaxDepth && len(frontier) > 0; depth++ {
+	for depth := 1; depth <= opts.MaxDepth && len(frontier) > 0; depth++ {
 		if state.result.Truncated {
 			break
 		}
@@ -191,11 +201,13 @@ func (r *Resolver) Walk(ctx context.Context, manager string, roots []registry.Re
 	}
 
 	state.finish()
+	state.result.Options = opts
 	return state.result, nil
 }
 
 type walkState struct {
 	resolver *Resolver
+	options  Options
 	plugin   registry.Plugin
 	source   registry.DependencyResolver
 	scheme   version.Scheme
@@ -214,7 +226,7 @@ func (s *walkState) add(node Node) bool {
 		s.result.Nodes[idx].Parents = append(s.result.Nodes[idx].Parents, node.Parents...)
 		return false
 	}
-	if len(s.result.Nodes) >= s.resolver.Options.MaxNodes {
+	if len(s.result.Nodes) >= s.options.MaxNodes {
 		s.result.Truncated = true
 		return false
 	}
@@ -228,7 +240,7 @@ func (s *walkState) add(node Node) bool {
 
 // expandLevel раскрывает один уровень дерева и возвращает следующий.
 func (s *walkState) expandLevel(ctx context.Context, level []Node, depth int) []Node {
-	limit := make(chan struct{}, s.resolver.Options.Concurrency)
+	limit := make(chan struct{}, s.options.Concurrency)
 	var wg sync.WaitGroup
 	var next []Node
 	var nextMu sync.Mutex
@@ -277,7 +289,7 @@ func (s *walkState) children(ctx context.Context, parent Node, depth int) []Node
 
 	var out []Node
 	for _, req := range requirements {
-		if req.Optional && !s.resolver.Options.IncludeOptional {
+		if req.Optional && !s.options.IncludeOptional {
 			continue
 		}
 		child, problem := s.resolveRequirement(ctx, req, parentKey, depth)

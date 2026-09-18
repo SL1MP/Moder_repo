@@ -117,6 +117,17 @@ var requiredColumns = []struct {
 		"backend-go/migrations/0002_security_override_on_package_version (или alembic 0002)"},
 	{"package_version", "security_override_comment",
 		"backend-go/migrations/0002_security_override_on_package_version (или alembic 0002)"},
+	// Дерево зависимостей внутри заявки: без этих столбцов не создаётся ни
+	// один пакет заявки — вставка идёт с ними всегда.
+	{"request_item", "parent_item_id",
+		"backend-go/migrations/0012_dependency_tree (или alembic 0007)"},
+	{"request_item", "depth", "backend-go/migrations/0012_dependency_tree (или alembic 0007)"},
+	{"request_item", "required_range",
+		"backend-go/migrations/0012_dependency_tree (или alembic 0007)"},
+	{"moderation_request", "resolve_depth",
+		"backend-go/migrations/0012_dependency_tree (или alembic 0007)"},
+	{"moderation_request", "resolve_summary",
+		"backend-go/migrations/0012_dependency_tree (или alembic 0007)"},
 }
 
 // requiredTables — таблицы поздних миграций.

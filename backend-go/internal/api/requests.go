@@ -227,6 +227,10 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 			"code_findings":      codeFindingViews(findings[item.PackageVersionID]),
 			"steps":              stepViews(itemSteps),
 		}
+		// Дерево зависимостей: кто притащил этот пакет и по какому требованию.
+		// Юристу и DevSecOps это меняет разговор: «эта GPL пришла через вот
+		// тот пакет» — не то же самое, что «у нас в заявке GPL».
+		itemTreeView(view, item.ParentItemID, item.Depth, item.RequiredRange)
 		if version.Version.Status == "approved" {
 			if cmd := h.installCommand(version); cmd != "" {
 				view["install_command"] = cmd
@@ -258,6 +262,8 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 		"source":             req.Source,
 		"origin_file":        req.OriginFile,
 		"include_transitive": req.IncludeTransitive,
+		"resolve_depth":      req.ResolveDepth,
+		"resolve_summary":    req.ResolveSummary,
 		"warnings":           listOrEmpty(req.Warnings),
 		"created_at":         req.CreatedAt,
 		"updated_at":         req.UpdatedAt,

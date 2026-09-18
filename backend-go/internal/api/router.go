@@ -78,6 +78,7 @@ func NewRouter(pool *pgxpool.Pool, opts ...Options) http.Handler {
 		}
 		if opt.Requests != nil && opt.Auth != nil {
 			MountRequests(r, opt.Requests, opt.Auth.Auth)
+			MountDependencies(r, opt.Requests, opt.Auth.Auth)
 		}
 		if opt.Licenses != nil && opt.Auth != nil {
 			MountLicenses(r, opt.Licenses, opt.Auth.Auth)

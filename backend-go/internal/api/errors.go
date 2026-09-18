@@ -103,6 +103,13 @@ func schemaError(err error) *Error {
 			"(и лог api-go при старте). Подробности: %s", what, pgErr.Message)).Because(err)
 }
 
+// errBadGateway — не смогли не мы, а внешняя система (реестр пакетов).
+// Отдельный код, потому что реакция другая: пользователю нужно повторить
+// позже, а не исправлять свой запрос.
+func errBadGateway(message string) *Error {
+	return &Error{Code: "upstream_unavailable", Status: http.StatusBadGateway, Message: message}
+}
+
 func errInternal(message string) *Error {
 	return &Error{Code: "internal_error", Status: http.StatusInternalServerError, Message: message}
 }

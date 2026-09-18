@@ -201,7 +201,8 @@ func (r *Repo) ListVulnerabilities(ctx context.Context, packageVersionID int64) 
 func (r *Repo) LatestItemForVersion(ctx context.Context, packageVersionID int64) (*domain.RequestItem, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, request_id, package_version_id, requested_name, requested_version,
-		       dependency_kind, status, current_step, next_action, blocked_reason,
+		       dependency_kind, parent_item_id, depth, required_range, status,
+		       current_step, next_action, blocked_reason,
 		       waiting_since, finished_at, created_at, updated_at
 		FROM request_item WHERE package_version_id = $1 ORDER BY id DESC LIMIT 1
 	`, packageVersionID)

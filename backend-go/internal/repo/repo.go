@@ -182,13 +182,15 @@ func (r *Repo) CreateModerationRequest(ctx context.Context, req domain.Moderatio
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO moderation_request
 			(author_id, author_role, manager, reason, status, source,
-			 idempotency_key, origin_file, include_transitive, warnings)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+			 idempotency_key, origin_file, include_transitive, resolve_depth,
+			 resolve_summary, warnings)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
 		RETURNING id, author_id, author_role, manager, reason, status, source,
-		          idempotency_key, origin_file, include_transitive, warnings,
-		          created_at, updated_at
+		          idempotency_key, origin_file, include_transitive, resolve_depth,
+		          resolve_summary, warnings, created_at, updated_at
 	`, req.AuthorID, req.AuthorRole, req.Manager, req.Reason, req.Status, req.Source,
-		req.IdempotencyKey, req.OriginFile, req.IncludeTransitive, warnings)
+		req.IdempotencyKey, req.OriginFile, req.IncludeTransitive, req.ResolveDepth,
+		req.ResolveSummary, warnings)
 	return scanModerationRequest(row)
 }
 
@@ -198,8 +200,8 @@ func (r *Repo) CreateModerationRequest(ctx context.Context, req domain.Moderatio
 func (r *Repo) GetModerationRequest(ctx context.Context, id int64) (*domain.ModerationRequest, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, author_id, author_role, manager, reason, status, source,
-		       idempotency_key, origin_file, include_transitive, warnings,
-		       created_at, updated_at
+		       idempotency_key, origin_file, include_transitive, resolve_depth,
+		       resolve_summary, warnings, created_at, updated_at
 		FROM moderation_request WHERE id = $1
 	`, id)
 	req, err := scanModerationRequest(row)
@@ -214,8 +216,8 @@ func (r *Repo) GetModerationRequest(ctx context.Context, id int64) (*domain.Mode
 func (r *Repo) GetModerationRequestByIdempotencyKey(ctx context.Context, key string) (*domain.ModerationRequest, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, author_id, author_role, manager, reason, status, source,
-		       idempotency_key, origin_file, include_transitive, warnings,
-		       created_at, updated_at
+		       idempotency_key, origin_file, include_transitive, resolve_depth,
+		       resolve_summary, warnings, created_at, updated_at
 		FROM moderation_request WHERE idempotency_key = $1
 	`, key)
 	req, err := scanModerationRequest(row)
@@ -233,7 +235,8 @@ func scanModerationRequest(row pgx.Row) (*domain.ModerationRequest, error) {
 	var warningsRaw []byte
 	if err := row.Scan(
 		&req.ID, &req.AuthorID, &req.AuthorRole, &req.Manager, &req.Reason, &req.Status,
-		&req.Source, &req.IdempotencyKey, &req.OriginFile, &req.IncludeTransitive, &warningsRaw,
+		&req.Source, &req.IdempotencyKey, &req.OriginFile, &req.IncludeTransitive,
+		&req.ResolveDepth, &req.ResolveSummary, &warningsRaw,
 		&req.CreatedAt, &req.UpdatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("чтение moderation_request: %w", err)
@@ -248,13 +251,14 @@ func (r *Repo) CreateRequestItem(ctx context.Context, item domain.RequestItem) (
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO request_item
 			(request_id, package_version_id, requested_name, requested_version,
-			 dependency_kind, status)
-		VALUES ($1, $2, $3, $4, $5, $6)
+			 dependency_kind, parent_item_id, depth, required_range, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, request_id, package_version_id, requested_name, requested_version,
-		          dependency_kind, status, current_step, next_action, blocked_reason,
+		          dependency_kind, parent_item_id, depth, required_range, status,
+		          current_step, next_action, blocked_reason,
 		          waiting_since, finished_at, created_at, updated_at
 	`, item.RequestID, item.PackageVersionID, item.RequestedName, item.RequestedVersion,
-		item.DependencyKind, item.Status)
+		item.DependencyKind, item.ParentItemID, item.Depth, item.RequiredRange, item.Status)
 	return scanRequestItem(row)
 }
 
@@ -263,7 +267,8 @@ func (r *Repo) CreateRequestItem(ctx context.Context, item domain.RequestItem) (
 func (r *Repo) GetRequestItem(ctx context.Context, id int64) (*domain.RequestItem, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, request_id, package_version_id, requested_name, requested_version,
-		       dependency_kind, status, current_step, next_action, blocked_reason,
+		       dependency_kind, parent_item_id, depth, required_range, status,
+		       current_step, next_action, blocked_reason,
 		       waiting_since, finished_at, created_at, updated_at
 		FROM request_item WHERE id = $1
 	`, id)
@@ -279,7 +284,8 @@ func (r *Repo) GetRequestItem(ctx context.Context, id int64) (*domain.RequestIte
 func (r *Repo) ListItemsByRequest(ctx context.Context, requestID int64) ([]domain.RequestItem, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, request_id, package_version_id, requested_name, requested_version,
-		       dependency_kind, status, current_step, next_action, blocked_reason,
+		       dependency_kind, parent_item_id, depth, required_range, status,
+		       current_step, next_action, blocked_reason,
 		       waiting_since, finished_at, created_at, updated_at
 		FROM request_item WHERE request_id = $1 ORDER BY id
 	`, requestID)
@@ -306,7 +312,8 @@ func (r *Repo) ListItemsByRequest(ctx context.Context, requestID int64) ([]domai
 func (r *Repo) ListItemsByPackageVersion(ctx context.Context, packageVersionID int64) ([]domain.RequestItem, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, request_id, package_version_id, requested_name, requested_version,
-		       dependency_kind, status, current_step, next_action, blocked_reason,
+		       dependency_kind, parent_item_id, depth, required_range, status,
+		       current_step, next_action, blocked_reason,
 		       waiting_since, finished_at, created_at, updated_at
 		FROM request_item WHERE package_version_id = $1 ORDER BY id
 	`, packageVersionID)
@@ -330,7 +337,8 @@ func scanRequestItem(row scanner) (*domain.RequestItem, error) {
 	var item domain.RequestItem
 	if err := row.Scan(
 		&item.ID, &item.RequestID, &item.PackageVersionID, &item.RequestedName,
-		&item.RequestedVersion, &item.DependencyKind, &item.Status, &item.CurrentStep,
+		&item.RequestedVersion, &item.DependencyKind, &item.ParentItemID, &item.Depth,
+		&item.RequiredRange, &item.Status, &item.CurrentStep,
 		&item.NextAction, &item.BlockedReason, &item.WaitingSince, &item.FinishedAt,
 		&item.CreatedAt, &item.UpdatedAt,
 	); err != nil {

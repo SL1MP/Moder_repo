@@ -147,8 +147,16 @@ type Config struct {
 	MaxArtifactSizeBytes  int64
 	MaxUploadSizeBytes    int64
 	MaxPackagesPerRequest int
-	ScanMaxUnpackedBytes  int64
-	ScanMaxFiles          int
+
+	// Раскрытие транзитивных зависимостей. Пределы здесь, а не в коде,
+	// потому что их приходится подбирать под свою экосистему: глубина 3 по
+	// npm — это сотни пакетов, по nuget — единицы.
+	ResolveMaxDepth        int
+	ResolveMaxPackages     int
+	ResolveIncludeOptional bool
+	ResolveConcurrency     int
+	ScanMaxUnpackedBytes   int64
+	ScanMaxFiles           int
 }
 
 // Load читает конфигурацию через getenv (не os.Getenv напрямую — тестируемость,
@@ -234,8 +242,13 @@ func Load(getenv func(string) string) (*Config, error) {
 		MaxArtifactSizeBytes:  bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 500*1024*1024),
 		MaxUploadSizeBytes:    bytesOr(getenv("MAX_UPLOAD_SIZE_BYTES"), 5*1024*1024),
 		MaxPackagesPerRequest: intOr(getenv("MAX_PACKAGES_PER_REQUEST"), 200),
-		ScanMaxUnpackedBytes:  bytesOr(getenv("SCAN_MAX_UNPACKED_BYTES"), 512<<20),
-		ScanMaxFiles:          intOr(getenv("SCAN_MAX_FILES"), 20000),
+
+		ResolveMaxDepth:        intOr(getenv("RESOLVE_MAX_DEPTH"), 3),
+		ResolveMaxPackages:     intOr(getenv("RESOLVE_MAX_PACKAGES"), 200),
+		ResolveIncludeOptional: boolOr(getenv("RESOLVE_INCLUDE_OPTIONAL"), false),
+		ResolveConcurrency:     intOr(getenv("RESOLVE_CONCURRENCY"), 8),
+		ScanMaxUnpackedBytes:   bytesOr(getenv("SCAN_MAX_UNPACKED_BYTES"), 512<<20),
+		ScanMaxFiles:           intOr(getenv("SCAN_MAX_FILES"), 20000),
 	}
 
 	if cfg.AppEnv != "dev" && cfg.AppEnv != "prod" {

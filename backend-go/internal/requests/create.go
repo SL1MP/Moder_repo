@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"moderation/internal/domain"
 	"moderation/internal/queue"
+	"moderation/internal/resolve"
 )
 
 // ErrConflict — заявка с таким Idempotency-Key уже есть.
@@ -32,6 +34,9 @@ type CreateInput struct {
 	IdempotencyKey    string
 	OriginFile        string
 	IncludeTransitive bool
+	// Resolve — итог раскрытия зависимостей, если оно было. Хранится на
+	// заявке: по нему в карточке видно, полное ли дерево.
+	Resolve *resolve.Result
 }
 
 // Create заводит заявку и ставит её пакеты в очередь.
@@ -56,6 +61,11 @@ func (s *Service) Create(ctx context.Context, result ParseResult, in CreateInput
 		Source: valueOr(in.Source, "api"), IncludeTransitive: in.IncludeTransitive,
 		Warnings: result.Warnings,
 	}
+	if in.Resolve != nil {
+		depth := in.Resolve.MaxDepth
+		summary := in.Resolve.Summary()
+		request.ResolveDepth, request.ResolveSummary = &depth, &summary
+	}
 	if in.AuthorRole != "" {
 		request.AuthorRole = &in.AuthorRole
 	}
@@ -74,8 +84,14 @@ func (s *Service) Create(ctx context.Context, result ParseResult, in CreateInput
 		return nil, nil, err
 	}
 
+	// Пакеты заводятся по возрастанию глубины: строка родителя обязана
+	// существовать раньше, чем на неё сошлётся потомок.
+	pending := result.New()
+	sort.SliceStable(pending, func(i, j int) bool { return pending[i].Depth < pending[j].Depth })
+
 	var itemIDs []int64
-	for _, parsed := range result.New() {
+	itemByKey := make(map[string]int64, len(pending))
+	for _, parsed := range pending {
 		ref := parsed.Ref
 		pkg, err := s.Repo.GetOrCreatePackage(ctx, ref.Manager, ref.Name, ref.DisplayName)
 		if err != nil {
@@ -85,14 +101,26 @@ func (s *Service) Create(ctx context.Context, result ParseResult, in CreateInput
 		if err != nil {
 			return nil, nil, err
 		}
-		item, err := s.Repo.CreateRequestItem(ctx, domain.RequestItem{
+		newItem := domain.RequestItem{
 			RequestID: created.ID, PackageVersionID: version.ID,
 			RequestedName: ref.DisplayName, RequestedVersion: ref.RawVersion,
 			DependencyKind: valueOr(parsed.DependencyKind, "direct"),
+			Depth:          parsed.Depth,
 			Status:         "queued",
-		})
+		}
+		if parentID, ok := itemByKey[parsed.ParentKey]; ok && parsed.ParentKey != "" {
+			newItem.ParentItemID = &parentID
+		}
+		if parsed.RequiredRange != "" {
+			required := parsed.RequiredRange
+			newItem.RequiredRange = &required
+		}
+		item, err := s.Repo.CreateRequestItem(ctx, newItem)
 		if err != nil {
 			return nil, nil, err
+		}
+		if parsed.Key != "" {
+			itemByKey[parsed.Key] = item.ID
 		}
 		itemIDs = append(itemIDs, item.ID)
 	}
