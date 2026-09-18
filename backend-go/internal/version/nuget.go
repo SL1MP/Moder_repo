@@ -178,3 +178,14 @@ func (n NuGet) Select(constraint string, available []string) (string, error) {
 	}
 	return selectLowest(n, match, available, true)
 }
+
+// LowerBound — нижняя граница требования или пустая строка, если она не
+// задана. Нужна при сведении требований из разных target framework к одному:
+// подходит та версия, что не ниже самого высокого из порогов.
+func (NuGet) LowerBound(constraint string) string {
+	rng, err := parseNuGetRange(constraint)
+	if err != nil || !rng.hasMin {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimLeft(strings.TrimRight(constraint, "])"), "[("))
+}
