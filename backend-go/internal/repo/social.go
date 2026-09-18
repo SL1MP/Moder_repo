@@ -78,7 +78,8 @@ func (r *Repo) QueueItems(ctx context.Context, statuses, stepCodes []string) ([]
 		var row QueueRow
 		i := &row.Item
 		if err := rows.Scan(&i.ID, &i.RequestID, &i.PackageVersionID, &i.RequestedName,
-			&i.RequestedVersion, &i.DependencyKind, &i.Status, &i.CurrentStep, &i.NextAction,
+			&i.RequestedVersion, &i.DependencyKind, &i.ParentItemID, &i.Depth, &i.RequiredRange,
+			&i.Status, &i.CurrentStep, &i.NextAction,
 			&i.BlockedReason, &i.WaitingSince, &i.FinishedAt, &i.CreatedAt, &i.UpdatedAt,
 			&row.Manager, &row.Author, &row.LicenseSPDX, &row.MaxVulnScore,
 			&row.LicenseClaimID); err != nil {

@@ -350,7 +350,7 @@ func TestCreateRequestFromRequirementsTxt(t *testing.T) {
 	}
 }
 
-// go.sum перечисляет весь граф модулей — пользователь обязан это увидеть,
+// go.sum не различает прямые и транзитивные — пользователь обязан это увидеть,
 // иначе заявка на три пакета неожиданно становится заявкой на сто.
 func TestCreateRequestFromGoSumWarns(t *testing.T) {
 	f := newCreateFixture(t)
@@ -361,7 +361,7 @@ func TestCreateRequestFromGoSumWarns(t *testing.T) {
 	}
 	warnings := decodeObject(t, rec)["warnings"].([]any)
 	joined := fmt.Sprint(warnings...)
-	if !strings.Contains(joined, "весь граф модулей") {
+	if !strings.Contains(joined, "не различает прямые и транзитивные") {
 		t.Fatalf("предупреждение про go.sum обязано быть: %v", warnings)
 	}
 }
