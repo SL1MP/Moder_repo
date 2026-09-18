@@ -150,21 +150,23 @@ func newFakeArtifactStore() *fakeArtifactStore {
 	return &fakeArtifactStore{published: map[string][]byte{}, baseURL: "https://art.test"}
 }
 
-func (f *fakeArtifactStore) ArtifactURL(repoName, path string) string {
-	return fmt.Sprintf("%s/%s/%s", f.baseURL, repoName, path)
+func (f *fakeArtifactStore) Kind() string { return artifactstore.KindGeneric }
+
+func (f *fakeArtifactStore) ArtifactURL(t artifactstore.Target) string {
+	return fmt.Sprintf("%s/%s/%s", f.baseURL, t.Repo, t.Path)
 }
 
-func (f *fakeArtifactStore) Exists(_ context.Context, repoName, path string) (bool, error) {
-	_, ok := f.published[repoName+"/"+path]
+func (f *fakeArtifactStore) Exists(_ context.Context, t artifactstore.Target) (bool, error) {
+	_, ok := f.published[t.Repo+"/"+t.Path]
 	return ok, nil
 }
 
-func (f *fakeArtifactStore) Publish(_ context.Context, repoName, path string, data []byte) (string, error) {
+func (f *fakeArtifactStore) Publish(_ context.Context, t artifactstore.Target, data []byte) (string, error) {
 	if f.publishErr != nil {
 		return "", f.publishErr
 	}
-	f.published[repoName+"/"+path] = data
-	return f.ArtifactURL(repoName, path), nil
+	f.published[t.Repo+"/"+t.Path] = data
+	return f.ArtifactURL(t), nil
 }
 
 func (f *fakeArtifactStore) StatFile(_ context.Context, repoName, path string) (*artifactstore.RemoteFile, error) {

@@ -266,7 +266,14 @@ class ArtifactStore(ABC):
 
 Реализации: `NexusArtifactStore` (Sonatype Nexus 3, один инстанс на все менеджеры: hosted-репозиторий
 на каждый менеджер плюс raw-репозиторий со снапшотами OSV) и `GenericArtifactStore` (внешний
-Artifactory: базовый URL, `basic`/`token`, шаблоны путей на каждый менеджер).
+Artifactory: базовый URL, `basic`/`token`, шаблоны путей на каждый менеджер). В go-версии —
+`backend-go/internal/artifactstore`, те же две, выбор по `ARTIFACT_STORE`.
+
+Разница между ними не косметическая, и перепутать их нельзя: Nexus принимает пакет только
+компонентным API (`POST /service/rest/v1/components?repository=…`, multipart, имя поля зависит от
+формата: `pypi.asset`, `npm.asset`, `nuget.asset`, `raw.asset1` + `raw.directory` для go-модулей),
+а раскладку внутри репозитория строит сам. На `PUT` по адресу файла — то есть на способ
+Artifactory — он отвечает `405 Method Not Allowed`.
 
 ### `VulnerabilityIndex` (`app/adapters/vuln_index.py`)
 

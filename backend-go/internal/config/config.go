@@ -121,6 +121,10 @@ type Config struct {
 	GitlabOAuthClientID string
 
 	// Артефактори — учётные данные для публикации и режим «без записи».
+	// ArtifactStore — тип артефактори: nexus (по умолчанию) или generic.
+	// У них разные протоколы выгрузки, и выбор не косметический: PUT в Nexus
+	// отвечает 405 на каждом пакете.
+	ArtifactStore    string
 	ArtifactAuthType string
 	ArtifactUser     string
 	ArtifactToken    string
@@ -226,6 +230,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		GitlabURL:           getenv("GITLAB_URL"),
 		GitlabOAuthClientID: getenv("GITLAB_OAUTH_CLIENT_ID"),
 
+		ArtifactStore:    valueOr(getenv("ARTIFACT_STORE"), "nexus"),
 		ArtifactAuthType: valueOr(getenv("ARTIFACT_AUTH_TYPE"), "basic"),
 		ArtifactUser:     getenv("ARTIFACT_USER"),
 		ArtifactToken:    getenv("ARTIFACT_TOKEN"),
@@ -272,6 +277,14 @@ func Load(getenv func(string) string) (*Config, error) {
 		errs = append(errs, fmt.Errorf(
 			"SAST_MIN_SEVERITY: недопустимое значение %q, ожидается info|low|medium|high|critical",
 			cfg.SASTMinSeverity))
+	}
+
+	// Тип артефактори проверяем на старте: опечатка ("nexsus") иначе всплыла
+	// бы только на шаге публикации — после того, как пакет уже скачали и
+	// просканировали, и у людей уже спросили решение.
+	if !domain.Contains([]string{"nexus", "generic"}, strings.ToLower(cfg.ArtifactStore)) {
+		errs = append(errs, fmt.Errorf(
+			"ARTIFACT_STORE: недопустимое значение %q, ожидается nexus|generic", cfg.ArtifactStore))
 	}
 
 	if len(errs) > 0 {

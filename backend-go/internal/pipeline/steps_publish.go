@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"moderation/internal/artifactstore"
 	"moderation/internal/domain"
 )
 
@@ -63,16 +64,23 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	repoName := pc.Config.ArtifactRepo(pc.Package.Manager)
 	path := plugin.ArtifactPath(ref, artifact.Filename)
 	command := plugin.InstallCommand(ref, pc.Config.ArtifactBaseURL, repoName)
+	// Цель публикации несёт и пакет, и путь: раскладка внутри репозитория
+	// зависит от типа артефактори (Nexus строит её сам по формату), а путь от
+	// плагина — это раскладка Artifactory.
+	target := artifactstore.Target{
+		Repo: repoName, Manager: ref.Manager, Name: ref.Name, DisplayName: ref.DisplayName,
+		Version: ref.RawVersion, Filename: artifact.Filename, Path: path,
+	}
 
 	if pc.Deps.Artifacts.DryRun() {
 		// Весь конвейер выполняется по-настоящему (реальное скачивание,
 		// реальные сканеры) — не публикуем реальными байтами. Проверяем только
 		// достижимость и авторизацию, чтобы креды боевого Artifactory были
 		// проверены без риска записи.
-		wouldBeURL := pc.Deps.Artifacts.ArtifactURL(repoName, path)
+		wouldBeURL := pc.Deps.Artifacts.ArtifactURL(target)
 		authNote := "артефактори отвечает, доступ подтверждён"
 		var reachable any
-		if exists, err := pc.Deps.Artifacts.Exists(ctx, repoName, path); err != nil {
+		if exists, err := pc.Deps.Artifacts.Exists(ctx, target); err != nil {
 			authNote = fmt.Sprintf("проверка достижимости не удалась: %v", err)
 		} else {
 			reachable = exists
@@ -87,6 +95,7 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 			Details: map[string]any{
 				"dry_run": true, "would_be_url": wouldBeURL, "already_exists": reachable,
 				"install_command_if_published": command, "repo": repoName,
+				"artifact_store": pc.Deps.Artifacts.Kind(),
 			},
 			Terminal:   true,
 			ItemStatus: "dry_run",
@@ -97,7 +106,7 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	if err != nil {
 		return StepOutcome{}, err
 	}
-	url, err := pc.Deps.Artifacts.Publish(ctx, repoName, path, payload)
+	url, err := pc.Deps.Artifacts.Publish(ctx, target, payload)
 	if err != nil {
 		return Fail(fmt.Sprintf("Публикация в артефактори не удалась: %v", err)).
 			WithStatus("failed", "failed").

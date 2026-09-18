@@ -2,6 +2,9 @@ package artifactstore_test
 
 import (
 	"context"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,7 +13,7 @@ import (
 	"moderation/internal/artifactstore"
 )
 
-func newStore(t *testing.T, cfg artifactstore.Config, handler http.HandlerFunc) *artifactstore.HTTP {
+func newStore(t *testing.T, cfg artifactstore.Config, handler http.HandlerFunc) artifactstore.Store {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
@@ -23,27 +26,40 @@ func newStore(t *testing.T, cfg artifactstore.Config, handler http.HandlerFunc) 
 	return store
 }
 
-func TestPublishSendsChecksumAndToken(t *testing.T) {
-	var gotAuth, gotChecksum string
-	var gotBody []byte
-	store := newStore(t, artifactstore.Config{AuthType: artifactstore.AuthToken, Token: "секрет"},
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodHead {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			gotAuth = r.Header.Get("Authorization")
-			gotChecksum = r.Header.Get("X-Checksum-Sha256")
-			gotBody = make([]byte, r.ContentLength)
-			_, _ = r.Body.Read(gotBody)
-			w.WriteHeader(http.StatusCreated)
-		})
+// pypiTarget — цель публикации обычного колеса.
+func pypiTarget() artifactstore.Target {
+	return artifactstore.Target{
+		Repo: "pypi-internal", Manager: "pypi", Name: "six", DisplayName: "six",
+		Version: "1.16.0", Filename: "six-1.16.0-py3-none-any.whl",
+		Path: "six/1.16.0/six-1.16.0-py3-none-any.whl",
+	}
+}
 
-	url, err := store.Publish(context.Background(), "pypi-internal", "six/1.16.0/six.whl", []byte("байты"))
+// --------------------------------------------------------------- generic
+
+func TestGenericPublishSendsChecksumAndToken(t *testing.T) {
+	var gotAuth, gotChecksum, gotMethod string
+	store := newStore(t, artifactstore.Config{
+		Kind: artifactstore.KindGeneric, AuthType: artifactstore.AuthToken, Token: "секрет",
+	}, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		gotMethod = r.Method
+		gotAuth = r.Header.Get("Authorization")
+		gotChecksum = r.Header.Get("X-Checksum-Sha256")
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	url, err := store.Publish(context.Background(), pypiTarget(), []byte("байты"))
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if !strings.HasSuffix(url, "/pypi-internal/six/1.16.0/six.whl") {
+	if gotMethod != http.MethodPut {
+		t.Errorf("метод = %q, у Artifactory это PUT", gotMethod)
+	}
+	if !strings.HasSuffix(url, "/pypi-internal/six/1.16.0/six-1.16.0-py3-none-any.whl") {
 		t.Errorf("URL = %q", url)
 	}
 	if gotAuth != "Bearer секрет" {
@@ -56,100 +72,221 @@ func TestPublishSendsChecksumAndToken(t *testing.T) {
 	}
 }
 
-// TestPublishSkipsExisting — одна и та же версия приходит из разных заявок, и
-// второй PUT в лучшем случае лишний, а в худшем подменяет байты, по которым
-// уже принято решение.
-func TestPublishSkipsExisting(t *testing.T) {
-	var puts int
-	store := newStore(t, artifactstore.Config{}, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodHead {
-			w.Header().Set("Content-Length", "100")
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		puts++
-		w.WriteHeader(http.StatusCreated)
-	})
+// Одна и та же версия приходит из разных заявок: второй PUT в лучшем случае
+// лишний, а в худшем подменяет байты, по которым уже принято решение.
+func TestGenericPublishSkipsExisting(t *testing.T) {
+	published := false
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindGeneric},
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				w.Header().Set("Content-Length", "5")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			published = true
+			w.WriteHeader(http.StatusCreated)
+		})
 
-	if _, err := store.Publish(context.Background(), "repo", "path/file.whl", []byte("x")); err != nil {
+	if _, err := store.Publish(context.Background(), pypiTarget(), []byte("байты")); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if puts != 0 {
-		t.Errorf("выполнено PUT: %d — уже опубликованная версия перезаписана", puts)
+	if published {
+		t.Error("файл уже был в артефактори — выгрузки быть не должно")
 	}
 }
 
-func TestPublishErrorKeepsBody(t *testing.T) {
-	store := newStore(t, artifactstore.Config{}, func(w http.ResponseWriter, r *http.Request) {
+// --------------------------------------------------------------- nexus
+
+// Nexus не принимает PUT по адресу файла: выгрузка идёт компонентным API,
+// иначе в ответ прилетает 405 на каждом пакете.
+func TestNexusPublishUsesComponentsAPI(t *testing.T) {
+	var gotPath, gotQuery, gotMethod, gotField, gotFilename string
+	var gotBody []byte
+	store := newStore(t, artifactstore.Config{
+		Kind: artifactstore.KindNexus, AuthType: artifactstore.AuthBasic,
+		Username: "moderation", Password: "секрет",
+	}, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte("Deploy denied: repository is moderated"))
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			t.Errorf("Content-Type = %q: %v", r.Header.Get("Content-Type"), err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		reader := multipart.NewReader(r.Body, params["boundary"])
+		for {
+			part, err := reader.NextPart()
+			if err != nil {
+				break
+			}
+			gotField, gotFilename = part.FormName(), part.FileName()
+			gotBody, _ = io.ReadAll(part)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
-	_, err := store.Publish(context.Background(), "repo", "p/f.whl", []byte("x"))
-	if err == nil {
-		t.Fatal("ошибки нет")
-	}
-	// Ровно этот ответ отличает «прямой PUT запрещён» от «нет прав» — открытый
-	// вопрос про боевой Artifactory (docs/ci-parity-gaps.md).
-	if !strings.Contains(err.Error(), "repository is moderated") {
-		t.Errorf("err = %v — ответ артефактори потерян", err)
-	}
-}
 
-// TestDryRunPublishIsCallerError — в режиме dry-run публиковать нельзя, и
-// молча «успешно ничего не сделать» тоже нельзя: это пометило бы пакет
-// опубликованным. Шаг обязан проверить DryRun() сам.
-func TestDryRunPublishIsCallerError(t *testing.T) {
-	store := newStore(t, artifactstore.Config{DryRun: true}, func(w http.ResponseWriter, r *http.Request) {
-		t.Error("в режиме dry-run выполнен запрос к артефактори")
-	})
-	if !store.DryRun() {
-		t.Fatal("DryRun() = false")
-	}
-	if _, err := store.Publish(context.Background(), "repo", "p/f", []byte("x")); err == nil {
-		t.Error("публикация в dry-run завершилась успехом — пакет был бы помечен опубликованным")
-	}
-}
-
-func TestStatFileMissingIsNil(t *testing.T) {
-	store := newStore(t, artifactstore.Config{}, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	})
-	file, err := store.StatFile(context.Background(), "repo", "нет/такого")
+	url, err := store.Publish(context.Background(), pypiTarget(), []byte("байты"))
 	if err != nil {
-		t.Fatalf("StatFile: %v", err)
+		t.Fatalf("Publish: %v", err)
 	}
-	if file != nil {
-		t.Errorf("StatFile = %+v, ожидался nil", file)
+	if gotMethod != http.MethodPost {
+		t.Errorf("метод = %q, компонентный API — это POST", gotMethod)
 	}
-	exists, err := store.Exists(context.Background(), "repo", "нет/такого")
-	if err != nil || exists {
-		t.Errorf("Exists = %v, %v", exists, err)
+	if gotPath != "/service/rest/v1/components" {
+		t.Errorf("путь выгрузки = %q", gotPath)
+	}
+	if gotQuery != "repository=pypi-internal" {
+		t.Errorf("параметры = %q", gotQuery)
+	}
+	if gotField != "pypi.asset" {
+		t.Errorf("поле с файлом = %q, у формата pypi это pypi.asset", gotField)
+	}
+	if gotFilename != "six-1.16.0-py3-none-any.whl" || string(gotBody) != "байты" {
+		t.Errorf("файл = %q (%q)", gotFilename, gotBody)
+	}
+	// Адрес файла у Nexus свой: /repository/ и раскладка формата.
+	if !strings.HasSuffix(url, "/repository/pypi-internal/packages/six/1.16.0/six-1.16.0-py3-none-any.whl") {
+		t.Errorf("URL = %q", url)
 	}
 }
 
-func TestBasicAuth(t *testing.T) {
-	var user, pass string
-	var ok bool
-	store := newStore(t,
-		artifactstore.Config{AuthType: artifactstore.AuthBasic, Username: "svc", Password: "pw"},
+// go-модули Nexus хранит в raw-репозитории: каталог задаём сами, иначе
+// GOPROXY их не найдёт.
+func TestNexusPublishGoModuleAsRaw(t *testing.T) {
+	fields := map[string]string{}
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindNexus},
 		func(w http.ResponseWriter, r *http.Request) {
-			user, pass, ok = r.BasicAuth()
-			w.WriteHeader(http.StatusNotFound)
+			if r.Method == http.MethodHead {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			reader := multipart.NewReader(r.Body, params["boundary"])
+			for {
+				part, err := reader.NextPart()
+				if err != nil {
+					break
+				}
+				body, _ := io.ReadAll(part)
+				if part.FileName() != "" {
+					fields[part.FormName()] = "файл:" + part.FileName()
+					continue
+				}
+				fields[part.FormName()] = string(body)
+			}
+			w.WriteHeader(http.StatusNoContent)
 		})
-	if _, err := store.Exists(context.Background(), "repo", "p"); err != nil {
-		t.Fatal(err)
+
+	target := artifactstore.Target{
+		Repo: "go-internal", Manager: "go",
+		Name: "github.com/go-chi/chi/v5", DisplayName: "github.com/go-Chi/chi/v5",
+		Version: "v5.0.10", Filename: "v5.0.10.zip", Path: "github.com/go-chi/chi/v5/@v/v5.0.10.zip",
 	}
-	if !ok || user != "svc" || pass != "pw" {
-		t.Errorf("basic auth = %q/%q (ok=%v)", user, pass, ok)
+	if _, err := store.Publish(context.Background(), target, []byte("zip")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if fields["raw.directory"] != "github.com/go-!chi/chi/v5/@v" {
+		t.Errorf("raw.directory = %q (заглавные буквы модуля экранируются)", fields["raw.directory"])
+	}
+	if fields["raw.asset1"] != "файл:v5.0.10.zip" {
+		t.Errorf("raw.asset1 = %q", fields["raw.asset1"])
+	}
+	if fields["raw.asset1.filename"] != "v5.0.10.zip" {
+		t.Errorf("raw.asset1.filename = %q", fields["raw.asset1.filename"])
 	}
 }
 
-func TestNewRequiresBaseURL(t *testing.T) {
-	if _, err := artifactstore.New(artifactstore.Config{}); err == nil {
-		t.Error("пустой ARTIFACT_BASE_URL принят")
+// Параллельный прогон мог опубликовать ту же версию — это не ошибка.
+func TestNexusPublishIsIdempotentOnConflict(t *testing.T) {
+	uploads := 0
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindNexus},
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				// Первый HEAD — файла нет, после попытки выгрузки — уже есть.
+				if uploads == 0 {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.Header().Set("Content-Length", "5")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			uploads++
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("component already exists"))
+		})
+
+	url, err := store.Publish(context.Background(), pypiTarget(), []byte("байты"))
+	if err != nil {
+		t.Fatalf("публикация уже существующего компонента не должна быть ошибкой: %v", err)
+	}
+	if !strings.Contains(url, "/repository/pypi-internal/") {
+		t.Errorf("URL = %q", url)
+	}
+}
+
+// --------------------------------------------------------------- ошибки
+
+// 405 — почти всегда не доступ, а неверный тип артефактори. Ответ обязан это
+// назвать: иначе администратор стенда ищет проблему в правах.
+func TestMethodNotAllowedNamesStoreKind(t *testing.T) {
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindGeneric},
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		})
+
+	_, err := store.Publish(context.Background(), pypiTarget(), []byte("байты"))
+	if err == nil {
+		t.Fatal("405 обязан быть ошибкой")
+	}
+	text := err.Error()
+	for _, want := range []string{"405", "ARTIFACT_STORE", "generic", "nexus", "hosted"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в сообщении нет %q: %s", want, text)
+		}
+	}
+}
+
+func TestForbiddenPointsAtCredentials(t *testing.T) {
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindNexus},
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusForbidden)
+		})
+
+	_, err := store.Publish(context.Background(), pypiTarget(), []byte("байты"))
+	if err == nil || !strings.Contains(err.Error(), "ARTIFACT_TOKEN") {
+		t.Fatalf("403 должен указывать на учётные данные: %v", err)
+	}
+}
+
+// Опечатка в ARTIFACT_STORE не должна молча превращаться в «публикуем как в
+// Artifactory»: на Nexus это 405 на каждом пакете.
+func TestUnknownKindIsRejected(t *testing.T) {
+	_, err := artifactstore.New(artifactstore.Config{Kind: "nexsus", BaseURL: "http://example"})
+	if err == nil || !strings.Contains(err.Error(), "ARTIFACT_STORE") {
+		t.Fatalf("ожидалась ошибка про ARTIFACT_STORE, получено %v", err)
+	}
+}
+
+func TestDefaultKindIsNexus(t *testing.T) {
+	store, err := artifactstore.New(artifactstore.Config{BaseURL: "http://example"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// Значение по умолчанию совпадает с python-версией и .env.example.
+	if store.Kind() != artifactstore.KindNexus {
+		t.Errorf("по умолчанию = %q, ожидался nexus", store.Kind())
 	}
 }

@@ -1,24 +1,29 @@
 // Package artifactstore — публикация проверенного пакета во внутренний
 // артефактори. Порт backend/app/adapters/artifact_store.py.
 //
-// Перенесена только generic-реализация (JFrog Artifactory и совместимые):
-// production заказчика работает исключительно с Artifactory, Nexus не
-// применяется нигде (docs/ci-parity-gaps.md). Переносить NexusArtifactStore до
-// того, как выяснится, нужен ли он вообще, значило бы потратить фазу впустую.
+// Реализаций две, и выбор между ними — не деталь: у Nexus и Artifactory
+// принципиально разные протоколы выгрузки.
 //
-// ОТКРЫТЫЙ ВОПРОС, влияющий на этот пакет: CI-версия публикует пакет
-// server-side copy'ем внутри Artifactory (байты не проходят через процесс), а
-// здесь реализовано скачивание с upstream и PUT. Разрешает ли боевой
-// Artifactory прямой PUT в moderated-репозитории — не выяснено
-// (docs/ci-parity-gaps.md). До выяснения DryRun=true — способ проверить
-// доступ и креды без риска записи.
+//	nexus   — Sonatype Nexus 3: компонентный REST API
+//	          (POST /service/rest/v1/components?repository=…, multipart),
+//	          файлы лежат под /repository/{repo}/…
+//	generic — JFrog Artifactory и совместимые: PUT байтами прямо по адресу
+//	          файла, с проверкой контрольной суммы на стороне сервера.
+//
+// Выгрузить в Nexus «как в Artifactory» нельзя: на PUT по адресу файла Nexus
+// отвечает 405 Method Not Allowed — ровно это и случалось, пока go-версия
+// умела только generic, а стенд работал на Nexus.
+//
+// ОТКРЫТЫЙ ВОПРОС по generic: CI-версия публикует пакет server-side copy'ем
+// внутри Artifactory (байты не проходят через процесс), а здесь реализовано
+// скачивание с upstream и PUT. Разрешает ли боевой Artifactory прямой PUT в
+// moderated-репозитории — не выяснено (docs/ci-parity-gaps.md). До выяснения
+// ARTIFACT_DRY_RUN=true — способ проверить доступ и креды без риска записи.
 package artifactstore
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,16 +39,38 @@ type RemoteFile struct {
 	LastModified time.Time
 }
 
+// Target — что публикуем. Путь внутри репозитория зависит от того, чем
+// является артефактори (у Nexus своя раскладка на каждый формат), поэтому
+// сюда передаётся не только готовый путь, но и сам пакет.
+type Target struct {
+	Repo string
+	// Manager — код пакетного менеджера: по нему Nexus выбирает формат
+	// компонента и имя поля с файлом.
+	Manager     string
+	Name        string // нормализованное имя
+	DisplayName string
+	Version     string // версия, как её записал разработчик
+	Filename    string
+	// Path — путь файла в раскладке generic-артефактори (её задаёт плагин
+	// менеджера). Nexus раскладку строит сам.
+	Path string
+}
+
 // Store — контракт артефактори.
 type Store interface {
+	// Kind — «nexus» или «generic». Нужен в сообщениях: половина ошибок
+	// выгрузки — это не сломанный доступ, а не тот протокол.
+	Kind() string
 	// ArtifactURL — адрес, по которому пакет будет (или уже) опубликован.
-	ArtifactURL(repo, path string) string
+	ArtifactURL(t Target) string
 	// Exists — есть ли уже такой файл. Повторная публикация той же версии —
 	// обычное дело (та же версия в двух заявках), и перезаписывать её нельзя.
-	Exists(ctx context.Context, repo, path string) (bool, error)
+	Exists(ctx context.Context, t Target) (bool, error)
 	// Publish выгружает байты. Возвращает адрес опубликованного файла.
-	Publish(ctx context.Context, repo, path string, data []byte) (string, error)
-	// StatFile — метаданные файла; nil, если файла нет.
+	Publish(ctx context.Context, t Target, data []byte) (string, error)
+	// StatFile — метаданные файла по пути внутри репозитория; nil, если файла
+	// нет. Путь здесь сырой: это служебное чтение (снапшот OSV), а не
+	// публикация пакета.
 	StatFile(ctx context.Context, repo, path string) (*RemoteFile, error)
 	// ReadFile — содержимое файла (нужно для снапшота OSV).
 	ReadFile(ctx context.Context, repo, path string) ([]byte, error)
@@ -59,8 +86,17 @@ const (
 	AuthBasic AuthType = "basic"
 )
 
+// Kind — тип артефактори.
+const (
+	KindNexus   = "nexus"
+	KindGeneric = "generic"
+)
+
 // Config — параметры артефактори.
 type Config struct {
+	// Kind — «nexus» (по умолчанию, как в python-версии и .env.example) или
+	// «generic».
+	Kind     string
 	BaseURL  string
 	AuthType AuthType
 	Token    string
@@ -73,13 +109,8 @@ type Config struct {
 	HTTPClient *http.Client
 }
 
-// HTTP — реализация поверх HTTP API артефактори.
-type HTTP struct {
-	cfg    Config
-	client *http.Client
-}
-
-func New(cfg Config) (*HTTP, error) {
+// New собирает клиент нужного типа.
+func New(cfg Config) (Store, error) {
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return nil, fmt.Errorf("ARTIFACT_BASE_URL не задан")
 	}
@@ -87,33 +118,44 @@ func New(cfg Config) (*HTTP, error) {
 	if cfg.AuthType == "" {
 		cfg.AuthType = AuthToken
 	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Minute}
+	if cfg.HTTPClient == nil {
+		cfg.HTTPClient = &http.Client{Timeout: 10 * time.Minute}
 	}
-	return &HTTP{cfg: cfg, client: client}, nil
+	tr := transport{cfg: cfg, client: cfg.HTTPClient}
+
+	switch strings.ToLower(strings.TrimSpace(cfg.Kind)) {
+	case "", KindNexus:
+		return &Nexus{transport: tr}, nil
+	case KindGeneric:
+		return &Generic{transport: tr}, nil
+	}
+	// Опечатка в ARTIFACT_STORE не должна молча превращаться в «публикуем как
+	// в Artifactory»: на Nexus это 405 на каждом пакете.
+	return nil, fmt.Errorf("неизвестный тип артефактори ARTIFACT_STORE=%q (ожидается nexus или generic)", cfg.Kind)
 }
 
-func (h *HTTP) DryRun() bool { return h.cfg.DryRun }
-
-func (h *HTTP) ArtifactURL(repo, path string) string {
-	return fmt.Sprintf("%s/%s/%s", h.cfg.BaseURL, repo, strings.TrimPrefix(path, "/"))
+// transport — общая часть обеих реализаций: авторизация и запросы.
+type transport struct {
+	cfg    Config
+	client *http.Client
 }
 
-func (h *HTTP) authorize(req *http.Request) {
-	switch h.cfg.AuthType {
+func (t *transport) DryRun() bool { return t.cfg.DryRun }
+
+func (t *transport) authorize(req *http.Request) {
+	switch t.cfg.AuthType {
 	case AuthToken:
-		if h.cfg.Token != "" {
-			req.Header.Set("Authorization", "Bearer "+h.cfg.Token)
+		if t.cfg.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+t.cfg.Token)
 		}
 	case AuthBasic:
-		if h.cfg.Username != "" {
-			req.SetBasicAuth(h.cfg.Username, h.cfg.Password)
+		if t.cfg.Username != "" {
+			req.SetBasicAuth(t.cfg.Username, t.cfg.Password)
 		}
 	}
 }
 
-func (h *HTTP) do(ctx context.Context, method, url string, body []byte, headers map[string]string) (*http.Response, error) {
+func (t *transport) do(ctx context.Context, method, url string, body []byte, headers map[string]string) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -128,18 +170,18 @@ func (h *HTTP) do(ctx context.Context, method, url string, body []byte, headers 
 	if body != nil {
 		req.ContentLength = int64(len(body))
 	}
-	h.authorize(req)
+	t.authorize(req)
 
-	resp, err := h.client.Do(req)
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("запрос к артефактори (%s %s): %w", method, url, err)
 	}
 	return resp, nil
 }
 
-func (h *HTTP) StatFile(ctx context.Context, repo, path string) (*RemoteFile, error) {
-	url := h.ArtifactURL(repo, path)
-	resp, err := h.do(ctx, http.MethodHead, url, nil, nil)
+// stat — общий HEAD по готовому адресу файла.
+func (t *transport) stat(ctx context.Context, url, path string) (*RemoteFile, error) {
+	resp, err := t.do(ctx, http.MethodHead, url, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -161,13 +203,8 @@ func (h *HTTP) StatFile(ctx context.Context, repo, path string) (*RemoteFile, er
 	return file, nil
 }
 
-func (h *HTTP) Exists(ctx context.Context, repo, path string) (bool, error) {
-	file, err := h.StatFile(ctx, repo, path)
-	return file != nil, err
-}
-
-func (h *HTTP) ReadFile(ctx context.Context, repo, path string) ([]byte, error) {
-	resp, err := h.do(ctx, http.MethodGet, h.ArtifactURL(repo, path), nil, nil)
+func (t *transport) read(ctx context.Context, url, path string) ([]byte, error) {
+	resp, err := t.do(ctx, http.MethodGet, url, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -178,39 +215,28 @@ func (h *HTTP) ReadFile(ctx context.Context, repo, path string) ([]byte, error) 
 	return io.ReadAll(resp.Body)
 }
 
-// Publish выгружает пакет. Уже опубликованная версия не перезаписывается:
-// одна и та же версия приходит из разных заявок, и второй PUT в лучшем случае
-// лишний, а в худшем — подменяет байты, по которым уже принято решение.
-func (h *HTTP) Publish(ctx context.Context, repo, path string, data []byte) (string, error) {
-	url := h.ArtifactURL(repo, path)
-	if h.cfg.DryRun {
-		return "", fmt.Errorf("публикация вызвана в режиме dry-run: это ошибка вызывающего кода, " +
-			"шаг publish обязан проверять DryRun() до вызова Publish")
+// rejected — ошибка выгрузки. 405 разбирается отдельно: это почти всегда не
+// доступ и не сломанный пакет, а неверный тип артефактори или репозиторий, в
+// который писать нельзя в принципе (proxy или group вместо hosted).
+func rejected(kind, path string, status int, body []byte) error {
+	text := strings.TrimSpace(string(body))
+	if len(text) > 300 {
+		text = text[:300] + "…"
 	}
-
-	exists, err := h.Exists(ctx, repo, path)
-	if err != nil {
-		return "", err
+	hint := ""
+	switch status {
+	case http.StatusMethodNotAllowed:
+		other := KindGeneric
+		if kind == KindGeneric {
+			other = KindNexus
+		}
+		hint = fmt.Sprintf(". Так отвечает артефактори, который не принимает выгрузку этим "+
+			"способом: проверьте ARTIFACT_STORE (сейчас %q, второй вариант — %q) и что "+
+			"репозиторий hosted, а не proxy или group", kind, other)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		hint = ". Проверьте ARTIFACT_USER/ARTIFACT_TOKEN и права учётной записи на запись в репозиторий"
+	case http.StatusNotFound:
+		hint = ". Проверьте ARTIFACT_REPO_* — репозитория с таким именем в артефактори нет"
 	}
-	if exists {
-		return url, nil
-	}
-
-	digest := sha256.Sum256(data)
-	resp, err := h.do(ctx, http.MethodPut, url, data, map[string]string{
-		// Artifactory сверяет контрольную сумму на своей стороне: так порча
-		// байтов на пути обнаруживается им, а не через полгода при установке.
-		"X-Checksum-Sha256": hex.EncodeToString(digest[:]),
-		"Content-Type":      "application/octet-stream",
-	})
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("артефактори отклонил публикацию %s (%d): %s",
-			path, resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	return url, nil
+	return fmt.Errorf("артефактори отклонил публикацию %s (%d)%s: %s", path, status, hint, text)
 }

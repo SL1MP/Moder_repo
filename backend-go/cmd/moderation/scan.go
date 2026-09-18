@@ -200,6 +200,7 @@ func scanOne(ctx context.Context, r *repo.Repo, store storage.Store, cfg *config
 func buildScanContext(_ context.Context, r *repo.Repo, store storage.Store, cfg *config.Config) (*pipeline.Context, error) {
 	httpClient := &http.Client{Timeout: 60 * time.Second}
 	artifacts, err := artifactstore.New(artifactstore.Config{
+		Kind:    cfg.ArtifactStore,
 		BaseURL: cfg.ArtifactBaseURL, AuthType: artifactstore.AuthType(cfg.ArtifactAuthType),
 		Token: cfg.ArtifactToken, Username: cfg.ArtifactUser, Password: cfg.ArtifactToken,
 		DryRun: cfg.ArtifactDryRun, HTTPClient: httpClient,
