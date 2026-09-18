@@ -202,6 +202,11 @@ export interface RequestItem {
   name: string
   version: string
   dependency_kind: string
+  // Дерево зависимостей внутри заявки: кто притащил этот пакет и по какому
+  // требованию. У заявленного напрямую depth === 0 и родителя нет.
+  depth: number
+  parent_item_id?: number
+  required_range?: string
   status: string
   status_title: string
   /**
@@ -242,6 +247,10 @@ export interface ModerationRequest {
   source: string
   origin_file: string | null
   include_transitive: boolean
+  // Итог раскрытия: до какой глубины разошлись и что вышло. Нужен, чтобы
+  // объяснить обрезанное дерево — неполное выглядит как полное.
+  resolve_depth: number | null
+  resolve_summary: string | null
   warnings: string[]
   created_at: string
   updated_at: string
@@ -278,6 +287,11 @@ export interface ParsedPackage {
   name: string | null
   version: string | null
   dependency_kind: string
+  // Дерево зависимостей: 0 — заявленный пакет, дальше — кто его потребовал и
+  // по какому требованию выбрана версия.
+  depth?: number
+  required_by?: string
+  required_range?: string
   message: string | null
   expected_format?: string
   package_version_id?: number
@@ -296,6 +310,31 @@ export interface CreateRequestResult {
   warnings: string[]
   packages: ParsedPackage[]
   status_url: string
+}
+
+// DependencyTree — предпросмотр: что заявка потянет за собой, до её создания.
+export interface DependencyTree {
+  manager: Manager
+  packages: ParsedPackage[]
+  direct: number
+  transitive: number
+  warnings: string[]
+  limits: { max_depth: number; max_packages: number }
+  // resolved === false означает «менеджер так не умеет», а не «зависимостей
+  // нет»: пустое дерево в этих двух случаях выглядит одинаково.
+  resolved: boolean
+  depth?: number
+  truncated?: boolean
+  summary?: string
+  registry_requests?: number
+  problems?: {
+    name: string
+    constraint: string
+    required_by: string
+    depth: number
+    reason: string
+  }[]
+  conflicts?: { name: string; versions: string[] }[]
 }
 
 export interface PackageVersion {
@@ -422,7 +461,23 @@ export const api = {
       `/managers/detect?filename=${encodeURIComponent(filename)}`,
     ),
 
-  createRequest: (body: { manager: Manager; packages: string[]; reason?: string }, idempotencyKey?: string) =>
+  resolveDependencies: (body: {
+    manager: Manager
+    packages: string[]
+    depth?: number
+    include_optional?: boolean
+  }) => request<DependencyTree>('/dependencies/resolve', { method: 'POST', body: JSON.stringify(body) }),
+
+  createRequest: (
+    body: {
+      manager: Manager
+      packages: string[]
+      reason?: string
+      include_transitive?: boolean
+      resolve_depth?: number
+    },
+    idempotencyKey?: string,
+  ) =>
     request<CreateRequestResult>('/requests', {
       method: 'POST',
       body: JSON.stringify(body),

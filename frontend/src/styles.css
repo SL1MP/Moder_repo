@@ -250,3 +250,26 @@ button.small { padding: 3px 7px; font-size: 12px; }
   background: var(--bg-elev-2); border: 1px solid var(--border-strong); border-radius: 4px;
   padding: 10px; font-family: var(--mono); font-size: 12px; white-space: pre;
 }
+
+/* --------------------------------------------------- дерево зависимостей */
+/* Отступ по уровню, а не таблица: происхождение пакета — это связь, и
+   плоский список её теряет. */
+.dep-tree { list-style: none; margin: 8px 0 0; padding: 0; }
+.dep-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border);
+}
+.dep-row:last-child { border-bottom: none; }
+.dep-marker { color: var(--text-faint); font-family: var(--mono); width: 10px; }
+.dep-range {
+  margin-left: 4px;
+  padding: 0 4px;
+  background: var(--bg-elev-2);
+  border-radius: 3px;
+  color: var(--text-dim);
+}
+.tree-problems { margin: 6px 0 0; padding-left: 18px; }
+.tree-problems li { margin-bottom: 4px; }

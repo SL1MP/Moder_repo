@@ -44,6 +44,10 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
   if (!data) return <Empty text="Заявка не найдена" />
 
   const s = data.summary
+  // Имя родителя по его id: в дереве важно не «есть родитель», а какой
+  // именно — «пришло через body-parser» и «пришло через express» это разные
+  // разговоры при разборе находки.
+  const parentLabels = new Map(data.packages.map((p) => [p.id, `${p.name} ${p.version}`]))
   return (
     <>
       <div className="topbar">
@@ -121,6 +125,11 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
           {s.failed ? <Summary label="Ошибка проверки" value={s.failed} bad /> : null}
         </div>
         {data.reason ? <div className="small dim">Обоснование: {data.reason}</div> : null}
+        {data.resolve_summary ? (
+          // Итог раскрытия рядом со сводкой: по нему видно, полное ли дерево.
+          // Обрезанное выглядит точно так же, как полное, — кроме этой строки.
+          <div className="small dim">Зависимости раскрыты — {data.resolve_summary}</div>
+        ) : null}
       </div>
 
       {data.warnings.map((w, i) => (
@@ -130,9 +139,13 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
       ))}
 
       {data.packages.map((item) => (
+        // Отступ по глубине: заявка на полсотни пакетов читается только
+        // тогда, когда видно, кто кого притащил.
+        <div key={item.id} style={{ marginLeft: Math.min(item.depth ?? 0, 4) * 20 }}>
         <PackageBlock
           key={item.id}
           item={item}
+          parentLabel={item.parent_item_id ? parentLabels.get(item.parent_item_id) : undefined}
           me={me}
           requestId={requestId}
           expanded={expanded === item.id}
@@ -142,6 +155,7 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
             onChange()
           }}
         />
+        </div>
       ))}
 
       <Discussion requestId={requestId} title="Обсуждение заявки" itemId={null} />
@@ -175,6 +189,7 @@ function Summary({
 
 function PackageBlock({
   item,
+  parentLabel,
   me,
   requestId,
   expanded,
@@ -182,6 +197,7 @@ function PackageBlock({
   onChanged,
 }: {
   item: RequestItem
+  parentLabel?: string
   me: Me
   requestId: number
   expanded: boolean
@@ -204,6 +220,16 @@ function PackageBlock({
           <Badge value={item.status} title={item.status_title} />
           {item.dependency_kind === 'transitive' ? (
             <span className="badge">транзитивная</span>
+          ) : null}
+          {item.required_range || parentLabel ? (
+            // Через кого пришёл и по какому требованию: без этого «почему в
+            // моей заявке urllib3 2.8.0» остаётся без ответа.
+            <span className="small dim">
+              {parentLabel ? <>← {parentLabel}</> : null}
+              {item.required_range ? (
+                <code className="dep-range">{item.required_range}</code>
+              ) : null}
+            </span>
           ) : null}
           {item.license_spdx ? <span className="badge mono">{item.license_spdx}</span> : null}
           {item.max_vuln_score ? (

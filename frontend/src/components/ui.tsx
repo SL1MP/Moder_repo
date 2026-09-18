@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
 import { fetchFile } from '../lib/api'
-import type { Step, Vulnerability } from '../lib/api'
+import type { DependencyTree, ParsedPackage, Step, Vulnerability } from '../lib/api'
 
 export function Badge({ value, title, label }: { value: string; title?: string; label?: string }) {
   return (
@@ -395,4 +395,105 @@ export function useAsync<T>(loader: () => Promise<T>, deps: unknown[]): {
   }, [...deps, tick])
 
   return { data, error, loading, reload: () => setTick((t) => t + 1) }
+}
+
+/**
+ * Дерево зависимостей: что пакет притащит за собой.
+ *
+ * Показывается отступом по уровню, а не таблицей: происхождение пакета —
+ * это связь, и плоский список её теряет. Рядом с каждой строкой — кто
+ * потребовал и по какому требованию выбрана версия: без этого «почему в моей
+ * заявке urllib3 2.8.0» остаётся без ответа.
+ *
+ * Три вещи показываются отдельно и заметно, потому что они про то, чего в
+ * дереве НЕТ: нераскрытые зависимости, конфликты версий и обрезка по
+ * пределу. Неполное дерево выглядит точно так же, как полное.
+ */
+export function DependencyTreeView({ tree }: { tree: DependencyTree }) {
+  const [collapsed, setCollapsed] = useState(false)
+
+  if (!tree.resolved) {
+    return (
+      <Alert kind="info">
+        Менеджер «{tree.manager}» пока не умеет раскрывать зависимости — заведены только
+        перечисленные пакеты.
+      </Alert>
+    )
+  }
+
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <h2 style={{ margin: 0 }}>Дерево зависимостей</h2>
+        <button className="ghost" onClick={() => setCollapsed((v) => !v)}>
+          {collapsed ? 'Показать' : 'Свернуть'}
+        </button>
+      </div>
+      <p className="small dim">
+        Заявленных: <b>{tree.direct}</b> · транзитивных: <b>{tree.transitive}</b> · глубина:{' '}
+        <b>{tree.depth ?? 0}</b> из {tree.limits.max_depth} · предел заявки:{' '}
+        {tree.limits.max_packages} пакетов
+        {tree.registry_requests ? ` · запросов в реестр: ${tree.registry_requests}` : ''}
+      </p>
+
+      {tree.truncated ? (
+        <Alert kind="warn">
+          Дерево обрезано по пределу ({tree.limits.max_packages} пакетов): показана часть.
+          Уменьшите глубину или заведите оставшееся отдельной заявкой.
+        </Alert>
+      ) : null}
+
+      {(tree.conflicts ?? []).map((conflict) => (
+        <Alert kind="warn" key={conflict.name}>
+          <b>{conflict.name}</b> затребован в разных версиях: {conflict.versions.join(', ')}. В
+          заявку попадут обе — выбор за вами.
+        </Alert>
+      ))}
+
+      {(tree.problems ?? []).length ? (
+        <Alert kind="warn">
+          Не удалось раскрыть {tree.problems?.length} зависимост
+          {(tree.problems?.length ?? 0) === 1 ? 'ь' : 'ей'} — в заявку они не попадут:
+          <ul className="tree-problems">
+            {(tree.problems ?? []).map((problem) => (
+              <li key={`${problem.required_by}-${problem.name}`}>
+                <code>{problem.name}</code> {problem.constraint}
+                {problem.required_by ? <span className="dim"> ← {problem.required_by}</span> : null}
+                <div className="small dim">{problem.reason}</div>
+              </li>
+            ))}
+          </ul>
+        </Alert>
+      ) : null}
+
+      {collapsed ? null : (
+        <ul className="dep-tree">
+          {tree.packages.map((pkg, index) => (
+            <DependencyRow key={`${pkg.raw}-${index}`} pkg={pkg} />
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function DependencyRow({ pkg }: { pkg: ParsedPackage }) {
+  const depth = pkg.depth ?? 0
+  return (
+    <li className="dep-row" style={{ paddingLeft: depth * 18 }}>
+      <span className="dep-marker">{depth ? '└' : ''}</span>
+      <span className="mono">
+        {pkg.name} {pkg.version}
+      </span>
+      {depth === 0 ? <Badge value="new" label="заявлен" /> : null}
+      {pkg.state === 'already_in_base' ? <Badge value="approved" label="уже в базе" /> : null}
+      {pkg.state === 'invalid_format' ? <Badge value="fail" label="не разобрано" /> : null}
+      {depth > 0 && pkg.required_by ? (
+        <span className="small dim">
+          ← {pkg.required_by}
+          {pkg.required_range ? <code className="dep-range">{pkg.required_range}</code> : null}
+        </span>
+      ) : null}
+    </li>
+  )
 }

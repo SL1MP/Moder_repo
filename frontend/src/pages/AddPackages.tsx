@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
-import { Alert, Badge, Copyable, Empty, Loader, useAsync } from '../components/ui'
+import { Alert, Badge, Copyable, DependencyTreeView, Empty, Loader, useAsync } from '../components/ui'
 import {
   api,
   type AuthConfig,
   type CreateRequestResult,
+  type DependencyTree,
   type Manager,
   type Me,
   type ParsedPackage,
@@ -39,8 +40,8 @@ export default function AddPackages({ me, config }: { me: Me; config: AuthConfig
           <h1>Пакеты</h1>
           <p className="page-hint">
             Сервис — единственный вход: сначала ищем в базе, заводим заявку только если пакета
-            ещё нет. Конвейер проверок запускается автоматически. Проверяется и публикуется
-            только сам заявленный пакет.
+            ещё нет. Конвейер проверок запускается автоматически. Транзитивные зависимости
+            подтягиваются по галочке — каждая проходит модерацию как отдельный пакет.
           </p>
         </div>
         <div className="who">{me.display_name}</div>
@@ -114,6 +115,10 @@ function ByList({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<CreateRequestResult | null>(null)
+  const [includeTransitive, setIncludeTransitive] = useState(false)
+  const [depth, setDepth] = useState(2)
+  const [tree, setTree] = useState<DependencyTree | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
 
   const entries = useMemo(
     () => text.split('\n').map((line) => line.trim()).filter(Boolean),
@@ -146,23 +151,82 @@ function ByList({
             placeholder="Сервис выставления счетов, спринт 41"
           />
         </label>
+        <div className="row" style={{ gap: 12, alignItems: 'baseline' }}>
+          <label className="row" style={{ gap: 6, margin: 0 }}>
+            <input
+              type="checkbox"
+              checked={includeTransitive}
+              onChange={(e) => {
+                setIncludeTransitive(e.target.checked)
+                if (!e.target.checked) setTree(null)
+              }}
+              style={{ width: 'auto' }}
+            />
+            <span style={{ margin: 0 }}>Раскрыть транзитивные зависимости</span>
+          </label>
+          {includeTransitive ? (
+            <label className="row" style={{ gap: 6, margin: 0 }}>
+              <span style={{ margin: 0 }}>Глубина</span>
+              <select
+                value={depth}
+                onChange={(e) => setDepth(Number(e.target.value))}
+                style={{ width: 'auto' }}
+              >
+                <option value={1}>1 — только прямые</option>
+                <option value={2}>2</option>
+                <option value={3}>3</option>
+              </select>
+            </label>
+          ) : null}
+        </div>
+        {includeTransitive ? (
+          <p className="small dim">
+            Каждая найденная зависимость становится отдельным пакетом заявки и проходит те же
+            проверки. Посмотрите дерево заранее: один пакет легко тянет за собой полсотни.
+          </p>
+        ) : null}
         {error ? <Alert kind="error">{error}</Alert> : null}
-        <button
-          className="primary"
-          disabled={busy || !entries.length}
-          onClick={() => {
-            setBusy(true)
-            setError(null)
-            api
-              .createRequest({ manager, packages: entries, reason: reason || undefined })
-              .then(setResult)
-              .catch((exc: Error) => setError(exc.message))
-              .finally(() => setBusy(false))
-          }}
-        >
-          {busy ? 'Отправляем…' : 'Отправить на модерацию'}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button
+            className="primary"
+            disabled={busy || !entries.length}
+            onClick={() => {
+              setBusy(true)
+              setError(null)
+              api
+                .createRequest({
+                  manager,
+                  packages: entries,
+                  reason: reason || undefined,
+                  include_transitive: includeTransitive,
+                  resolve_depth: includeTransitive ? depth : undefined,
+                })
+                .then(setResult)
+                .catch((exc: Error) => setError(exc.message))
+                .finally(() => setBusy(false))
+            }}
+          >
+            {busy ? 'Отправляем…' : 'Отправить на модерацию'}
+          </button>
+          {includeTransitive ? (
+            <button
+              disabled={previewBusy || !entries.length}
+              onClick={() => {
+                setPreviewBusy(true)
+                setError(null)
+                api
+                  .resolveDependencies({ manager, packages: entries, depth })
+                  .then(setTree)
+                  .catch((exc: Error) => setError(exc.message))
+                  .finally(() => setPreviewBusy(false))
+              }}
+            >
+              {previewBusy ? 'Считаем дерево…' : 'Показать дерево'}
+            </button>
+          ) : null}
+        </div>
       </div>
+      {tree && !result ? <DependencyTreeView tree={tree} /> : null}
       {result ? <ParseResult result={result} /> : null}
     </>
   )
@@ -487,11 +551,15 @@ function ParseResult({ result }: { result: CreateRequestResult }) {
       {groups.new.length ? (
         <>
           <h3>Принято к проверке</h3>
+          {/* Отступом, а не таблицей: когда в заявке полсотни пакетов,
+              единственное, что делает список читаемым, — видно, кто кого
+              притащил. */}
           <table>
             <tbody>
               {groups.new.map((p) => (
                 <tr key={p.raw}>
-                  <td className="mono">
+                  <td className="mono" style={{ paddingLeft: 4 + (p.depth ?? 0) * 18 }}>
+                    {p.depth ? <span className="dep-marker">└ </span> : null}
                     {p.name} {p.version}
                   </td>
                   <td>
@@ -500,6 +568,14 @@ function ParseResult({ result }: { result: CreateRequestResult }) {
                     ) : (
                       <span className="badge">прямая</span>
                     )}
+                  </td>
+                  <td className="small dim">
+                    {p.required_by ? (
+                      <>
+                        ← {p.required_by}
+                        {p.required_range ? <code className="dep-range">{p.required_range}</code> : null}
+                      </>
+                    ) : null}
                   </td>
                 </tr>
               ))}
