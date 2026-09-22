@@ -169,6 +169,7 @@ docker compose logs -f nginx api web
 | `pull access denied for minio/minio` при `make up`/`make up-all` | образ MinIO на Docker Hub закрыт — см. ниже |
 | «Не удалось получить конфигурацию OIDC-издателя» на странице входа | Keycloak не поднят или ещё стартует — см. ниже |
 | Шаг «Выгрузка в артефактори» падает с 405 | `ARTIFACT_STORE` не соответствует артефактори — см. ниже |
+| Пакет вечно «в карантине», хотя дата прошла | не поднят `worker-go` — снятие карантина делает он (`docker compose run --rm worker-go maintenance`) |
 
 ### Публикация падает: «артефактори отклонил публикацию … (405)»
 

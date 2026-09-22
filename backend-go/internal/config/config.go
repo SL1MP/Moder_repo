@@ -144,6 +144,13 @@ type Config struct {
 	PipelineWatchdogEnabled  bool
 	PipelineWatchdogInterval time.Duration
 
+	// Регламентные задачи воркера. Без них карантин не снимается сам, а
+	// временное хранилище растёт — и то и другое происходит молча.
+	MaintenanceEnabled      bool
+	QuarantineSweepInterval time.Duration
+	S3CleanupInterval       time.Duration
+	S3OrphanTTL             time.Duration
+
 	// Окно, в течение которого правка сообщения не помечается как «изменено».
 	CommentEditWindow time.Duration
 
@@ -241,6 +248,13 @@ func Load(getenv func(string) string) (*Config, error) {
 		PipelineStuckAfter:       secondsOr(getenv("PIPELINE_STUCK_AFTER_SECONDS"), 120),
 		PipelineWatchdogEnabled:  boolOr(getenv("PIPELINE_WATCHDOG_ENABLED"), true),
 		PipelineWatchdogInterval: secondsOr(getenv("PIPELINE_WATCHDOG_INTERVAL_SECONDS"), 30),
+
+		// Интервалы совпадают с расписанием python-версии (celery beat):
+		// карантин — раз в 15 минут, уборка хранилища — раз в 2 часа.
+		MaintenanceEnabled:      boolOr(getenv("MAINTENANCE_ENABLED"), true),
+		QuarantineSweepInterval: secondsOr(getenv("QUARANTINE_SWEEP_INTERVAL_SECONDS"), 15*60),
+		S3CleanupInterval:       secondsOr(getenv("S3_CLEANUP_INTERVAL_SECONDS"), 2*60*60),
+		S3OrphanTTL:             time.Duration(intOr(getenv("S3_ORPHAN_TTL_HOURS"), 24)) * time.Hour,
 
 		CommentEditWindow: time.Duration(intOr(getenv("COMMENT_EDIT_WINDOW_MINUTES"), 15)) * time.Minute,
 

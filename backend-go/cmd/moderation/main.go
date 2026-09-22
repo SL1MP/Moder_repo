@@ -46,6 +46,8 @@ func main() {
 			os.Exit(runWorker(os.Args[2:], logger))
 		case "schema":
 			os.Exit(runSchemaCheck(os.Args[2:], logger))
+		case "maintenance":
+			os.Exit(runMaintenance(os.Args[2:], logger))
 		case "serve":
 			os.Args = append(os.Args[:1], os.Args[2:]...)
 		case "-h", "--help", "help":
@@ -165,6 +167,9 @@ func usage() {
   moderation worker --once    разобрать очередь и выйти
   moderation schema           сверить схему базы с кодом: чего не хватает и
                               какую миграцию накатить
+  moderation maintenance      прогнать регламентные задачи разово: снять
+                              истёкший карантин и убрать временное хранилище
+                              (--quarantine / --cleanup — только одну из них)
 
 Конфигурация — через переменные окружения, см. backend-go/README.md.
 Обязательна DATABASE_URL; для отчётов нужны также S3_*.

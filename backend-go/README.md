@@ -8,27 +8,61 @@ Go-версия backend'а сервиса модерации пакетов — 
 
 ## Что готово сейчас
 
-Конвейер перенесён целиком: все девять шагов, отчёты о сканировании и решения ролей.
+На Go перенесено всё, чем пользуется разработчик и роли: заявки, конвейер из девяти шагов,
+решения, очереди, обсуждения, уведомления, отчёты, вход, раскрытие транзитивных зависимостей
+и регламентные задачи.
 
 | Пакет | Что делает |
 |---|---|
 | `internal/config` | `Load(getenv)`, все ошибки валидации разом |
 | `internal/db`, `internal/repo` | pgx-пул и репозиторий без ORM |
-| `internal/domain` | 17 структур домена, перечисления 1:1 с миграциями |
-| `internal/registry` | плагины pypi / npm / go / nuget, нормализация SPDX |
+| `internal/domain` | структуры домена, перечисления 1:1 с миграциями |
+| `internal/auth` | OIDC/JWT, локальный вход, RBAC |
+| `internal/registry` | плагины pypi / npm / go / nuget, нормализация SPDX, зависимости версии |
+| `internal/depfile` | разбор файлов зависимостей (requirements, lock-файлы, go.mod, csproj) |
+| `internal/version` | сравнение версий и диапазоны: semver, PEP 440, NuGet, MVS |
+| `internal/resolve` | раскрытие транзитивных зависимостей по данным реестров |
+| `internal/requests` | разбор входа заявки, создание, постановка в очередь |
+| `internal/queue` | очередь на Postgres (`FOR UPDATE SKIP LOCKED`, `LISTEN/NOTIFY`) |
 | `internal/unpack` | безопасная распаковка артефакта (zip-slip, ссылки, архивные бомбы) |
 | `internal/scanners` | YARA (баннеры) и semgrep (SAST) через внешние CLI |
 | `internal/osv` | компараторы версий, диапазоны OSV, CVSS v3, локальный снапшот |
-| `internal/artifactstore` | JFrog Artifactory и совместимые, режим dry-run |
+| `internal/artifactstore` | Nexus 3 (компонентный API) и Artifactory (PUT), режим dry-run |
 | `internal/storage` | S3-совместимое хранилище (SigV4 на stdlib) + in-memory |
 | `internal/reports` | отчёты о сканировании: JSON и самодостаточный HTML |
+| `internal/policy` | blacklist и справочник лицензий из файлов |
 | `internal/pipeline` | девять шагов, блокировки, runner |
-| `internal/decisions` | решения ролей с распространением на siblings |
-| `internal/api` | health, metrics, выдача отчётов |
+| `internal/decisions` | решения ролей с распространением на siblings, доставка последствий |
+| `internal/maintenance` | регламентные задачи: истёкший карантин, уборка хранилища |
+| `internal/api` | весь REST, кроме перечисленного ниже |
 
-Не перенесено: разбор файлов зависимостей, REST API создания заявок, auth/OIDC, очередь
-(NATS + Valkey вместо Celery), уведомления, watchdog. Шесть недостающих пакетных менеджеров —
-обязательный скоуп, Docker первым (`../docs/ci-parity-gaps.md`).
+**Ещё на Python** (контейнеры `api`, `worker`, `beat` пока нужны):
+
+- маршруты: `/admin/*`, `/settings*`, `/system/status`, `/gitlab/*`, `POST /packages/check`,
+  `POST /packages/{id}/revoke`, `POST /items/{id}/license-claim`;
+- регламентные задачи: синхронизация снапшота OSV и перепроверка одобренных пакетов при
+  новой базе (снятие карантина и уборка хранилища уже на Go);
+- CLI: `bootstrap`, `create-service-account`, `import-package-list`, `sync-osv`, `rescan`,
+  `reload-policies`, `queue-doctor`;
+- служебное: ограничение частоты запросов, бизнес-метрики Prometheus, повторы и circuit
+  breaker на вызовах к реестрам.
+
+Шесть недостающих пакетных менеджеров — обязательный скоуп, Docker первым
+(`../docs/ci-parity-gaps.md`).
+
+### Регламентные задачи
+
+Воркер сам снимает карантин, у которого вышел срок, и убирает временное хранилище — расписание
+то же, что у celery beat в python-версии (15 минут и 2 часа, `MAINTENANCE_ENABLED=false`
+выключает). Разово то же самое делает команда:
+
+```bash
+docker compose run --rm worker-go maintenance              # обе задачи
+docker compose run --rm worker-go maintenance --quarantine # только карантин
+```
+
+Без этих задач карантин — тупик: шаг ставит пакету «в карантине до даты», и дальше он не
+двигается сам никогда.
 
 ### Отчёты появляются сами
 

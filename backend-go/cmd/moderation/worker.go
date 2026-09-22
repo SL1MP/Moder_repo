@@ -105,6 +105,15 @@ func runWorker(args []string, logger *slog.Logger) int {
 	logger.Info("воркер запущен", "потоков", *concurrency,
 		"в очереди", queued, "в работе", running)
 
+	// Регламентные задачи: снятие истёкшего карантина и уборка временного
+	// хранилища. Выключаются флагом — в разовом прогоне и в CI они не нужны.
+	if cfg.MaintenanceEnabled {
+		go newMaintenanceRunner(cfg, w.repo, w.queue, w.storage, logger).run(ctx)
+	} else {
+		logger.Warn("регламентные задачи выключены (MAINTENANCE_ENABLED=false) — " +
+			"карантин сам не снимется, временное хранилище не убирается")
+	}
+
 	var wg sync.WaitGroup
 	for i := 0; i < *concurrency; i++ {
 		wg.Add(1)

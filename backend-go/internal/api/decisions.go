@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -361,72 +360,12 @@ func (h *DecisionsHandler) afterDecision(r *http.Request, itemID int64, user *do
 		defaultLogger.Printf("[%s] аудит решения не записан: %v", RequestID(r.Context()), err)
 	}
 
-	if result != nil {
-		h.notify(ctx, r, result)
+	// Уведомления и пересчёт статусов делает сервис решений: карантин снимает
+	// ещё и регламентная задача, и автор заявки обязан узнать об этом ровно
+	// так же, как если бы кнопку нажал DevSecOps.
+	for _, err := range h.Decisions.Deliver(ctx, itemID, result) {
+		defaultLogger.Printf("[%s] %v", RequestID(r.Context()), err)
 	}
-	h.recompute(ctx, r, itemID, result)
-}
-
-// notify рассылает уведомления, которые вернул сервис решений.
-func (h *DecisionsHandler) notify(ctx context.Context, r *http.Request, result *decisions.Result) {
-	for _, n := range result.Notifications {
-		item, err := h.Repo.GetRequestItem(ctx, n.RequestItemID)
-		if err != nil || item == nil {
-			continue
-		}
-		request, err := h.Repo.GetModerationRequest(ctx, item.RequestID)
-		if err != nil || request == nil {
-			continue
-		}
-		body := n.Message
-		requestID := request.ID
-		itemID := item.ID
-		notification := domain.Notification{
-			Event: n.Event, Title: decisionTitle(n.Event),
-			RequestID: &requestID, RequestItemID: &itemID, CreatedAt: h.now(),
-		}
-		if body != "" {
-			notification.Body = &body
-		}
-		if _, err := h.Repo.InsertNotifications(ctx, []int64{request.AuthorID}, notification); err != nil {
-			defaultLogger.Printf("[%s] уведомление о решении не создано: %v",
-				RequestID(r.Context()), err)
-		}
-	}
-}
-
-// recompute пересчитывает статус заявок, задетых решением, — своей и чужих.
-func (h *DecisionsHandler) recompute(ctx context.Context, r *http.Request, itemID int64, result *decisions.Result) {
-	touched := []int64{itemID}
-	if result != nil {
-		touched = append(touched, result.Siblings...)
-	}
-	seen := map[int64]bool{}
-	for _, id := range touched {
-		item, err := h.Repo.GetRequestItem(ctx, id)
-		if err != nil || item == nil || seen[item.RequestID] {
-			continue
-		}
-		seen[item.RequestID] = true
-		if _, err := h.Repo.RecomputeRequestStatus(ctx, item.RequestID); err != nil {
-			defaultLogger.Printf("[%s] статус заявки #%d не пересчитан: %v",
-				RequestID(r.Context()), item.RequestID, err)
-		}
-	}
-}
-
-func decisionTitle(event string) string {
-	if title, ok := decisionTitles[event]; ok {
-		return title
-	}
-	return event
-}
-
-var decisionTitles = map[string]string{
-	"decision_made":       "Принято решение по пакету",
-	"quarantine_released": "Карантин снят",
-	"package_approved":    "Пакет одобрен",
-	"package_revoked":     "Пакет отозван",
 }
 
 // claimView — заявление для выдачи. Снимок текста обрезается: юристу нужен
