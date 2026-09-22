@@ -91,7 +91,9 @@ func (s *SnapshotIndex) Sync(ctx context.Context, src SnapshotSource, repo, path
 			remote.Checksum, checksum)
 	}
 
-	staging := s.Root + ".new"
+	// Каталог загрузки уникален для процесса: воркеров может быть несколько, и
+	// общий «.new» они затирали бы друг у друга посреди распаковки.
+	staging := fmt.Sprintf("%s.new-%d", s.Root, os.Getpid())
 	if err := os.RemoveAll(staging); err != nil {
 		return nil, fmt.Errorf("очистка каталога загрузки: %w", err)
 	}
@@ -220,7 +222,7 @@ func copyFile(from, to string) error {
 // параллельный прогон конвейера в этот момент решит, что база не загружена, и
 // отправит пакет к DevSecOps.
 func swapDir(root, staging string) error {
-	previous := root + ".old"
+	previous := fmt.Sprintf("%s.old-%d", root, os.Getpid())
 	if err := os.RemoveAll(previous); err != nil {
 		return fmt.Errorf("очистка прежнего снапшота: %w", err)
 	}
