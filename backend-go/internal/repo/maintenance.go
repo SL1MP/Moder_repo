@@ -77,3 +77,14 @@ func (r *Repo) OrphanArtifacts(ctx context.Context, cutoff time.Time) ([]domain.
 	}
 	return out, rows.Err()
 }
+
+// DeactivateOtherIndexVersions — активной может быть только одна версия
+// снапшота: по ней экран «Настройка» показывает, чем сейчас проверяют пакеты.
+func (r *Repo) DeactivateOtherIndexVersions(ctx context.Context, keepID int64) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE vuln_index_version SET is_active = FALSE WHERE id <> $1 AND is_active`, keepID)
+	if err != nil {
+		return fmt.Errorf("снятие признака активной версии снапшота: %w", err)
+	}
+	return nil
+}

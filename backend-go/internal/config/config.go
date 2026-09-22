@@ -132,6 +132,12 @@ type Config struct {
 
 	// Каталог с распакованным снапшотом базы OSV.
 	OSVLocalDBPath string
+	// Откуда берётся снапшот: репозиторий артефактори и путь внутри него.
+	ArtifactRepoOSV string
+	OSVSnapshotPath string
+	// OSVSyncInterval — как часто воркер проверяет, не выложили ли новый
+	// снапшот. Ноль и меньше — синхронизация выключена.
+	OSVSyncInterval time.Duration
 
 	// Конвейер и очередь. PipelineStuckAfter — через сколько молчания пакет
 	// считается зависшим; брошенным прогон признаётся втрое позже (столько же,
@@ -243,7 +249,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		ArtifactToken:    getenv("ARTIFACT_TOKEN"),
 		ArtifactDryRun:   boolOr(getenv("ARTIFACT_DRY_RUN"), false),
 
-		OSVLocalDBPath: valueOr(getenv("OSV_LOCAL_DB_PATH"), "/var/lib/osv-db"),
+		OSVLocalDBPath:  valueOr(getenv("OSV_LOCAL_DB_PATH"), "/var/lib/osv-db"),
+		ArtifactRepoOSV: valueOr(getenv("ARTIFACT_REPO_OSV"), "osv-snapshots"),
+		OSVSnapshotPath: valueOr(getenv("OSV_SNAPSHOT_PATH"), "osv/latest/osv-all.zip"),
+		OSVSyncInterval: secondsOr(getenv("OSV_SYNC_INTERVAL_SECONDS"), 6*60*60),
 
 		PipelineStuckAfter:       secondsOr(getenv("PIPELINE_STUCK_AFTER_SECONDS"), 120),
 		PipelineWatchdogEnabled:  boolOr(getenv("PIPELINE_WATCHDOG_ENABLED"), true),

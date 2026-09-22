@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"time"
 
+	"moderation/internal/artifactstore"
 	"moderation/internal/decisions"
 	"moderation/internal/domain"
 	"moderation/internal/repo"
@@ -30,7 +31,10 @@ type Service struct {
 	Decisions *decisions.Service
 	// Storage — временное хранилище (карантинная зона).
 	Storage storage.Store
-	Logger  *slog.Logger
+	// Artifacts — артефактори: оттуда берётся снапшот базы уязвимостей.
+	// nil — синхронизация снапшота недоступна, остальные задачи работают.
+	Artifacts artifactstore.Store
+	Logger    *slog.Logger
 	// Now подменяется в тестах.
 	Now func() time.Time
 }

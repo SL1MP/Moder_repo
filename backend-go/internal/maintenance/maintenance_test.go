@@ -1,14 +1,20 @@
 package maintenance_test
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"moderation/internal/artifactstore"
 	"moderation/internal/db"
 	"moderation/internal/decisions"
 	"moderation/internal/domain"
@@ -406,5 +412,122 @@ func TestCleanupRequiresTTL(t *testing.T) {
 	service, _ := newService(t, r, newFakeStorage(), time.Now().UTC())
 	if _, err := service.CleanupOrphanObjects(context.Background(), 0); err == nil {
 		t.Fatal("нулевой срок жизни — это ошибка настройки, а не «удалить всё»")
+	}
+}
+
+// --------------------------------------------------------------- снапшот OSV
+
+// fakeArtifacts — артефактори с одним файлом: снапшотом.
+type fakeArtifacts struct {
+	payload  []byte
+	checksum string
+	modified time.Time
+	reads    int
+}
+
+func (f *fakeArtifacts) Kind() string                            { return artifactstore.KindNexus }
+func (f *fakeArtifacts) DryRun() bool                            { return false }
+func (f *fakeArtifacts) ArtifactURL(artifactstore.Target) string { return "" }
+func (f *fakeArtifacts) Exists(context.Context, artifactstore.Target) (bool, error) {
+	return false, nil
+}
+func (f *fakeArtifacts) Publish(context.Context, artifactstore.Target, []byte) (string, error) {
+	return "", nil
+}
+
+func (f *fakeArtifacts) StatFile(context.Context, string, string) (*artifactstore.RemoteFile, error) {
+	return &artifactstore.RemoteFile{
+		Checksum: f.checksum, LastModified: f.modified, SizeBytes: int64(len(f.payload)),
+	}, nil
+}
+
+func (f *fakeArtifacts) ReadFile(context.Context, string, string) ([]byte, error) {
+	f.reads++
+	return f.payload, nil
+}
+
+func snapshotArchive(t *testing.T) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("PyPI/GHSA-" + slug(t) + ".json")
+	if err != nil {
+		t.Fatalf("сборка архива: %v", err)
+	}
+	record := `{"id":"GHSA-TEST","summary":"тест","affected":[{"package":{"ecosystem":"PyPI",` +
+		`"name":"requests"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},` +
+		`{"fixed":"2.32.0"}]}]}]}`
+	if _, err := w.Write([]byte(record)); err != nil {
+		t.Fatalf("запись в архив: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("закрытие архива: %v", err)
+	}
+	digest := sha256.Sum256(buf.Bytes())
+	return buf.Bytes(), hex.EncodeToString(digest[:])
+}
+
+// Версия снапшота фиксируется в базе: по ней видно, чем именно проверяли
+// пакет, и её же показывает экран «Настройка».
+func TestSyncOSVSnapshotRecordsVersion(t *testing.T) {
+	r := mustRepo(t)
+	now := time.Now().UTC()
+	payload, checksum := snapshotArchive(t)
+	artifacts := &fakeArtifacts{payload: payload, checksum: checksum, modified: now}
+
+	service, _ := newService(t, r, newFakeStorage(), now)
+	service.Artifacts = artifacts
+	cfg := maintenance.OSVConfig{
+		Repo: "osv-snapshots", Path: "osv/latest/osv-all.zip",
+		LocalPath: filepath.Join(t.TempDir(), "osv-db"),
+	}
+
+	result, err := service.SyncOSVSnapshot(context.Background(), cfg, false)
+	if err != nil {
+		t.Fatalf("SyncOSVSnapshot: %v", err)
+	}
+	if !result.Updated || result.Records != 1 || result.IndexVersionID == nil {
+		t.Fatalf("итог загрузки: %+v", result)
+	}
+
+	var active bool
+	var records int
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT is_active, record_count FROM vuln_index_version WHERE id=$1`,
+		*result.IndexVersionID).Scan(&active, &records); err != nil {
+		t.Fatalf("чтение версии снапшота: %v", err)
+	}
+	if !active || records != 1 {
+		t.Errorf("строка версии: активна=%v, записей=%d", active, records)
+	}
+
+	// Активной может быть только одна версия.
+	var others int
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT count(*) FROM vuln_index_version WHERE is_active AND id <> $1`,
+		*result.IndexVersionID).Scan(&others); err != nil {
+		t.Fatalf("подсчёт активных версий: %v", err)
+	}
+	if others != 0 {
+		t.Errorf("активных версий снапшота кроме новой: %d", others)
+	}
+
+	// Повторный вызов с тем же снапшотом ничего не меняет.
+	again, err := service.SyncOSVSnapshot(context.Background(), cfg, false)
+	if err != nil {
+		t.Fatalf("повторная синхронизация: %v", err)
+	}
+	if again.Updated {
+		t.Error("тот же снапшот посчитан новой версией")
+	}
+}
+
+// Артефактори не настроено — это состояние, а не тишина: без снапшота каждый
+// пакет уходит к DevSecOps вручную.
+func TestSyncOSVSnapshotNeedsArtifactStore(t *testing.T) {
+	r := mustRepo(t)
+	service, _ := newService(t, r, newFakeStorage(), time.Now().UTC())
+	if _, err := service.SyncOSVSnapshot(context.Background(), maintenance.OSVConfig{}, false); err == nil {
+		t.Fatal("ожидалась ошибка про ненастроенное артефактори")
 	}
 }

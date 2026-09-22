@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"moderation/internal/artifactstore"
 	"moderation/internal/config"
 	"moderation/internal/db"
 	"moderation/internal/decisions"
@@ -39,6 +40,9 @@ const (
 	minMaintenanceInterval = time.Minute
 	// maintenanceTimeout — потолок на один прогон задачи.
 	maintenanceTimeout = 10 * time.Minute
+	// osvSyncTimeout — снапшот базы уязвимостей это десятки мегабайт и
+	// десятки тысяч файлов: ему нужен свой, более щедрый потолок.
+	osvSyncTimeout = 30 * time.Minute
 )
 
 // maintenanceRunner — периодический запуск регламентных задач.
@@ -48,10 +52,24 @@ type maintenanceRunner struct {
 
 	quarantineInterval time.Duration
 	cleanupInterval    time.Duration
+	osvInterval        time.Duration
 	orphanTTL          time.Duration
+	osv                maintenance.OSVConfig
 }
 
 func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, store storage.Store, logger *slog.Logger) *maintenanceRunner {
+	// Артефактори нужно только для снапшота OSV. Его недоступность не должна
+	// мешать остальным задачам, поэтому ошибка сборки клиента — не отказ, а
+	// выключенная синхронизация.
+	artifacts, err := artifactstore.New(artifactstore.Config{
+		Kind: cfg.ArtifactStore, BaseURL: cfg.ArtifactBaseURL,
+		AuthType: artifactstore.AuthType(cfg.ArtifactAuthType),
+		Token:    cfg.ArtifactToken, Username: cfg.ArtifactUser, Password: cfg.ArtifactToken,
+	})
+	if err != nil {
+		logger.Warn("снапшот OSV синхронизироваться не будет: артефактори не настроено", "error", err)
+		artifacts = nil
+	}
 	return &maintenanceRunner{
 		service: &maintenance.Service{
 			Repo: r,
@@ -64,13 +82,18 @@ func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, stor
 					return q.Enqueue(ctx, item.ID, fromStep)
 				},
 			},
-			Storage: store,
-			Logger:  logger,
+			Storage:   store,
+			Artifacts: artifacts,
+			Logger:    logger,
 		},
 		logger:             logger,
 		quarantineInterval: clampInterval(cfg.QuarantineSweepInterval),
 		cleanupInterval:    clampInterval(cfg.S3CleanupInterval),
+		osvInterval:        cfg.OSVSyncInterval,
 		orphanTTL:          cfg.S3OrphanTTL,
+		osv: maintenance.OSVConfig{
+			Repo: cfg.ArtifactRepoOSV, Path: cfg.OSVSnapshotPath, LocalPath: cfg.OSVLocalDBPath,
+		},
 	}
 }
 
@@ -91,11 +114,20 @@ func (m *maintenanceRunner) run(ctx context.Context) {
 
 	m.sweepQuarantine(ctx)
 	m.cleanupStorage(ctx)
+	m.syncOSV(ctx, false)
 
 	quarantine := time.NewTicker(m.quarantineInterval)
 	defer quarantine.Stop()
 	cleanup := time.NewTicker(m.cleanupInterval)
 	defer cleanup.Stop()
+	// Синхронизацию снапшота можно выключить нулевым интервалом: снапшот
+	// кладут и снаружи (scripts/osv_local_snapshot.py, свой конвейер выгрузки).
+	var osvTick <-chan time.Time
+	if m.osvInterval > 0 {
+		osv := time.NewTicker(clampInterval(m.osvInterval))
+		defer osv.Stop()
+		osvTick = osv.C
+	}
 
 	for {
 		select {
@@ -105,7 +137,23 @@ func (m *maintenanceRunner) run(ctx context.Context) {
 			m.sweepQuarantine(ctx)
 		case <-cleanup.C:
 			m.cleanupStorage(ctx)
+		case <-osvTick:
+			m.syncOSV(ctx, false)
 		}
+	}
+}
+
+// syncOSV загружает снапшот базы уязвимостей, если появился новый.
+func (m *maintenanceRunner) syncOSV(ctx context.Context, force bool) {
+	if m.service.Artifacts == nil || m.osvInterval <= 0 {
+		return
+	}
+	runCtx, cancel := context.WithTimeout(ctx, osvSyncTimeout)
+	defer cancel()
+	if _, err := m.service.SyncOSVSnapshot(runCtx, m.osv, force); err != nil {
+		// Молчать нельзя: пока снапшот не обновляется, каждый пакет уходит к
+		// DevSecOps вручную, и снаружи это выглядит как «сервис стал строже».
+		m.logger.Error("снапшот OSV не синхронизирован", "error", err)
 	}
 }
 
@@ -134,12 +182,16 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 	fs := flag.NewFlagSet("maintenance", flag.ContinueOnError)
 	quarantineOnly := fs.Bool("quarantine", false, "только снять истёкший карантин")
 	cleanupOnly := fs.Bool("cleanup", false, "только убрать временное хранилище")
+	osvOnly := fs.Bool("osv-sync", false, "только загрузить снапшот базы уязвимостей")
+	force := fs.Bool("force", false, "перезагрузить снапшот, даже если версия та же")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	// Без флагов выполняются обе задачи.
-	doQuarantine := *quarantineOnly || !*cleanupOnly
-	doCleanup := *cleanupOnly || !*quarantineOnly
+	// Без флагов выполняются все задачи.
+	only := *quarantineOnly || *cleanupOnly || *osvOnly
+	doQuarantine := *quarantineOnly || !only
+	doCleanup := *cleanupOnly || !only
+	doOSV := *osvOnly || !only
 
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -178,6 +230,24 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 
 	runner := newMaintenanceRunner(cfg, r, q, store, logger)
 	code := 0
+	if doOSV {
+		if runner.service.Artifacts == nil {
+			fmt.Fprintln(os.Stderr, "артефактори не настроено — снапшот OSV загружать неоткуда")
+			code = 1
+		} else {
+			result, err := runner.service.SyncOSVSnapshot(ctx, runner.osv, *force)
+			switch {
+			case err != nil:
+				logger.Error("снапшот OSV не синхронизирован", "error", err)
+				code = 1
+			case result.Updated:
+				fmt.Printf("Снапшот OSV загружен: версия %s, записей %d\n",
+					result.Version, result.Records)
+			default:
+				fmt.Printf("Снапшот OSV актуален: версия %s\n", result.Version)
+			}
+		}
+	}
 	if doQuarantine {
 		released, err := runner.service.ReleaseExpiredQuarantine(ctx)
 		if err != nil {
