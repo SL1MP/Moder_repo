@@ -16,6 +16,7 @@ import (
 	"moderation/internal/decisions"
 	"moderation/internal/domain"
 	"moderation/internal/maintenance"
+	"moderation/internal/osv"
 	"moderation/internal/queue"
 	"moderation/internal/repo"
 	"moderation/internal/storage"
@@ -55,6 +56,7 @@ type maintenanceRunner struct {
 	osvInterval        time.Duration
 	orphanTTL          time.Duration
 	osv                maintenance.OSVConfig
+	vulnMaxScore       float64
 }
 
 func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, store storage.Store, logger *slog.Logger) *maintenanceRunner {
@@ -94,6 +96,7 @@ func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, stor
 		osv: maintenance.OSVConfig{
 			Repo: cfg.ArtifactRepoOSV, Path: cfg.OSVSnapshotPath, LocalPath: cfg.OSVLocalDBPath,
 		},
+		vulnMaxScore: cfg.VulnMaxScore,
 	}
 }
 
@@ -150,10 +153,28 @@ func (m *maintenanceRunner) syncOSV(ctx context.Context, force bool) {
 	}
 	runCtx, cancel := context.WithTimeout(ctx, osvSyncTimeout)
 	defer cancel()
-	if _, err := m.service.SyncOSVSnapshot(runCtx, m.osv, force); err != nil {
+	result, err := m.service.SyncOSVSnapshot(runCtx, m.osv, force)
+	if err != nil {
 		// Молчать нельзя: пока снапшот не обновляется, каждый пакет уходит к
 		// DevSecOps вручную, и снаружи это выглядит как «сервис стал строже».
 		m.logger.Error("снапшот OSV не синхронизирован", "error", err)
+		return
+	}
+	if !result.Updated {
+		return
+	}
+	// Новая база — повод пересмотреть уже одобренное: пакет, одобренный вчера,
+	// сегодня может оказаться уязвимым, и узнать об этом должен сервис.
+	m.rescan(ctx, result.IndexVersionID)
+}
+
+// rescan перепроверяет одобренные пакеты по текущей базе уязвимостей.
+func (m *maintenanceRunner) rescan(ctx context.Context, indexVersionID *int64) {
+	runCtx, cancel := context.WithTimeout(ctx, osvSyncTimeout)
+	defer cancel()
+	index := osv.NewSnapshotIndex(m.osv.LocalPath)
+	if _, err := m.service.RescanApproved(runCtx, index, m.vulnMaxScore, indexVersionID); err != nil {
+		m.logger.Error("перепроверка одобренных пакетов не выполнена", "error", err)
 	}
 }
 
@@ -183,15 +204,20 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 	quarantineOnly := fs.Bool("quarantine", false, "только снять истёкший карантин")
 	cleanupOnly := fs.Bool("cleanup", false, "только убрать временное хранилище")
 	osvOnly := fs.Bool("osv-sync", false, "только загрузить снапшот базы уязвимостей")
+	rescanOnly := fs.Bool("rescan", false, "только перепроверить одобренные пакеты по текущей базе")
 	force := fs.Bool("force", false, "перезагрузить снапшот, даже если версия та же")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	// Без флагов выполняются все задачи.
-	only := *quarantineOnly || *cleanupOnly || *osvOnly
+	only := *quarantineOnly || *cleanupOnly || *osvOnly || *rescanOnly
 	doQuarantine := *quarantineOnly || !only
 	doCleanup := *cleanupOnly || !only
 	doOSV := *osvOnly || !only
+	// Перепроверка по расписанию идёт следом за загрузкой снапшота, поэтому
+	// без флагов отдельно её не запускаем — иначе команда каждый раз обходила
+	// бы все одобренные пакеты впустую.
+	doRescan := *rescanOnly
 
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -255,6 +281,16 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 			code = 1
 		} else {
 			fmt.Printf("Карантин снят с пакетов: %d\n", released)
+		}
+	}
+	if doRescan {
+		result, err := runner.service.RescanApproved(ctx,
+			osv.NewSnapshotIndex(cfg.OSVLocalDBPath), cfg.VulnMaxScore, nil)
+		if err != nil {
+			logger.Error("перепроверка одобренных пакетов не выполнена", "error", err)
+			code = 1
+		} else {
+			fmt.Printf("Перепроверено пакетов: %d, отозвано: %d\n", result.Checked, result.Revoked)
 		}
 	}
 	if doCleanup {

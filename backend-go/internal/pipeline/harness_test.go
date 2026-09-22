@@ -169,6 +169,15 @@ func (f *fakeArtifactStore) Publish(_ context.Context, t artifactstore.Target, d
 	return f.ArtifactURL(t), nil
 }
 
+func (f *fakeArtifactStore) Delete(_ context.Context, t artifactstore.Target) (bool, error) {
+	key := t.Repo + "/" + t.Path
+	if _, ok := f.published[key]; !ok {
+		return false, nil
+	}
+	delete(f.published, key)
+	return true, nil
+}
+
 func (f *fakeArtifactStore) StatFile(_ context.Context, repoName, path string) (*artifactstore.RemoteFile, error) {
 	data, ok := f.published[repoName+"/"+path]
 	if !ok {

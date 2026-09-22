@@ -3,6 +3,7 @@ package artifactstore
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -139,4 +140,62 @@ func (n *Nexus) componentForm(t Target, data []byte) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("сборка multipart для Nexus: %w", err)
 	}
 	return buf.Bytes(), form.FormDataContentType(), nil
+}
+
+// nexusSearch — ответ поиска компонентов.
+type nexusSearch struct {
+	Items []struct {
+		ID string `json:"id"`
+	} `json:"items"`
+}
+
+// Delete снимает пакет с публикации.
+//
+// Удаляется компонент целиком, а не файл: в Nexus у компонента бывает
+// несколько ассетов (wheel и sdist у pypi), и удалить один файл значит
+// оставить версию наполовину доступной — install найдёт её и возьмёт остаток.
+func (n *Nexus) Delete(ctx context.Context, t Target) (bool, error) {
+	if n.cfg.DryRun {
+		return false, fmt.Errorf("удаление вызвано в режиме dry-run: это ошибка вызывающего кода")
+	}
+	search := fmt.Sprintf("%s/service/rest/v1/search?repository=%s&name=%s&version=%s",
+		n.cfg.BaseURL, url.QueryEscape(t.Repo), url.QueryEscape(t.Name), url.QueryEscape(t.Version))
+	resp, err := n.do(ctx, http.MethodGet, search, nil, map[string]string{"Accept": "application/json"})
+	if err != nil {
+		return false, err
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return false, fmt.Errorf("Nexus ответил %d на поиск компонента %s %s",
+			resp.StatusCode, t.DisplayName, t.Version)
+	}
+	var found nexusSearch
+	if err := json.Unmarshal(body, &found); err != nil {
+		return false, fmt.Errorf("ответ поиска Nexus не разобран: %w", err)
+	}
+
+	removed := false
+	for _, item := range found.Items {
+		if item.ID == "" {
+			continue
+		}
+		delResp, err := n.do(ctx, http.MethodDelete,
+			fmt.Sprintf("%s/service/rest/v1/components/%s", n.cfg.BaseURL, url.PathEscape(item.ID)),
+			nil, nil)
+		if err != nil {
+			return removed, err
+		}
+		status := delResp.StatusCode
+		delResp.Body.Close()
+		switch {
+		case status == http.StatusNotFound:
+			// Уже удалён — считаем исход достигнутым.
+		case status >= 400:
+			return removed, fmt.Errorf("Nexus отклонил удаление компонента %s (%d)", item.ID, status)
+		default:
+			removed = true
+		}
+	}
+	return removed, nil
 }

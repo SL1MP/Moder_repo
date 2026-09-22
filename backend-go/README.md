@@ -40,10 +40,8 @@ Go-версия backend'а сервиса модерации пакетов — 
 
 - маршруты: `/admin/*`, `/settings*`, `/system/status`, `/gitlab/*`, `POST /packages/check`,
   `POST /packages/{id}/revoke`, `POST /items/{id}/license-claim`;
-- регламентные задачи: синхронизация снапшота OSV и перепроверка одобренных пакетов при
-  новой базе (снятие карантина и уборка хранилища уже на Go);
-- CLI: `bootstrap`, `create-service-account`, `import-package-list`, `sync-osv`, `rescan`,
-  `reload-policies`, `queue-doctor`;
+- CLI: `bootstrap`, `create-service-account`, `import-package-list`, `reload-policies`,
+  `queue-doctor`;
 - служебное: ограничение частоты запросов, бизнес-метрики Prometheus, повторы и circuit
   breaker на вызовах к реестрам.
 
@@ -52,17 +50,28 @@ Go-версия backend'а сервиса модерации пакетов — 
 
 ### Регламентные задачи
 
-Воркер сам снимает карантин, у которого вышел срок, и убирает временное хранилище — расписание
-то же, что у celery beat в python-версии (15 минут и 2 часа, `MAINTENANCE_ENABLED=false`
-выключает). Разово то же самое делает команда:
+Воркер делает сам, без нажатия кнопки, — расписание то же, что у celery beat в python-версии
+(`MAINTENANCE_ENABLED=false` выключает всё разом):
+
+| Задача | Как часто | Что будет без неё |
+|---|---|---|
+| снятие истёкшего карантина | 15 минут | карантин — тупик: пакет стоит «до даты» и не двигается никогда |
+| уборка временного хранилища | 2 часа | карантинная зона растёт, пока не кончится место |
+| загрузка снапшота OSV | 6 часов | «база устарела», каждый пакет уходит к DevSecOps вручную |
+| перепроверка одобренных | после новой базы | уязвимость, найденная после одобрения, остаётся незамеченной |
+
+Разово то же самое делает команда:
 
 ```bash
-docker compose run --rm worker-go maintenance              # обе задачи
-docker compose run --rm worker-go maintenance --quarantine # только карантин
+docker compose run --rm worker-go maintenance                    # все задачи
+docker compose run --rm worker-go maintenance --quarantine       # только карантин
+docker compose run --rm worker-go maintenance --osv-sync --force # перезалить снапшот
+docker compose run --rm worker-go maintenance --rescan           # перепроверить одобренные
 ```
 
-Без этих задач карантин — тупик: шаг ставит пакету «в карантине до даты», и дальше он не
-двигается сам никогда.
+Перепроверка отзывает пакет только по НОВОЙ уязвимости. Находка выше порога, известная на
+момент одобрения, — это решение DevSecOps; отзывать по ней при каждом обновлении базы значило
+бы молча отменять чужое решение.
 
 ### Отчёты появляются сами
 

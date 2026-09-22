@@ -88,3 +88,24 @@ func (r *Repo) DeactivateOtherIndexVersions(ctx context.Context, keepID int64) e
 	}
 	return nil
 }
+
+// ApprovedVersionIDs — одобренные версии пакетов. Нужны перепроверке: новая
+// база уязвимостей может сказать о них то, чего не знала при одобрении.
+func (r *Repo) ApprovedVersionIDs(ctx context.Context) ([]int64, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id FROM package_version WHERE status = 'approved' ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("выборка одобренных версий: %w", err)
+	}
+	defer rows.Close()
+
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("чтение идентификатора версии: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

@@ -68,6 +68,10 @@ type Store interface {
 	Exists(ctx context.Context, t Target) (bool, error)
 	// Publish выгружает байты. Возвращает адрес опубликованного файла.
 	Publish(ctx context.Context, t Target, data []byte) (string, error)
+	// Delete снимает пакет с публикации. true — что-то действительно удалили;
+	// false без ошибки означает «его там и не было», и это штатный исход:
+	// отозвать могут пакет, который до артефактори не доехал.
+	Delete(ctx context.Context, t Target) (bool, error)
 	// StatFile — метаданные файла по пути внутри репозитория; nil, если файла
 	// нет. Путь здесь сырой: это служебное чтение (снапшот OSV), а не
 	// публикация пакета.

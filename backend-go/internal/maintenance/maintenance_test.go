@@ -434,6 +434,9 @@ func (f *fakeArtifacts) Exists(context.Context, artifactstore.Target) (bool, err
 func (f *fakeArtifacts) Publish(context.Context, artifactstore.Target, []byte) (string, error) {
 	return "", nil
 }
+func (f *fakeArtifacts) Delete(context.Context, artifactstore.Target) (bool, error) {
+	return false, nil
+}
 
 func (f *fakeArtifacts) StatFile(context.Context, string, string) (*artifactstore.RemoteFile, error) {
 	return &artifactstore.RemoteFile{

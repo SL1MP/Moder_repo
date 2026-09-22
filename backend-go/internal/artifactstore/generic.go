@@ -70,3 +70,24 @@ func (g *Generic) Publish(ctx context.Context, t Target, data []byte) (string, e
 	}
 	return url, nil
 }
+
+// Delete снимает файл с публикации.
+func (g *Generic) Delete(ctx context.Context, t Target) (bool, error) {
+	if g.cfg.DryRun {
+		return false, fmt.Errorf("удаление вызвано в режиме dry-run: это ошибка вызывающего кода")
+	}
+	resp, err := g.do(ctx, http.MethodDelete, g.ArtifactURL(t), nil, nil)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return false, fmt.Errorf("артефактори отклонил снятие с публикации %s (%d): %s",
+			t.Path, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return true, nil
+}

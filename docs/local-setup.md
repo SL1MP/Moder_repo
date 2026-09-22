@@ -165,7 +165,7 @@ docker compose logs -f nginx api web
 | «Схема базы не соответствует версии сервиса» | не накатили миграцию — см. шаг 3 |
 | Кнопки входа нет | `LOCAL_AUTH_ENABLED=false` в `.env` (после правки — `make restart`) |
 | Шаг публикации падает | `ARTIFACT_DRY_RUN=false` без поднятого Nexus (`make up-all` поднимает и его) |
-| Каждый пакет уходит к DevSecOps | нет снапшота OSV — см. шаг 4 |
+| Каждый пакет уходит к DevSecOps | нет снапшота OSV: положите локально (шаг 4) или дайте воркеру забрать его из артефактори (`docker compose run --rm worker-go maintenance --osv-sync`) |
 | `pull access denied for minio/minio` при `make up`/`make up-all` | образ MinIO на Docker Hub закрыт — см. ниже |
 | «Не удалось получить конфигурацию OIDC-издателя» на странице входа | Keycloak не поднят или ещё стартует — см. ниже |
 | Шаг «Выгрузка в артефактори» падает с 405 | `ARTIFACT_STORE` не соответствует артефактори — см. ниже |
