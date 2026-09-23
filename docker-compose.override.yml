@@ -1,5 +1,10 @@
-# dev-окружение: hot reload, порты наружу, подключение к БД и MinIO с хоста.
-# Подхватывается автоматически при `docker compose up`.
+# dev-окружение: hot reload и порты наружу. Подхватывается автоматически при
+# `docker compose up`.
+#
+# Блоки api, worker, beat и redis относятся к python-версии и вступают в силу
+# только с `--profile python`: без профиля этих сервисов в стеке нет
+# (см. docker-compose.yml). Оверлей на отсутствующий сервис compose не считает
+# ошибкой, поэтому обычный `docker compose up` их просто не замечает.
 
 services:
   api:
@@ -40,11 +45,6 @@ services:
   redis:
     ports:
       - "6379:6379"
-
-  minio:
-    ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
 
   keycloak:
     ports:

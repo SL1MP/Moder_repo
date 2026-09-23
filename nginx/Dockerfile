@@ -17,13 +17,11 @@ RUN apk add --no-cache openssl
 # зависимости от файловой системы хоста. Правка конфига применяется так:
 #   docker compose up -d --build nginx
 # Файлы conf.d подключаются по алфавиту, отсюда числовые префиксы:
-#   00 — upstream (объявлен до серверных блоков)
 #   10 — сервер на 80, его кладёт entrypoint (отдаёт приложение или редиректит)
 #   20 — сервер на 443
 # Стоковый default.conf из образа удаляется: иначе его server на 80 стал бы
 # конфликтующим default_server.
 RUN rm -f /etc/nginx/conf.d/default.conf
-COPY upstream.conf /etc/nginx/conf.d/00-upstream.conf
 COPY https.conf /etc/nginx/conf.d/20-https.conf
 COPY snippets/ /etc/nginx/snippets/
 
@@ -38,7 +36,12 @@ RUN chmod +x /docker-entrypoint.d/10-tls.sh
 
 EXPOSE 80 443
 
-# Проверку `nginx -t` на этапе сборки делать нельзя: nginx резолвит хосты из
-# upstream уже при разборе конфига, а хоста `api` во время build нет —
-# получили бы "host not found in upstream". Конфиг проверяется при старте
-# контейнера, когда docker-DNS уже отдаёт адрес api.
+# Блока upstream больше нет: python-сервис погашен, а go-версия адресуется
+# через переменную с resolver'ом (см. snippets/api-go-proxy.conf). Это не
+# косметика — nginx резолвит хосты upstream при разборе конфига, и пока здесь
+# стоял `upstream moderation_api { server api:8000; }`, выключенный python-сервис
+# ронял вместе с собой и nginx: наружу это выглядело как «сайт не открывается»,
+# а не как «одна из служб не поднялась».
+#
+# Поэтому же `nginx -t` на этапе сборки теперь безопасен — но оставлять его всё
+# равно не за чем: конфиг проверяется при старте контейнера.

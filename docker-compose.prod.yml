@@ -71,9 +71,6 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
 
-  minio:
-    restart: unless-stopped
-
   keycloak:
     restart: unless-stopped
     # В prod Keycloak запускается в боевом режиме, не start-dev.

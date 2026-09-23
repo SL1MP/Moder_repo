@@ -24,7 +24,20 @@ x-proxy-env: &proxy-env
   NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis,nexus,keycloak,api,web,nginx}
   no_proxy: ${NO_PROXY:-localhost,127.0.0.1,db,redis,nexus,keycloak,api,web,nginx}
 
+# Python-версия backend'а: api, worker, beat.
+#
+# С обычным `docker compose up` больше НЕ поднимается — весь API перенесён на
+# Go, и nginx целиком проксирует /api/ в api-go. Определения оставлены под
+# профилем `python` ровно на один случай: go-версия впервые обслуживает сто
+# процентов трафика, и на боевом стенде это ещё не отстоялось. Откат — один
+# флаг (`docker compose --profile python up -d api worker beat`), а не
+# восстановление удалённых файлов из истории.
+#
+# Когда откат перестанет быть нужен, удаляется всё: каталог backend/, этот
+# профиль, redis (он здесь только брокер celery — go-очередь живёт в Postgres)
+# и alembic-набор миграций.
 x-backend: &backend
+  profiles: ["python"]
   # build: намеренно не здесь — все три сервиса (api/worker/beat) используют один и тот
   # же образ moderation-backend:local; если каждый описывает свой build:, compose пытается
   # собрать его трижды параллельно и падает на "image ... already exists". Собирает
@@ -68,9 +81,10 @@ services:
       # Named volume, а не bind-mount с хоста — с ними этой проблемы нет.
       - web-dist:/usr/share/nginx/html:ro
     depends_on:
-      # api-go тоже: с фазы доступа nginx отдаёт ему /api/v1/auth/, то есть
-      # без него не работает вход, а не только отчёты.
-      - api
+      # Только go-версия: весь /api/ уходит в неё. python-сервиса здесь больше
+      # нет — он под профилем `python`, а зависимость обычного сервиса на
+      # профильный compose считает ошибкой конфигурации и отказывается
+      # запускать стек целиком.
       - api-go
       - web
 
@@ -97,13 +111,12 @@ services:
         NO_PROXY: ${NO_PROXY:-}
     command: ["api"]
 
-  # Go-версия backend'а. Пока отдаёт только свои эндпоинты (health, метрики,
-  # отчёты о сканировании) и существует ПАРАЛЛЕЛЬНО с python-сервисом api, не
-  # заменяя его: REST API заявок ещё не перенесён (см. docs/migration-to-go.md).
+  # Go-версия backend'а — единственная, которая обслуживает API. nginx
+  # проксирует в неё весь префикс /api/ (см. nginx/snippets/app.conf).
   #
-  # Порт наружу НЕ публикуется: доступ только через nginx, который отдаёт
-  # Go-сервису ровно префикс /api/v1/request-items/ (см. nginx/snippets/app.conf).
-  # У сервиса нет собственной аутентификации, и выставлять его на хост нельзя.
+  # Порт наружу НЕ публикуется: доступ только через nginx. Опубликовать его
+  # означало бы отдать API в обход единственного места, где настроены заголовки
+  # X-Forwarded-*, по которым сервис видит настоящий адрес клиента.
   #
   # Миграции go-набора. Отдельный одноразовый сервис, а не автоматический
   # мигратор внутри api-go: два процесса, накатывающих схему при старте,
@@ -262,7 +275,13 @@ services:
       timeout: 5s
       retries: 20
 
+  # Redis — брокер и хранилище результатов celery, нужен только python-версии:
+  # очередь go-версии живёт в Postgres (FOR UPDATE SKIP LOCKED + LISTEN/NOTIFY),
+  # и ни одной строки про Redis в backend-go нет. Поэтому он под тем же
+  # профилем: поднимать брокер для очереди, которой никто не пользуется, —
+  # лишний контейнер, который потом ищут в списке и не понимают, чей он.
   redis:
+    profiles: ["python"]
     image: redis:7
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
