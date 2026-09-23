@@ -46,7 +46,24 @@ func (h *RequestsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, inputErr)
 		return
 	}
+	h.createFrom(w, r, user, in, nil)
+}
 
+// createFrom — общая часть создания заявки: разбор записей, раскрытие
+// зависимостей, создание, ответ.
+//
+// Отдельно от Create, потому что заявку заводят двумя путями: из тела запроса
+// и по файлу из GitLab. Вход у них разный, а всё, что после входа, —
+// одинаковое, и вторая копия этого кода разъехалась бы с первой при первом же
+// изменении (в python-версии так и вышло: раскрытие зависимостей появилось в
+// одном пути и не появилось в другом).
+//
+// extraWarnings дописываются к предупреждениям разбора: путь из GitLab
+// добавляет, откуда именно прочитан файл и на каком коммите.
+func (h *RequestsHandler) createFrom(
+	w http.ResponseWriter, r *http.Request, user *domain.User,
+	in requests.Input, extraWarnings []string,
+) {
 	parsed, err := h.Requests.Parse(r.Context(), in)
 	if err != nil {
 		writeError(w, r, createError(err))
@@ -96,7 +113,18 @@ func (h *RequestsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// «принято к обработке»: обрабатывать нечего.
 		status = http.StatusOK
 	}
-	writeJSON(w, status, createResponse(created, parsed))
+	response := createResponse(created, parsed)
+	if len(extraWarnings) > 0 {
+		// Предупреждения — единственное место, где видно, ОТКУДА приехал
+		// файл. Без этого заявка из GitLab неотличима от загруженной руками,
+		// и повторить её потом не по чему.
+		if existing, ok := response["warnings"].([]string); ok {
+			response["warnings"] = append(existing, extraWarnings...)
+		} else {
+			response["warnings"] = extraWarnings
+		}
+	}
+	writeJSON(w, status, response)
 }
 
 // readCreateInput разбирает тело: JSON или multipart.

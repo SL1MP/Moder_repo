@@ -32,6 +32,7 @@ type Options struct {
 	Notifications *NotificationsHandler
 	Decisions     *DecisionsHandler
 	Admin         *AdminHandler
+	Gitlab        *GitlabHandler
 	// Auth — проверка токенов. Без неё закрытые маршруты НЕ подключаются
 	// вовсе: отдать их открытыми было бы хуже, чем не отдать совсем.
 	Auth *AuthHandler
@@ -98,6 +99,9 @@ func NewRouter(pool *pgxpool.Pool, opts ...Options) http.Handler {
 		}
 		if opt.Admin != nil && opt.Auth != nil {
 			MountAdmin(r, opt.Admin, opt.Auth.Auth)
+		}
+		if opt.Gitlab != nil && opt.Auth != nil {
+			MountGitlab(r, opt.Gitlab, opt.Auth.Auth)
 		}
 		if opt.Reports != nil {
 			if opt.Auth == nil {

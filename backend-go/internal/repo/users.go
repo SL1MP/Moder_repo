@@ -241,3 +241,29 @@ func (r *Repo) TouchLastLogin(ctx context.Context, userID int64, now time.Time) 
 	}
 	return nil
 }
+
+// SetGitlabTokens сохраняет или убирает подключение GitLab.
+//
+// Одним UPDATE, а не четырьмя: подключение — это состояние целиком, и
+// промежуточное состояние «токен есть, срок нет» ничего не значит. Отключение
+// передаёт nil во всех полях и попадает в ту же ветку.
+//
+// Токены приходят уже зашифрованными: шифрование — дело того, кто знает ключ,
+// а репозиторий не должен уметь читать то, что хранит.
+func (r *Repo) SetGitlabTokens(
+	ctx context.Context, userID int64,
+	access, refresh *string, expiresAt *time.Time, username *string,
+) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE "user"
+		SET gitlab_access_token_enc = $2,
+		    gitlab_refresh_token_enc = $3,
+		    gitlab_token_expires_at = $4,
+		    gitlab_username = $5,
+		    updated_at = now()
+		WHERE id = $1`, userID, access, refresh, expiresAt, username)
+	if err != nil {
+		return fmt.Errorf("сохранение подключения GitLab: %w", err)
+	}
+	return nil
+}

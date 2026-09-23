@@ -21,9 +21,11 @@ import (
 	"moderation/internal/api"
 	"moderation/internal/auth"
 	"moderation/internal/config"
+	"moderation/internal/crypto"
 	"moderation/internal/db"
 	"moderation/internal/decisions"
 	"moderation/internal/domain"
+	"moderation/internal/gitlab"
 	"moderation/internal/maintenance"
 	"moderation/internal/osv"
 	"moderation/internal/policy"
@@ -354,6 +356,28 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 		}
 	}
 	options.Admin = admin
+
+	// GitLab — только чтение: подключение из профиля и чтение файла
+	// зависимостей из приватного проекта от имени пользователя.
+	//
+	// Ключ шифрования токенов разбирается здесь: без него подключать GitLab
+	// нельзя (токен пришлось бы хранить открытым), но сервис поднимается —
+	// интеграцией пользуется меньшинство, и падать из-за неё нельзя.
+	fernet, fernetErr := crypto.New(cfg.FernetKey)
+	if fernetErr != nil && cfg.GitlabURL != "" {
+		logger.Warn("подключение GitLab работать не будет", "error", fernetErr)
+	}
+	options.Gitlab = &api.GitlabHandler{
+		Gitlab: &gitlab.Service{
+			Cfg: gitlab.Config{
+				BaseURL: cfg.GitlabURL, ClientID: cfg.GitlabOAuthClientID,
+				ClientSecret: cfg.GitlabOAuthSecret, RedirectURI: cfg.GitlabRedirectURI,
+				Fernet: fernet, HTTP: newHTTPClient(),
+			},
+			Store: r,
+		},
+		Repo: r, Registry: reg, Cfg: cfg, Requests: options.Requests,
+	}
 	// Отзыв пакета — тот же сервис решений: отзыв обязан вести себя одинаково,
 	// кем бы он ни был вызван, кнопкой в карточке или перепроверкой по новой
 	// базе уязвимостей.

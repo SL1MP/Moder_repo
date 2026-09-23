@@ -164,10 +164,16 @@ type Config struct {
 	LocalAuthSecret   string
 	LocalAuthTokenTTL time.Duration
 
-	// GitLab здесь только для флага gitlab_enabled в /auth/config: сами
-	// маршруты GitLab пока ведёт python-версия.
+	// GitLab — интеграция только на чтение: подключение из профиля и чтение
+	// файла зависимостей из приватного проекта от имени пользователя.
 	GitlabURL           string
 	GitlabOAuthClientID string
+	GitlabOAuthSecret   string
+	GitlabRedirectURI   string
+	// FernetKey — ключ шифрования токенов GitLab. Формат тот же, что у
+	// python-версии (Fernet): токены, зашифрованные ею, лежат в базе, и
+	// go-версия обязана их читать.
+	FernetKey string
 
 	// Артефактори — учётные данные для публикации и режим «без записи».
 	// ArtifactStore — тип артефактори: nexus (по умолчанию) или generic.
@@ -327,8 +333,11 @@ func Load(getenv func(string) string) (*Config, error) {
 		LocalAuthSecret:   valueOr(getenv("LOCAL_AUTH_SECRET"), "change-me-in-prod"),
 		LocalAuthTokenTTL: time.Duration(intOr(getenv("LOCAL_AUTH_TOKEN_TTL_MINUTES"), 480)) * time.Minute,
 
-		GitlabURL:           getenv("GITLAB_URL"),
+		GitlabURL:           strings.TrimRight(strings.TrimSpace(getenv("GITLAB_URL")), "/"),
 		GitlabOAuthClientID: getenv("GITLAB_OAUTH_CLIENT_ID"),
+		GitlabOAuthSecret:   getenv("GITLAB_OAUTH_CLIENT_SECRET"),
+		GitlabRedirectURI:   getenv("GITLAB_OAUTH_REDIRECT_URI"),
+		FernetKey:           strings.TrimSpace(getenv("FERNET_KEY")),
 
 		ArtifactStore:    valueOr(getenv("ARTIFACT_STORE"), "nexus"),
 		ArtifactAuthType: valueOr(getenv("ARTIFACT_AUTH_TYPE"), "basic"),
