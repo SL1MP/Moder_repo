@@ -71,3 +71,29 @@ func TestVersionsUpToKeepsSetOrder(t *testing.T) {
 		t.Errorf("имя миграции потеряно: %q", got[0].Name)
 	}
 }
+
+// migrationVersionOf достаёт номер из подсказки сверки схемы.
+//
+// Подсказка написана для человека и называет оба набора миграций
+// ("…/0014_package_managers (или alembic 0009)"). Взять из неё не тот номер
+// значит посоветовать не ту версию для --baseline — а отметить лишнюю
+// миграцию хуже, чем ошибиться в меньшую сторону: отмеченная, но не
+// выполненная не применится никогда.
+func TestMigrationVersionOf(t *testing.T) {
+	cases := map[string]string{
+		"backend-go/migrations/0014_package_managers":                     "0014",
+		"backend-go/migrations/0012_dependency_tree (или alembic 0007)":   "0012",
+		"backend-go/migrations/0002_security_override_on_package_version": "0002",
+		// Номер альбемика в хвосте не должен побеждать номер go-набора.
+		"backend-go/migrations/0003_code_findings (или alembic 0003)": "0003",
+		// Обобщённая подсказка номера не несёт — советовать нечего.
+		"пропущенные миграции из backend-go/migrations (или alembic)": "",
+		"":                        "",
+		"migrations/без-номера_x": "",
+	}
+	for hint, want := range cases {
+		if got := migrationVersionOf(hint); got != want {
+			t.Errorf("migrationVersionOf(%q) = %q, ожидалось %q", hint, got, want)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,7 @@ import (
 
 	"moderation/internal/config"
 	"moderation/internal/db"
+	"moderation/internal/repo"
 	"moderation/migrations"
 )
 
@@ -82,6 +84,30 @@ func runMigrate(args []string, logger *slog.Logger) int {
 	case *down != "":
 		return rollbackMigrations(ctx, pool, all, applied, *down, logger)
 	}
+	// Учёт мог отстать от схемы — тогда применять с начала бессмысленно и
+	// вредно, см. checkTrackingBehind.
+	if version, behind := trackingBehind(ctx, pool, all, applied); behind {
+		logger.Error("учёт миграций отстал от схемы базы",
+			"схема уже содержит", "изменения более поздних миграций, чем ближайшая неприменённая",
+			"что сделать", "moderation migrate --baseline "+version+", затем moderation migrate")
+		fmt.Fprintf(os.Stderr, `
+Схема этой базы новее, чем её учёт миграций.
+
+Так бывает на стенде, где схему накатывали вручную (циклом psql по файлам или
+Alembic'ом) — такой прогон ничего о себе не записывает. Применять набор с
+начала нельзя: старая миграция ляжет поверх более новых ДАННЫХ и упадёт на
+ограничении, ничего не сказав о настоящей причине.
+
+Отметьте уже накатанное применённым, затем догоните остаток:
+
+    moderation migrate --baseline %s
+    moderation migrate
+    moderation schema
+
+`, version)
+		return 1
+	}
+
 	return applyMigrations(ctx, pool, all, applied, logger)
 }
 
@@ -160,6 +186,118 @@ func applyMigrations(
 	}
 	logger.Info("схема обновлена", "применено", count, "всего миграций", len(all))
 	return 0
+}
+
+// trackingBehind — учёт миграций отстал от того, что уже есть в схеме.
+//
+// Определяется сравнением двух точек: ближайшей НЕприменённой по учёту
+// миграции и самой ранней миграции, чьих изменений в схеме НЕ хватает (её
+// называет сверка схемы). Если вторая заметно позже первой, значит схему
+// накатывали мимо учёта: изменения миграций между ними в базе есть, а записи
+// о них нет.
+//
+// Зачем это здесь, а не в документации: без такой проверки первый же прогон
+// на живом стенде падает с «check constraint … is violated by some row» —
+// сообщением, из которого не следует ни настоящая причина (старая миграция
+// легла поверх более новых данных), ни что делать. Разбор этого занял три
+// захода, и повторять его следующему незачем.
+//
+// Возвращает версию для --baseline: предшествующую самой ранней недостающей.
+// Ошибки сверки схемы не поднимаются наверх намеренно: не смогли определить —
+// значит просто не советуем, а не мешаем накатывать.
+func trackingBehind(
+	ctx context.Context, pool *pgxpool.Pool,
+	all []migrations.Migration, applied map[string]bool,
+) (string, bool) {
+	var next string
+	for _, m := range all {
+		if !applied[m.Version] {
+			next = m.Version
+			break
+		}
+	}
+	if next == "" {
+		return "", false // применять нечего
+	}
+
+	// Пустая база — не «отставший учёт», а обычная установка с нуля.
+	//
+	// Различать обязательно: сверка схемы не проверяет объекты самой первой
+	// миграции (она исходит из того, что базовые таблицы есть), поэтому на
+	// чистой базе она называет недостающими только поздние миграции — и без
+	// этой проверки установка с нуля выглядела бы как отставший учёт и
+	// отказывалась бы накатываться вовсе.
+	var baseExists bool
+	if err := pool.QueryRow(ctx,
+		`SELECT to_regclass('request_item') IS NOT NULL`).Scan(&baseExists); err != nil || !baseExists {
+		return "", false
+	}
+
+	gaps, err := repo.New(pool).MissingSchemaObjects(ctx)
+	if err != nil {
+		return "", false
+	}
+
+	// Самая ранняя миграция, которой в схеме не хватает. Пустая строка —
+	// схема полная, и тогда отмечать надо весь набор.
+	earliestGap := ""
+	for _, gap := range gaps {
+		v := migrationVersionOf(gap.Migration)
+		if v == "" {
+			continue
+		}
+		if earliestGap == "" || v < earliestGap {
+			earliestGap = v
+		}
+	}
+
+	switch {
+	case earliestGap == "":
+		// Схема полная, но учёт неполон: отмечать нужно всё.
+		return all[len(all)-1].Version, true
+	case earliestGap <= next:
+		// Схема отстаёт ровно там, где и учёт, — обычное обновление.
+		return "", false
+	}
+
+	// Между next и earliestGap изменения уже в базе: отмечаем по
+	// предшествующую недостающей.
+	prev := ""
+	for _, m := range all {
+		if m.Version >= earliestGap {
+			break
+		}
+		prev = m.Version
+	}
+	if prev == "" {
+		return "", false
+	}
+	return prev, true
+}
+
+// migrationVersionOf достаёт номер версии из подсказки сверки схемы, где путь
+// записан как "backend-go/migrations/0014_package_managers (или alembic 0009)".
+//
+// Разбор строкой, а не отдельным полем у SchemaGap: подсказка адресована
+// человеку и называет оба набора миграций, а номер нужен только здесь.
+func migrationVersionOf(hint string) string {
+	const marker = "migrations/"
+	idx := strings.Index(hint, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := hint[idx+len(marker):]
+	end := strings.IndexByte(rest, '_')
+	if end <= 0 {
+		return ""
+	}
+	version := rest[:end]
+	for _, r := range version {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return version
 }
 
 // baselineMigrations отмечает миграции как применённые, не выполняя их.
