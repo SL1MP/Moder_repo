@@ -148,6 +148,14 @@ services:
     image: moderation-backend-go:local
     command: ["migrate"]
     env_file: [.env]
+    # Те же тома, что у api-go. Нужны не миграциям, а служебным командам,
+    # которые запускают через этот же сервис: bootstrap читает справочник
+    # лицензий из /config, maintenance --osv-sync распаковывает снапшот.
+    # Без них bootstrap сообщал, что /config/licenses.yml не найден, — и это
+    # выглядело как потерянный файл, а не как несмонтированный том.
+    volumes:
+      - ./config:/config:ro
+      - osv-db:/var/lib/osv-db
     environment:
       <<: *proxy-env
       DATABASE_URL: postgres://${POSTGRES_USER:-moderation}:${POSTGRES_PASSWORD:-moderation}@db:5432/${POSTGRES_DB:-moderation}

@@ -213,7 +213,7 @@ func checkRepositories(env *bootstrapEnv) bool {
 	targets = append(targets, managers...)
 
 	fmt.Printf("Репозитории артефактори (%s, %s):\n", store.Kind(), env.cfg.ArtifactBaseURL)
-	ok := true
+	ok, unknown := true, 0
 	seen := make(map[string]bool, len(targets))
 	for _, t := range targets {
 		if t.name == "" || seen[t.name] {
@@ -225,8 +225,16 @@ func checkRepositories(env *bootstrapEnv) bool {
 		cancel()
 		switch {
 		case err != nil:
-			fmt.Printf("  %-24s %-24s ОШИБКА: %v\n", t.name, "("+t.role+")", err)
-			ok = false
+			// Не «ошибка», а «не удалось проверить». Проверка — это HEAD по
+			// корню репозитория, и отвечают на него по-разному: Nexus на
+			// raw-репозиторий возвращает 400, потому что обхода каталога у
+			// этого формата нет. Репозиторий при этом существует и работает.
+			//
+			// Называть такое отсутствием нельзя: человек пойдёт заводить
+			// репозиторий, который уже заведён, и получит ошибку с другой
+			// стороны.
+			fmt.Printf("  %-24s %-24s проверить не удалось: %v\n", t.name, "("+t.role+")", err)
+			unknown++
 		case file == nil:
 			fmt.Printf("  %-24s %-24s НЕ НАЙДЕН — заведите его в артефактори\n", t.name, "("+t.role+")")
 			ok = false
@@ -235,7 +243,12 @@ func checkRepositories(env *bootstrapEnv) bool {
 		}
 	}
 	if !ok {
-		fmt.Fprintln(os.Stderr, "Часть репозиториев недоступна: пакеты в них не опубликуются.")
+		fmt.Fprintln(os.Stderr, "Часть репозиториев не найдена: пакеты в них не опубликуются.")
+	}
+	if unknown > 0 {
+		fmt.Fprintf(os.Stderr, "Про %d репозиториев проверка ничего не говорит — она делает HEAD по "+
+			"корню, а некоторые форматы (raw в Nexus) на него отвечают 400. "+
+			"Проверьте их в интерфейсе артефактори.\n", unknown)
 	}
 	return ok
 }
