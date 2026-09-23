@@ -37,7 +37,7 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := newLogger(os.Getenv)
 
 	// Подкоманды. Без аргументов — HTTP-сервер (поведение по умолчанию не
 	// меняется: так сервис запускается из docker-compose).

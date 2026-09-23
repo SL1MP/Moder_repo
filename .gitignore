@@ -42,3 +42,5 @@ keycloak/certs/*
 
 # собранный бинарник go-сервиса (`go build ./cmd/moderation`)
 /backend-go/moderation
+# конфигурации конкретных стендов (адреса, пароли) — в репозиторий не попадают
+.env.stand-*
