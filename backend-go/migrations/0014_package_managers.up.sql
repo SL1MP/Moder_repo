@@ -23,6 +23,10 @@
 -- нового менеджера — см. ту же историю в 0010 и 0013.
 ALTER TABLE package DROP CONSTRAINT IF EXISTS package_manager_check;
 ALTER TABLE package DROP CONSTRAINT IF EXISTS ck_package_manager;
+-- Имя из alembic-набора (NAMING_CONVENTION): именно оно стоит на схеме,
+-- созданной python-версией. Снимать надо оба — иначе старое запрещающее
+-- ограничение остаётся рядом с новым разрешающим, и запись отвергается по нему.
+ALTER TABLE package DROP CONSTRAINT IF EXISTS ck_package_manager_code;
 ALTER TABLE package ADD CONSTRAINT package_manager_check CHECK (manager IN (
     'pypi', 'npm', 'go', 'nuget',
     'conan', 'docker', 'luarocks', 'maven', 'php', 'terraform',
@@ -31,6 +35,7 @@ ALTER TABLE package ADD CONSTRAINT package_manager_check CHECK (manager IN (
 
 ALTER TABLE moderation_request DROP CONSTRAINT IF EXISTS moderation_request_manager_check;
 ALTER TABLE moderation_request DROP CONSTRAINT IF EXISTS ck_moderation_request_manager;
+ALTER TABLE moderation_request DROP CONSTRAINT IF EXISTS ck_moderation_request_manager_code;
 ALTER TABLE moderation_request ADD CONSTRAINT moderation_request_manager_check CHECK (manager IN (
     'pypi', 'npm', 'go', 'nuget',
     'conan', 'docker', 'luarocks', 'maven', 'php', 'terraform',
@@ -39,6 +44,7 @@ ALTER TABLE moderation_request ADD CONSTRAINT moderation_request_manager_check C
 
 ALTER TABLE package_manager DROP CONSTRAINT IF EXISTS package_manager_code_check;
 ALTER TABLE package_manager DROP CONSTRAINT IF EXISTS ck_package_manager_code;
+ALTER TABLE package_manager DROP CONSTRAINT IF EXISTS ck_package_manager_manager_code;
 ALTER TABLE package_manager ADD CONSTRAINT package_manager_code_check CHECK (code IN (
     'pypi', 'npm', 'go', 'nuget',
     'conan', 'docker', 'luarocks', 'maven', 'php', 'terraform',

@@ -40,10 +40,16 @@ _PROTOTYPE = "'pypi', 'npm', 'go', 'nuget'"
 def _drop_all_names() -> None:
     """Снимает ограничения, как бы их ни назвал создавший базу набор миграций."""
     op.execute("ALTER TABLE package DROP CONSTRAINT IF EXISTS ck_package_manager")
+    # Настоящее имя из NAMING_CONVENTION (см. app/db/base.py). Без него старое
+    # запрещающее ограничение остаётся рядом с новым разрешающим, и запись
+    # отвергается по нему, хотя миграция прошла успешно.
+    op.execute("ALTER TABLE package DROP CONSTRAINT IF EXISTS ck_package_manager_code")
     op.execute("ALTER TABLE package DROP CONSTRAINT IF EXISTS package_manager_check")
     op.execute("ALTER TABLE moderation_request DROP CONSTRAINT IF EXISTS ck_moderation_request_manager")
+    op.execute("ALTER TABLE moderation_request DROP CONSTRAINT IF EXISTS ck_moderation_request_manager_code")
     op.execute("ALTER TABLE moderation_request DROP CONSTRAINT IF EXISTS moderation_request_manager_check")
     op.execute("ALTER TABLE package_manager DROP CONSTRAINT IF EXISTS ck_package_manager_code")
+    op.execute("ALTER TABLE package_manager DROP CONSTRAINT IF EXISTS ck_package_manager_manager_code")
     op.execute("ALTER TABLE package_manager DROP CONSTRAINT IF EXISTS package_manager_code_check")
 
 
