@@ -18,7 +18,7 @@
 | ~6 ГБ диска | образы + снапшот OSV | `df -h .` |
 | Выход в интернет | образы, пакеты из реестров, снапшот OSV | — |
 
-Порты, которые займёт стенд: `8080` (UI), `8443` (HTTPS), `9000/9001` (MinIO),
+Порты, которые займёт стенд: `8080` (UI), `8443` (HTTPS), `5432` (Postgres),
 `8081` (Keycloak, профиль `sso`), `8082` (Nexus, профиль `nexus`).
 
 ---
@@ -42,8 +42,8 @@ LOCAL_AUTH_SECRET=любая-длинная-строка-для-подписи-�
 ARTIFACT_DRY_RUN=true
 ```
 
-Остальное можно не трогать: адреса БД, MinIO и реестров в примере уже указаны
-на локальные контейнеры. `HTTP_PROXY`/`HTTPS_PROXY` заполняйте, только если
+Остальное можно не трогать: адреса БД и реестров в примере уже указаны на
+локальные контейнеры. `HTTP_PROXY`/`HTTPS_PROXY` заполняйте, только если
 интернет у вас через прокси, — и обязательно **со схемой**
 (`http://proxy:3128`).
 
@@ -52,9 +52,16 @@ ARTIFACT_DRY_RUN=true
 ## 3. Запуск
 
 ```bash
-make up             # соберёт образы и поднимет всё: nginx, SPA, api, api-go,
-                    # worker-go, python-воркер, Postgres, Redis, MinIO
-make migrate        # схема базы (Alembic: 0001…0006)
+make up             # соберёт образы и поднимет всё: nginx, SPA, api-go,
+                    # worker-go, migrate-go, Postgres
+```
+
+Миграции накатывает сервис `migrate-go` — отдельной разовой задачей при старте
+стека, до того как поднимется `api-go`. Отдельно звать его нужно только после
+обновления кода:
+
+```bash
+docker compose run --rm migrate-go
 ```
 
 Проверьте, что схема совпала с кодом, — это единственный шаг, где можно
@@ -65,20 +72,19 @@ docker compose run --rm api-go schema
 # Схема базы согласована с кодом: пробелов нет.
 ```
 
-Если команда назовёт пробелы — накатите указанные ею миграции; go-набор
-безопасно повторяем, можно накатить весь:
+Если команда назовёт пробелы — накатите миграции ещё раз, набор безопасно
+повторяем:
 
 ```bash
-for f in backend-go/migrations/00*.up.sql; do
-  docker compose exec -T db psql -U moderation -d moderation -v ON_ERROR_STOP=1 < "$f"
-done
+docker compose run --rm migrate-go
+docker compose run --rm api-go migrate --status   # что применено, чего нет
 ```
 
-Дальше — справочники, бакет MinIO и учётные записи:
+Дальше — справочники, проверка репозиториев артефактори и учётные записи:
 
 ```bash
 # демо-данные + учётки с паролем (только для локального стенда!)
-docker compose run --rm api bootstrap --demo --service-password 'локальный-пароль'
+docker compose run --rm api-go bootstrap --demo --service-password 'локальный-пароль'
 ```
 
 Учётки создаются четыре — по одной на роль:
@@ -166,7 +172,7 @@ docker compose logs -f nginx api web
 | Кнопки входа нет | `LOCAL_AUTH_ENABLED=false` в `.env` (после правки — `make restart`) |
 | Шаг публикации падает | `ARTIFACT_DRY_RUN=false` без поднятого Nexus (`make up-all` поднимает и его) |
 | Каждый пакет уходит к DevSecOps | нет снапшота OSV: положите локально (шаг 4) или дайте воркеру забрать его из артефактори (`docker compose run --rm worker-go maintenance --osv-sync`) |
-| `pull access denied for minio/minio` при `make up`/`make up-all` | образ MinIO на Docker Hub закрыт — см. ниже |
+| Шаг «Скачивание» или «Публикация» падает на записи в артефактори | не заведены репозитории — см. ниже |
 | «Не удалось получить конфигурацию OIDC-издателя» на странице входа | Keycloak не поднят или ещё стартует — см. ниже |
 | Шаг «Выгрузка в артефактори» падает с 405 | `ARTIFACT_STORE` не соответствует артефактори — см. ниже |
 | Пакет вечно «в карантине», хотя дата прошла | не поднят `worker-go` — снятие карантина делает он (`docker compose run --rm worker-go maintenance`) |
@@ -237,102 +243,31 @@ docker compose run --rm api bootstrap --demo --service-password 'пароль'
 `dev.ivanov` (автор заявок), `sec.petrov` (DevSecOps), `legal.sidorova`
 (юрист), `admin` — пароль общий, тот, что задали в `--service-password`.
 
-### Образ MinIO не скачивается
+### Репозитории артефактори не заведены
 
-```
-Error response from daemon: pull access denied for minio/minio,
-repository does not exist or may require 'docker login'
-```
+Сервису нужны отдельные репозитории: временный (`ARTIFACT_REPO_STAGING`, по
+умолчанию `moderation-staging`), для отчётов (`ARTIFACT_REPO_REPORTS`,
+`moderation-reports`), по одному на каждый пакетный менеджер
+(`ARTIFACT_REPO_PYPI` и так далее, по умолчанию `{менеджер}-internal`) и для
+снапшота OSV (`ARTIFACT_REPO_OSV`).
 
-Это не про вашу машину и не про `docker login`: репозиторий `minio/minio` на
-Docker Hub больше не отдаётся анонимно. Проверяется в одну команду — Hub при
-этом работает:
-
-```bash
-docker pull postgres:16      # тянется
-docker pull minio/minio      # pull access denied
-```
-
-Рабочий путь — тот же MinIO из собственного реестра компании MinIO. Сначала
-убедитесь, что он тянется у вас, и только потом прописывайте в `.env`:
+Проверить разом, какие есть, а каких нет:
 
 ```bash
-docker pull quay.io/minio/minio:latest
-echo 'MINIO_IMAGE=quay.io/minio/minio:latest' >> .env
-make up
+docker compose run --rm api-go bootstrap --demo=false
 ```
 
-Подойдёт и внутреннее зеркало образов, если оно у вас есть: сервису всё равно,
-откуда приехал контейнер, лишь бы это был MinIO — команда запуска в
-`docker-compose.yml` именно его (`server /data --console-address :9001`).
+Вывод перечисляет каждый репозиторий и его состояние — `есть`, `НЕ НАЙДЕН` или
+ошибку с кодом ответа. Заводить репозитории сервис не умеет намеренно: его
+токен в промышленном контуре прав на это не имеет и иметь не должен.
 
-**Если MinIO недоступен совсем**, возьмите другое S3-совместимое хранилище:
-в репозитории лежит готовый оверлей на SeaweedFS, образ которого тянется с
-Docker Hub без авторизации:
+Отдельного объектного хранилища (S3, MinIO) сервису больше не нужно — всё
+лежит в артефактори. Если вы видите в старых инструкциях `S3_*`, `minio` или
+оверлеи `docker-compose.seaweedfs.yml` / `docker-compose.external-s3.yml` —
+это про прошлую версию, их больше нет.
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.seaweedfs.yml up -d
-```
-
-Ничего больше менять не нужно: сервис в оверлее называется так же (`minio`),
-поэтому `S3_ENDPOINT=http://minio:9000` из `.env` остаётся верным, ключи
-берутся из тех же `S3_ACCESS_KEY`/`S3_SECRET_KEY`, данные — в том же томе.
-
-Проверять замену хранилища «на глаз» не нужно: в проекте есть тест, который
-гоняет полный круг клиента по настоящему хранилищу — создание бакета, запись,
-чтение, HEAD, список, удаление:
-
-```bash
-cd backend-go
-MODERATION_TEST_S3_ENDPOINT=http://localhost:9000 MODERATION_TEST_S3_ACCESS_KEY=... MODERATION_TEST_S3_SECRET_KEY=...   go test ./internal/storage/ -run TestLiveS3RoundTrip -v
-```
-
-Заменять MinIO на Valkey (или Redis) нельзя: это key-value в памяти, у него
-нет ни S3-протокола, ни файлов — сервис кладёт туда артефакты до 500 МБ и
-отчёты. Valkey в планах проекта был, но как брокер очереди, а не хранилище; и
-очередь в go-версии живёт в Postgres, так что он не нужен и там.
-
-### Своё (в том числе сертифицированное) хранилище
-
-Если хранилище у вас своё — сертифицированное объектное хранилище компании,
-внутренний Ceph RGW, что угодно с S3 API, — контейнер рядом не нужен вовсе:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.external-s3.yml up -d
-```
-
-Требования сервиса к хранилищу ровно такие (ничего сверх базового S3):
-
-| Что нужно | Зачем |
-| --- | --- |
-| Подпись **AWS SigV4** по ключу/секрету | другой аутентификации клиент не умеет |
-| `PUT` / `GET` / `HEAD` / `DELETE` объекта | артефакт и отчёты |
-| `GET` списка объектов по префиксу (list-objects v2) | выдача отчётов по пакету |
-| `HEAD`/`PUT` бакета **или** заранее созданный бакет | `bootstrap` создаёт бакет, если дают |
-| Ключи с `/` и не-ASCII | ключ вида `pypi/пакет/1.0.0/файл.whl` |
-
-Адресация настраивается: по умолчанию path-style (`endpoint/bucket/key`, так
-работают MinIO и SeaweedFS), для хранилищ, которым нужен virtual-host
-(`bucket.endpoint/key`), — `S3_VIRTUAL_HOST=true`.
-
-HTTPS с корпоративным удостоверяющим центром: положите корневой сертификат в
-контейнеры и укажите `SSL_CERT_FILE` — и Go, и Python берут корень доверия
-оттуда. Отключения проверки сертификата в сервисе нет намеренно.
-
-Проверять совместимость на глаз не нужно — есть тест, который гоняет по
-настоящему хранилищу полный круг (создание бакета, запись, чтение, HEAD,
-список, удаление):
-
-```bash
-cd backend-go
-MODERATION_TEST_S3_ENDPOINT=https://s3.example.ru MODERATION_TEST_S3_ACCESS_KEY=... MODERATION_TEST_S3_SECRET_KEY=... MODERATION_TEST_S3_BUCKET=moderation-artifacts   go test ./internal/storage/ -run TestLiveS3RoundTrip -v
-```
-
-Зелёный тест означает, что хранилище подходит; красный покажет, на какой
-именно операции оно расходится с клиентом.
-
-Остальные образы стенда (`postgres:16`, `redis:7`, `sonatype/nexus3`) с Docker
-Hub тянутся анонимно — если не тянется вообще ничего, дело в сети или в
+Остальные образы стенда (`postgres:16`, `sonatype/nexus3`) с Docker Hub
+тянутся анонимно — если не тянется вообще ничего, дело в сети или в
 корпоративном зеркале, а не в конкретном образе.
 
 ---
@@ -354,5 +289,5 @@ make bootstrap   # дождётся Nexus, создаст репозитории
 
 ```bash
 make down                       # остановить
-docker compose down -v          # остановить и удалить данные (БД, MinIO, снапшот OSV)
+docker compose down -v          # остановить и удалить данные (БД, снапшот OSV)
 ```

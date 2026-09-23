@@ -27,7 +27,7 @@
 
 1. **Юнит** — `*_test.go` рядом с кодом, без внешних зависимостей.
 2. **Интеграционные** — тот же `go test ./... -p 1 -count=1`, но против **реального**
-   Postgres/SeaweedFS (`docker compose up -d postgres seaweedfs`), не моков — используют
+   Postgres (`docker compose up -d db`), не моков — используют
    `internal/testutil` (`pg_lock.go`, `counting_server.go`).
 3. **E2E** — отдельный build tag (`//go:build e2e`), исключён из обычного `go test ./...`,
    гоняется отдельной командой (`go test -tags=e2e ./e2e/...`) против **реально собранного и

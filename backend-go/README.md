@@ -28,7 +28,7 @@ Go-версия backend'а сервиса модерации пакетов — 
 | `internal/scanners` | YARA (баннеры) и semgrep (SAST) через внешние CLI |
 | `internal/osv` | компараторы версий, диапазоны OSV, CVSS v3, локальный снапшот |
 | `internal/artifactstore` | Nexus 3 (компонентный API) и Artifactory (PUT), режим dry-run |
-| `internal/storage` | S3-совместимое хранилище (SigV4 на stdlib) + in-memory |
+| `internal/storage` | промежуточная зона и отчёты в артефактори + in-memory |
 | `internal/reports` | отчёты о сканировании: JSON и самодостаточный HTML |
 | `internal/policy` | blacklist и справочник лицензий из файлов |
 | `internal/pipeline` | девять шагов, блокировки, runner |
@@ -233,22 +233,21 @@ SELECT package_version_id, filename, count(*)
 FROM artifact GROUP BY 1,2 HAVING count(*) > 1;
 ```
 
-**4. Запуск.** Значения берутся из `.env` Python-стека; внутридокерные имена
-(`db`, `minio`) заменяются на `127.0.0.1`.
+**4. Запуск.** Значения берутся из `.env`; внутридокерное имя `db` заменяется
+на `127.0.0.1`.
 
 ```bash
 DATABASE_URL='postgres://moderation:ПАРОЛЬ@127.0.0.1:5432/moderation' \
 LISTEN_ADDR='127.0.0.1:8010' \
-S3_ENDPOINT='http://127.0.0.1:9000' \
-S3_BUCKET='packages' \
-S3_ACCESS_KEY='minioadmin' \
-S3_SECRET_KEY='minioadmin' \
+ARTIFACT_BASE_URL='https://artifactory.example.ru/artifactory' \
+ARTIFACT_STORE='generic' \
+ARTIFACT_TOKEN='...' \
 ./moderation
 ```
 
 Обязателен только `DATABASE_URL`. Остальное — значения по умолчанию
-(`LISTEN_ADDR` = `:8000`, `S3_BUCKET` = `moderation-artifacts`,
-`S3_REGION` = `us-east-1`).
+(`LISTEN_ADDR` = `:8000`, `ARTIFACT_REPO_STAGING` = `moderation-staging`,
+`ARTIFACT_REPO_REPORTS` = `moderation-reports`).
 
 Почему именно так:
 
@@ -258,10 +257,10 @@ S3_SECRET_KEY='minioadmin' \
 - **`LISTEN_ADDR='127.0.0.1:8010'`, а не `:8010`** — у сервиса НЕТ
   аутентификации, а отчёты содержат выдержки из проверяемых пакетов. На
   машине, смотрящей в интернет, слушать на всех интерфейсах нельзя. Порт
-  8010, потому что 8000 занят контейнером `api`.
-- **Без `S3_ENDPOINT`** сервис поднимется, но маршруты отчётов не подключатся
-  (в логе `WARN`, запрос к ним даст 404). Падать на старте из-за недоступного
-  хранилища нельзя — `health` должен отвечать.
+  8010, потому что 8000 занят контейнером `api-go`.
+- **Без `ARTIFACT_BASE_URL`** сервис поднимется, но маршруты отчётов не
+  подключатся (в логе `WARN`, запрос к ним даст 404). Падать на старте из-за
+  недоступного хранилища нельзя — `health` должен отвечать.
 
 **5. Проверка.**
 
@@ -274,8 +273,10 @@ curl http://127.0.0.1:8010/api/v1/request-items/1/reports
 
 Последний вернёт `{"reports":[],"request_item_id":1}` — маршрут подключён.
 
-В логе при старте должно быть `хранилище отчётов подключено`. Если там
-`S3_ENDPOINT не задан` — переменные не доехали.
+В логе при старте должно быть `хранилище отчётов подключено` с адресом
+артефактори и именем репозитория. Если там `хранилище отчётов недоступно` —
+смотрите в той же строке `error`: переменные не доехали либо репозиторий не
+заведён.
 
 **6. Доступ с рабочей машины** — пробросом порта, а не открытием наружу:
 

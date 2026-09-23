@@ -18,13 +18,13 @@ Actor → nginx → Web UI
                       │                                            ↓
                       │        1. Blacklist → 2. Карантин → 3. Лицензия → 4. Скачивание
                       │                                            ↓ (Network, HTTP_PROXY)
-                      │                                     S3 (MinIO)
+                      │                            Временный репозиторий артефактори
                       │                                            ↓
                       │                              Проверка на уязвимости (osv-scanner)
                       │                                            ↓
-                      │                      Политические баннеры (YARA) + SAST (semgrep)
+                      │                                  Песочница (вердикт + отчёт)
                       │                                            ↓
-                      │                                    Выгрузка пакета → Nexus
+                      │                   Публикация: перенос в репозиторий менеджера
                       └── Настройка → .env
 ```
 
@@ -53,14 +53,14 @@ make up-all
 # либо: свой сервис + внешние Nexus/Keycloak заказчика (адреса из .env)
 make up
 
-make bootstrap            # миграции, справочники, бакет MinIO, репозитории Nexus, демо-данные
-make logs                 # логи api, worker, beat
+make bootstrap            # справочники, проверка репозиториев артефактори, демо-данные
+make logs                 # логи api-go и worker-go
 
 docker compose run --rm api-go schema   # схема базы против кода: чего не хватает
 ```
 
 Для входа логином/паролем (без Keycloak) учётки заводятся с паролем:
-`docker compose run --rm api bootstrap --demo --service-password '<пароль>'`.
+`docker compose run --rm api-go bootstrap --demo --service-password '<пароль>'`.
 
 После старта:
 
@@ -71,7 +71,6 @@ docker compose run --rm api-go schema   # схема базы против ко�
 | Healthcheck | http://localhost:8080/health |
 | Метрики Prometheus | http://localhost:8080/metrics |
 | Keycloak (профиль `sso`) | http://localhost:8081 |
-| MinIO Console (dev) | http://localhost:9001 |
 | Nexus (профиль `nexus`) | http://localhost:8082 |
 
 Демо-учётные записи Keycloak (realm `moderation`): `dev.ivanov/dev`, `sec.petrov/sec`,
@@ -108,8 +107,10 @@ OIDC_PUBLIC_ISSUER=https://<ваш-хост>/realms/moderation   # без пор
 
 ### Остановка и повторный запуск
 
-`bootstrap` нужен **только один раз**: база, артефакты Nexus и объекты MinIO лежат в
-именованных volume'ах (`pgdata`, `nexus-data`, `minio-data`) и переживают остановку.
+`bootstrap` нужен **только один раз**: база и артефакты Nexus лежат в именованных
+volume'ах (`pgdata`, `nexus-data`) и переживают остановку. Скачанные пакеты
+хранятся не рядом, а в самом артефактори — во временном репозитории до конца
+проверок и в репозитории своего менеджера после.
 
 ```bash
 make down                 # остановить (данные остаются)
@@ -131,7 +132,7 @@ make ps                   # убедиться, что всё Up
   Обнаружено и подтверждено локальной проверкой (см. `CHANGELOG.md`, "Проверено локально").
 * После правок `.env` или `config/` — `make restart` (это `up -d`, а не `docker compose
   restart`: переменные из `env_file` фиксируются при создании контейнера).
-* `make clean` — это `down -v`: удаляет volume'ы вместе с базой, Nexus и MinIO.
+* `make clean` — это `down -v`: удаляет volume'ы вместе с базой и Nexus.
   После него `make bootstrap` обязателен.
 
 ### Развёртывание на хосте, доступном по имени
@@ -294,8 +295,9 @@ curl -sS -X POST http://localhost:8080/api/v1/requests \
 | --- | --- | --- |
 | Политики | `QUARANTINE_DAYS`, `VULN_MAX_SCORE`, `BLACKLIST_FILE`, `ALLOWED_LICENSES_FILE` | сроки карантина, порог уязвимости 0..100, файлы правил |
 | Реестры и сеть | `REGISTRY_*`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | откуда качаем и через какой прокси |
-| Временное хранилище | `S3_*` | MinIO как карантинная зона (не архив) |
 | Артефактори | `ARTIFACT_STORE`, `ARTIFACT_BASE_URL`, `ARTIFACT_REPO_*` | куда публикуем; один инстанс на все менеджеры |
+| Временная зона | `ARTIFACT_REPO_STAGING`, `ARTIFACT_REPO_REPORTS` | где пакет лежит, пока идут проверки, и где живут отчёты |
+| Песочница | `SANDBOX_URL`, `SANDBOX_TOKEN`, `SANDBOX_PRIORITY` | динамическая проверка архива, шаг `sandbox_scan` |
 | Уязвимости | `OSV_SOURCE`, `OSV_SNAPSHOT_PATH`, `OSV_SYNC_CRON`, `OSV_MAX_STALENESS_DAYS` | локальный снапшот OSV, без сети к osv.dev |
 | Доступ | `OIDC_*`, `ROLE_MAPPING_*`, `LOCAL_AUTH_ENABLED` | SSO и маппинг групп каталога в роли |
 | GitLab | `GITLAB_*`, `FERNET_KEY` | чтение файлов зависимостей, шифрование токенов |
@@ -307,18 +309,18 @@ curl -sS -X POST http://localhost:8080/api/v1/requests \
 ### Прокси
 
 Весь исходящий трафик наружу идёт через корпоративный прокси: `HTTP_PROXY`, `HTTPS_PROXY`,
-`NO_PROXY` пробрасываются в `api`, `worker`, `beat`. Клиенты реестров используют эти значения
-**явно** (см. `app/core/http.py`), а не полагаются на неявное поведение библиотеки. Внутренние
-адреса (`db`, `redis`, `minio`, `nexus`, `keycloak`) обязательно перечислены в `NO_PROXY`.
+`NO_PROXY` пробрасываются в `api-go` и `worker-go`. Внутренние адреса (`db`, `nexus`,
+`keycloak`) обязательно перечислены в `NO_PROXY`.
 
 ## Профили docker compose
 
 | Команда | Что поднимается |
 | --- | --- |
-| `docker compose up -d` | сервис + db, redis, minio (Nexus и Keycloak — внешние, из `.env`) |
+| `docker compose up -d` | сервис (`api-go`, `worker-go`, `migrate-go`) + db (Nexus и Keycloak — внешние, из `.env`) |
 | `docker compose --profile nexus up -d` | плюс собственный Sonatype Nexus |
 | `docker compose --profile sso up -d` | плюс собственный Keycloak с готовым realm |
 | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` | прод: healthcheck'и, `restart: unless-stopped`, без hot reload |
+| `docker compose --profile python up -d` | плюс погашенная python-версия (`api`, `worker`, `beat`, `redis`) — только для отката |
 
 `docker-compose.override.yml` подхватывается автоматически и включает dev-режим: hot reload и порты
 наружу. В проде он не используется (см. команду выше).

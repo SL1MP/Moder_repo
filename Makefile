@@ -4,9 +4,9 @@ PROD := -f docker-compose.yml -f docker-compose.prod.yml
 PROFILES ?= --profile nexus --profile sso
 
 .DEFAULT_GOAL := help
-.PHONY: help env up up-all down restart logs ps build bootstrap migrate revision go-worker py-worker \
-        test test-fast lint fmt shell cli sync-osv rescan reload import-list run-pending \
-        queue-status queue-doctor api-smoke certs wait-nexus check-dockerfiles sql \
+.PHONY: help env up up-all down restart logs ps build bootstrap migrate migrate-status schema \
+        test lint fmt shell cli sync-osv rescan quarantine import-list run-pending \
+        service-account api-smoke certs wait-nexus check-dockerfiles \
         prod-up prod-down clean
 
 help: ## Список команд
@@ -27,30 +27,13 @@ up-all: env ## Поднять сервис вместе с Nexus и Keycloak (п
 down: ## Остановить сервис
 	$(COMPOSE) $(PROFILES) down
 
-restart: ## Применить правки .env и config/ (пересоздаёт api/api-go/worker/beat)
+restart: ## Применить правки .env и config/ (пересоздаёт api-go и worker-go)
 	# Именно up -d, а не restart: переменные из env_file фиксируются при создании
 	# контейнера, поэтому `docker compose restart` правки .env НЕ подхватывает.
-	# api-go здесь обязателен: он читает тот же .env (OIDC_*, LOCAL_AUTH_*,
-	# SCAN_*), и без пересоздания правки доступа применятся только к python-версии.
-	$(COMPOSE) up -d api api-go worker beat
+	$(COMPOSE) up -d api-go worker-go
 
-logs: ## Логи api, api-go, worker-go, worker и beat
-	$(COMPOSE) logs -f api api-go worker-go worker beat
-
-go-worker: ## Оставить обработку конвейера только go-воркеру (останавливает python-воркер)
-	# go-воркер поднимается вместе со всем остальным и обязателен: заявки
-	# создаёт go-версия, а её постановку в очередь (request_item + pg_notify)
-	# Celery не слышит. Эта цель — только про то, чтобы убрать python-воркер,
-	# когда весь конвейер уже ведёт go-версия.
-	$(COMPOSE) stop worker beat
-	$(COMPOSE) up -d --build worker-go
-	@echo "Конвейер ведёт go-воркер. Логи: docker compose logs -f worker-go"
-
-py-worker: ## Вернуть python-воркер (заявки из маршрутов GitLab идут через него)
-	# go-воркер НЕ останавливаем: без него пакеты, созданные go-версией,
-	# будут ждать сторожа в процессе api-go вместо обработки сразу.
-	$(COMPOSE) up -d worker beat
-	@echo "Подняты оба воркера: go-версия разбирает свою очередь, python — задачи Celery."
+logs: ## Логи api-go и worker-go
+	$(COMPOSE) logs -f api-go worker-go
 
 ps: ## Состояние контейнеров
 	$(COMPOSE) $(PROFILES) ps
@@ -58,23 +41,21 @@ ps: ## Состояние контейнеров
 build: ## Пересобрать образы
 	$(COMPOSE) build
 
-migrate: ## Применить миграции Alembic
-	$(COMPOSE) run --rm api migrate
+migrate: ## Применить миграции
+	$(COMPOSE) run --rm migrate-go
 
-sql: ## Показать SQL миграций без применения: make sql [FROM=base TO=head]
-	@# Рендер офлайн, база не нужна. Ловит ошибки уровня SQL — например,
-	@# удвоенный префикс в имени ограничения, на котором миграция уже падала.
-	$(COMPOSE) run --rm --entrypoint alembic api upgrade $(or $(FROM),base):$(or $(TO),head) --sql
+migrate-status: ## Что применено, а что нет
+	$(COMPOSE) run --rm api-go migrate --status
 
-revision: ## Новая миграция: make revision M="описание"
-	$(COMPOSE) run --rm api cli --help >/dev/null
-	$(COMPOSE) run --rm --entrypoint alembic api revision --autogenerate -m "$(M)"
+schema: ## Сверить схему базы с тем, что пишет код
+	$(COMPOSE) run --rm api-go schema
 
-bootstrap: ## Миграции, realm Keycloak, бакеты MinIO, репозитории Nexus, демо-данные
-	@# Nexus готов через 1-3 минуты после старта. Без ожидания bootstrap падал
-	@# на создании репозиториев, и его приходилось запускать повторно.
+bootstrap: ## Справочники, проверка репозиториев артефактори, демо-данные
+	@# Nexus готов через 1-3 минуты после старта. Без ожидания проверка
+	@# репозиториев показывала бы их отсутствующими.
 	@$(MAKE) --no-print-directory wait-nexus
-	$(COMPOSE) run --rm api bootstrap --demo
+	$(COMPOSE) run --rm migrate-go
+	$(COMPOSE) run --rm api-go bootstrap --demo
 	@bash scripts/bootstrap_keycloak.sh || echo "Keycloak: realm импортируется контейнером при старте (профиль sso)"
 	@echo "bootstrap завершён"
 
@@ -95,46 +76,41 @@ wait-nexus: ## Дождаться готовности Nexus (используе
 	@COMPOSE="$(COMPOSE)" bash scripts/wait-nexus.sh
 
 import-list: ## Импорт package_list.txt: make import-list FILE=./package_list.txt MANAGER=pypi
-	$(COMPOSE) run --rm -v "$(abspath $(FILE)):/tmp/list.txt:ro" api \
-	  cli import-package-list /tmp/list.txt --manager $(MANAGER) --origin "$(FILE)"
+	$(COMPOSE) run --rm -v "$(abspath $(FILE)):/tmp/list.txt:ro" api-go \
+	  import-packages /tmp/list.txt --manager $(MANAGER) --origin "$(FILE)"
 
-sync-osv: ## Загрузить снапшот базы OSV из артефактори
-	$(COMPOSE) run --rm api cli sync-osv
+sync-osv: ## Загрузить снапшот базы OSV
+	$(COMPOSE) run --rm worker-go maintenance --osv-sync
 
 rescan: ## Перепроверить одобренные пакеты по текущему снапшоту
-	$(COMPOSE) run --rm api cli rescan
+	$(COMPOSE) run --rm worker-go maintenance --rescan
 
-reload: ## Перечитать blacklist и справочник лицензий
-	$(COMPOSE) run --rm api cli reload-policies
+quarantine: ## Снять истёкший карантин
+	$(COMPOSE) run --rm worker-go maintenance --quarantine
 
-run-pending: ## Прогнать застрявшие в очереди пакеты синхронно, не дожидаясь сторожа
-	$(COMPOSE) run --rm api cli run-pending
+run-pending: ## Разобрать очередь синхронно, не дожидаясь сторожа
+	$(COMPOSE) run --rm worker-go worker --once
 
-queue-status: ## Кто разбирает очередь: жив ли worker, сколько пакетов зависло
-	$(COMPOSE) run --rm api cli queue-status
-
-queue-doctor: ## Разбор одной командой: почему пакеты стоят в очереди (вывод слать целиком)
-	@# Ненулевой код возврата — это «нашлась проблема», а не сбой команды:
-	@# в make он выглядел бы как `*** Error 1` поверх нормального отчёта.
-	@$(COMPOSE) run --rm api cli queue-doctor || true
+service-account: ## Сервисная учётка для CI: make service-account USER=ci.gitlab ROLES=developer
+	@# Пароль — через MODERATION_SERVICE_PASSWORD или стандартный ввод: значение
+	@# флага видно в `ps` любому пользователю машины.
+	$(COMPOSE) run --rm -e MODERATION_SERVICE_PASSWORD api-go \
+	  service-account $(USER) --roles $(or $(ROLES),developer)
 
 api-smoke: ## Прогон REST API: make api-smoke SVC_USER=ci-bot SVC_PASSWORD=... [PKG=six==1.16.0]
 	./scripts/api-smoke.sh $(PKG)
 
 cli: ## Произвольная команда CLI: make cli ARGS="--help"
-	$(COMPOSE) run --rm api cli $(ARGS)
+	$(COMPOSE) run --rm api-go $(ARGS)
 
-shell: ## Shell внутри контейнера api
-	$(COMPOSE) run --rm --entrypoint bash api
+shell: ## Shell внутри контейнера api-go
+	$(COMPOSE) run --rm --entrypoint sh api-go
 
-test: ## Тесты с покрытием (порог 70%)
-	$(COMPOSE) run --rm --entrypoint pytest api
-
-test-fast: ## Тесты без покрытия
-	$(COMPOSE) run --rm --entrypoint pytest api -q --no-cov
+test: ## Тесты go-версии (нужен MODERATION_TEST_POSTGRES_DSN — см. docs/testing.md)
+	cd backend-go && go test -p 1 ./...
 
 lint: ## Проверка стиля backend и frontend
-	$(COMPOSE) run --rm --entrypoint ruff api check app tests
+	cd backend-go && gofmt -l . && go vet ./...
 	cd frontend && npm run lint
 	@$(MAKE) --no-print-directory check-dockerfiles
 
@@ -142,7 +118,7 @@ check-dockerfiles: ## Проверить Dockerfile'ы без сборки (ло
 	@python3 scripts/check-dockerfiles.py .
 
 fmt: ## Автоформатирование backend
-	$(COMPOSE) run --rm --entrypoint ruff api check --fix app tests
+	cd backend-go && gofmt -w .
 
 prod-up: ## Поднять в проде
 	$(COMPOSE) $(PROD) up -d --build

@@ -60,6 +60,29 @@ func (r *Repo) SyncUser(ctx context.Context, claims UserClaims, now time.Time) (
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Первый вход одного и того же пользователя сериализуется рекомендательной
+	// блокировкой.
+	//
+	// Без неё два одновременных запроса не видят друг друга: строки ещё нет,
+	// и `SELECT ... FOR UPDATE` внутри findUser блокировать нечего. Оба уходят
+	// в INSERT, и второй падает с нарушением уникальности. ON CONFLICT в
+	// insertUser от этого не спасает: у таблицы ДВА уникальных индекса
+	// (username и subject), а указать в ON CONFLICT можно только один —
+	// Postgres натыкается на `user_subject_key` раньше, чем доходит до
+	// разбора конфликта по логину.
+	//
+	// Именно так это и выглядело: вход изредка отвечал ошибкой, повтор
+	// помогал, воспроизвести руками не получалось. SPA при загрузке дёргает
+	// несколько маршрутов сразу, и первый вход нового сотрудника — как раз
+	// тот случай, когда запросы приходят одновременно.
+	//
+	// Блокировка транзакционная (снимается на commit/rollback сама) и взята по
+	// ключу пользователя, а не на всю таблицу: разные пользователи входят
+	// параллельно, как и раньше.
+	if err := lockUserKey(ctx, tx, claims); err != nil {
+		return nil, err
+	}
+
 	existing, err := findUser(ctx, tx, claims)
 	if err != nil {
 		return nil, err
@@ -89,6 +112,27 @@ type UserClaims struct {
 	FullName  string
 	Roles     []string
 	IsService bool
+}
+
+// lockUserKey берёт рекомендательную блокировку по ключу пользователя.
+//
+// Ключ — subject, а если его нет, логин: именно по ним стоят уникальные
+// индексы. Пространство блокировок общее на всю базу, поэтому к ключу
+// добавлен префикс — иначе он мог бы совпасть с ключом другой подсистемы,
+// и два несвязанных места ждали бы друг друга без всякой причины.
+func lockUserKey(ctx context.Context, tx pgx.Tx, claims UserClaims) error {
+	key := claims.Subject
+	if key == "" {
+		key = claims.Username
+	}
+	if key == "" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "user:sync:"+key); err != nil {
+		return fmt.Errorf("блокировка учётки %q: %w", key, err)
+	}
+	return nil
 }
 
 func findUser(ctx context.Context, tx pgx.Tx, claims UserClaims) (*domain.User, error) {

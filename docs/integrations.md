@@ -122,14 +122,14 @@ GitLab (Profile → Applications → Revoke) тоже сработает — с�
 ## Корпоративный прокси
 
 Весь исходящий трафик наружу (реестры пакетных менеджеров, GitLab, api.osv.dev в dev-режиме) идёт
-через `HTTP_PROXY`/`HTTPS_PROXY`. Внутренние адреса — `db`, `redis`, `minio`, `nexus`, `keycloak`,
+через `HTTP_PROXY`/`HTTPS_PROXY`. Внутренние адреса — `db`, `nexus`, `keycloak`,
 `api`, `web`, `nginx` (и всё, что резолвится внутри docker-сети) — обязательно перечислены в
 `NO_PROXY`, иначе запросы к ним тоже пойдут через прокси и, скорее всего, упадут.
 
 ```bash
 HTTP_PROXY=http://proxy.corp.example.com:3128
 HTTPS_PROXY=http://proxy.corp.example.com:3128
-NO_PROXY=localhost,127.0.0.1,db,redis,minio,nexus,keycloak,api,web,nginx,.internal.example.com
+NO_PROXY=localhost,127.0.0.1,db,nexus,keycloak,api-go,web,nginx,.internal.example.com
 ```
 
 Клиенты реестров используют эти значения **явно**, а не полагаются на переменные окружения

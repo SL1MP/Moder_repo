@@ -176,51 +176,69 @@ func TestSyncUserFindsRenamedAccountBySubject(t *testing.T) {
 
 // SPA при загрузке дёргает несколько закрытых маршрутов сразу, и для нового
 // пользователя они приходят одновременно. Без обработки гонки один из
-// запросов падал бы с нарушением уникальности — вход выглядел бы как
-// случайная ошибка «то работает, то нет».
+// запросов падает с нарушением уникальности — вход выглядит как случайная
+// ошибка «то работает, то нет».
+//
+// Тест повторяет столкновение много раз и с большим числом горутин НЕ ради
+// солидности. В прежнем виде (шесть горутин, один раунд) он ловил поломку
+// примерно раз в двадцать прогонов: этого хватило, чтобы она однажды всплыла
+// в общем прогоне, но не хватило бы, чтобы её найти. Проверено: со снятой
+// блокировкой в SyncUser текущий вариант падает на 10 раундах из 60, прежний
+// не падал ни разу за 15 прогонов подряд.
 func TestSyncUserConcurrentFirstLogin(t *testing.T) {
 	r, closePool := mustPool(t)
 	defer closePool()
 	ctx := context.Background()
-	now := time.Now().UTC()
 
-	username := uniqueName(t)
-	claims := UserClaims{Subject: username + "-sub", Username: username, Roles: []string{"developer"}}
+	// parallel больше числа ядер намеренно: столкновение нужно в момент
+	// ВСТАВКИ, а не в момент планирования горутин.
+	const parallel = 16
+	const rounds = 20
 
-	// Старт по общему сигналу, а не «как запустятся»: без барьера горутины
-	// расходятся во времени, столкновение происходит через раз, и тест
-	// становится тем самым «иногда красным», которому перестают верить.
-	const parallel = 6
-	var ready, wg sync.WaitGroup
-	start := make(chan struct{})
-	ids := make([]int64, parallel)
-	errs := make([]error, parallel)
-	ready.Add(parallel)
-	wg.Add(parallel)
-	for i := 0; i < parallel; i++ {
-		go func(i int) {
-			defer wg.Done()
-			ready.Done()
-			<-start
-			user, err := r.SyncUser(ctx, claims, now)
-			errs[i] = err
-			if user != nil {
-				ids[i] = user.ID
-			}
-		}(i)
-	}
-	ready.Wait()
-	close(start)
-	wg.Wait()
-
-	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("параллельный вход %d: %v", i, err)
+	for round := 0; round < rounds; round++ {
+		username := fmt.Sprintf("%s-%d", uniqueName(t), round)
+		claims := UserClaims{
+			Subject: username + "-sub", Username: username, Roles: []string{"developer"},
 		}
-	}
-	for i, id := range ids {
-		if id != ids[0] {
-			t.Fatalf("все запросы должны получить одну учётку: %d != %d (запрос %d)", id, ids[0], i)
+		now := time.Now().UTC()
+
+		// Старт по общему сигналу, а не «как запустятся»: без барьера горутины
+		// расходятся во времени и в окно вставки не попадают.
+		var ready, wg sync.WaitGroup
+		start := make(chan struct{})
+		ids := make([]int64, parallel)
+		errs := make([]error, parallel)
+		ready.Add(parallel)
+		wg.Add(parallel)
+		for i := 0; i < parallel; i++ {
+			go func(i int) {
+				defer wg.Done()
+				ready.Done()
+				<-start
+				user, err := r.SyncUser(ctx, claims, now)
+				errs[i] = err
+				if user != nil {
+					ids[i] = user.ID
+				}
+			}(i)
+		}
+		ready.Wait()
+		close(start)
+		wg.Wait()
+
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("раунд %d, параллельный вход %d: %v", round, i, err)
+			}
+		}
+		// Одна учётка на всех, а не просто отсутствие ошибки: шесть успешных
+		// запросов, создавших шесть разных строк, — это тоже поломка, просто
+		// тихая.
+		for i, id := range ids {
+			if id != ids[0] {
+				t.Fatalf("раунд %d: все запросы должны получить одну учётку: %d != %d (запрос %d)",
+					round, id, ids[0], i)
+			}
 		}
 	}
 }
