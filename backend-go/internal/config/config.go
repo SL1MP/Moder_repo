@@ -218,8 +218,10 @@ type Config struct {
 	// временное хранилище растёт — и то и другое происходит молча.
 	MaintenanceEnabled      bool
 	QuarantineSweepInterval time.Duration
-	S3CleanupInterval       time.Duration
-	S3OrphanTTL             time.Duration
+	// StagingCleanupInterval и StagingOrphanTTL — как часто убирать
+	// промежуточную зону и через сколько считать файл в ней брошенным.
+	StagingCleanupInterval time.Duration
+	StagingOrphanTTL       time.Duration
 
 	// Окно, в течение которого правка сообщения не помечается как «изменено».
 	CommentEditWindow time.Duration
@@ -362,8 +364,17 @@ func Load(getenv func(string) string) (*Config, error) {
 		// карантин — раз в 15 минут, уборка хранилища — раз в 2 часа.
 		MaintenanceEnabled:      boolOr(getenv("MAINTENANCE_ENABLED"), true),
 		QuarantineSweepInterval: secondsOr(getenv("QUARANTINE_SWEEP_INTERVAL_SECONDS"), 15*60),
-		S3CleanupInterval:       secondsOr(getenv("S3_CLEANUP_INTERVAL_SECONDS"), 2*60*60),
-		S3OrphanTTL:             time.Duration(intOr(getenv("S3_ORPHAN_TTL_HOURS"), 24)) * time.Hour,
+		// Прежние имена (S3_*) принимаются по-прежнему: S3 из сервиса убран,
+		// но переменные могли быть заданы в .env уже развёрнутых стендов, и
+		// молча сменить смысл настройки уборки — значит однажды обнаружить
+		// промежуточную зону, растущую по расписанию, о котором никто не
+		// договаривался.
+		StagingCleanupInterval: secondsOr(firstSet(
+			getenv("STAGING_CLEANUP_INTERVAL_SECONDS"),
+			getenv("S3_CLEANUP_INTERVAL_SECONDS")), 2*60*60),
+		StagingOrphanTTL: time.Duration(intOr(firstSet(
+			getenv("STAGING_ORPHAN_TTL_HOURS"),
+			getenv("S3_ORPHAN_TTL_HOURS")), 24)) * time.Hour,
 
 		CommentEditWindow: time.Duration(intOr(getenv("COMMENT_EDIT_WINDOW_MINUTES"), 15)) * time.Minute,
 
@@ -495,6 +506,17 @@ func bytesOr(v string, fallback int64) int64 {
 		return fallback
 	}
 	return n
+}
+
+// firstSet — первое непустое значение. Нужен там, где у настройки есть
+// прежнее имя: новое имеет приоритет, прежнее продолжает работать.
+func firstSet(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func secondsOr(v string, fallback int) time.Duration {

@@ -261,3 +261,68 @@ func TestSandboxTokenFallsBackToSecToken(t *testing.T) {
 		t.Errorf("SANDBOX_TOKEN должен быть важнее SEC_TOKEN, получено %q", cfg.SandboxToken)
 	}
 }
+
+// Прежние имена настроек уборки продолжают работать.
+//
+// S3 из сервиса убран, но `S3_CLEANUP_INTERVAL_SECONDS` и
+// `S3_ORPHAN_TTL_HOURS` могли быть заданы в .env уже развёрнутых стендов.
+// Молча вернуть их к значению по умолчанию — значит однажды обнаружить
+// промежуточную зону, которая убирается по расписанию, о котором никто не
+// договаривался; заметить это можно только по её размеру.
+func TestStagingCleanupAcceptsFormerEnvNames(t *testing.T) {
+	cases := []struct {
+		name         string
+		env          map[string]string
+		wantInterval time.Duration
+		wantTTL      time.Duration
+	}{
+		{
+			name:         "прежние имена",
+			env:          map[string]string{"S3_CLEANUP_INTERVAL_SECONDS": "60", "S3_ORPHAN_TTL_HOURS": "5"},
+			wantInterval: time.Minute,
+			wantTTL:      5 * time.Hour,
+		},
+		{
+			name:         "новые имена",
+			env:          map[string]string{"STAGING_CLEANUP_INTERVAL_SECONDS": "120", "STAGING_ORPHAN_TTL_HOURS": "7"},
+			wantInterval: 2 * time.Minute,
+			wantTTL:      7 * time.Hour,
+		},
+		{
+			// Новое имя выигрывает: иначе забытая прежняя переменная тихо
+			// побеждала бы ту, которую только что вписали, — и настройка
+			// выглядела бы неработающей.
+			name: "заданы оба — выигрывает новое",
+			env: map[string]string{
+				"S3_CLEANUP_INTERVAL_SECONDS": "60", "STAGING_CLEANUP_INTERVAL_SECONDS": "120",
+				"S3_ORPHAN_TTL_HOURS": "5", "STAGING_ORPHAN_TTL_HOURS": "7",
+			},
+			wantInterval: 2 * time.Minute,
+			wantTTL:      7 * time.Hour,
+		},
+		{
+			name:         "не задано ничего",
+			env:          map[string]string{},
+			wantInterval: 2 * time.Hour,
+			wantTTL:      24 * time.Hour,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{"DATABASE_URL": "postgres://localhost/moderation"}
+			for k, v := range tc.env {
+				env[k] = v
+			}
+			cfg, err := Load(func(k string) string { return env[k] })
+			if err != nil {
+				t.Fatalf("конфигурация не загрузилась: %v", err)
+			}
+			if cfg.StagingCleanupInterval != tc.wantInterval {
+				t.Errorf("интервал уборки %v, ожидался %v", cfg.StagingCleanupInterval, tc.wantInterval)
+			}
+			if cfg.StagingOrphanTTL != tc.wantTTL {
+				t.Errorf("срок жизни файла %v, ожидался %v", cfg.StagingOrphanTTL, tc.wantTTL)
+			}
+		})
+	}
+}

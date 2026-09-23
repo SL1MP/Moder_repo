@@ -76,9 +76,9 @@ func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, st *
 		},
 		logger:             logger,
 		quarantineInterval: clampInterval(cfg.QuarantineSweepInterval),
-		cleanupInterval:    clampInterval(cfg.S3CleanupInterval),
+		cleanupInterval:    clampInterval(cfg.StagingCleanupInterval),
 		osvInterval:        cfg.OSVSyncInterval,
-		orphanTTL:          cfg.S3OrphanTTL,
+		orphanTTL:          cfg.StagingOrphanTTL,
 		osv:                osvConfig(cfg),
 		vulnMaxScore:       cfg.VulnMaxScore,
 	}
@@ -272,7 +272,7 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 		}
 	}
 	if doCleanup {
-		removed, err := runner.service.CleanupOrphanObjects(ctx, cfg.S3OrphanTTL)
+		removed, err := runner.service.CleanupOrphanObjects(ctx, cfg.StagingOrphanTTL)
 		if err != nil {
 			logger.Error("уборка временного хранилища не выполнена", "error", err)
 			code = 1
