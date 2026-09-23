@@ -14,7 +14,9 @@ import (
 	"moderation/internal/config"
 	"moderation/internal/decisions"
 	"moderation/internal/domain"
+	"moderation/internal/policy"
 	"moderation/internal/queue"
+	"moderation/internal/registry"
 	"moderation/internal/repo"
 )
 
@@ -31,6 +33,7 @@ type decisionFixture struct {
 	siblingID int64
 	versionID int64
 	requestID int64
+	policies  *policy.Holder
 }
 
 // newDecisionFixture заводит ДВЕ заявки на одну версию пакета: решение
@@ -101,22 +104,44 @@ func newDecisionFixture(t *testing.T, itemStatus string, steps map[string]string
 	q := queue.New(r.Pool(), time.Minute)
 	verifier := auth.NewVerifier(auth.SettingsFromConfig(cfg), nil, nil)
 
-	handler := &api.DecisionsHandler{
+	service := &decisions.Service{
 		Repo: r,
-		Decisions: &decisions.Service{
-			Repo: r,
-			Resume: func(ctx context.Context, item *domain.RequestItem, fromStep string) error {
-				return q.Enqueue(ctx, item.ID, fromStep)
-			},
+		Resume: func(ctx context.Context, item *domain.RequestItem, fromStep string) error {
+			return q.Enqueue(ctx, item.ID, fromStep)
 		},
 	}
+	// Справочник лицензий — настоящий, из репозитория: заявление лицензии
+	// проверяет SPDX по нему, и подставной справочник проверял бы не то.
+	policies := policy.NewHolder(
+		"../../../config/blacklist.yml", "../../../config/licenses.yml")
+	handler := &api.DecisionsHandler{Repo: r, Decisions: service, Policies: policies}
+
 	return &decisionFixture{
 		router: api.NewRouter(nil, api.Options{
 			Auth:      &api.AuthHandler{Auth: &api.Auth{Verifier: verifier, Repo: r}, Cfg: cfg},
 			Decisions: handler,
+			// Отзыв пакета живёт в маршрутах базы пакетов, но ходит в тот же
+			// сервис решений — проверять его надо тем же окружением.
+			Packages: &api.PackagesHandler{
+				Repo: r, Registry: registry.New(registry.Config{}), Cfg: cfg,
+				Decisions: service,
+			},
 		}),
-		repo: r, verifier: verifier, user: user,
+		repo: r, verifier: verifier, user: user, policies: policies,
 		itemID: itemID, siblingID: siblingID, versionID: ver.ID, requestID: item.RequestID,
+	}
+}
+
+// withPolicies подтверждает, что справочник лицензий прочитан: без него
+// проверка SPDX пропускает что угодно, и тест, рассчитывающий на отказ,
+// зеленел бы по неверной причине.
+func (f *decisionFixture) withPolicies(t *testing.T) {
+	t.Helper()
+	if f.policies == nil {
+		t.Fatal("справочник лицензий не подключён к окружению")
+	}
+	if licenses := f.policies.Licenses(); licenses.Failed() {
+		t.Fatalf("справочник лицензий не прочитан: %s", licenses.Err)
 	}
 }
 

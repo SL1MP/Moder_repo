@@ -20,6 +20,7 @@ var Titles = map[string]string{
 	"quarantine_released": "Карантин снят",
 	"package_approved":    "Пакет одобрен",
 	"package_revoked":     "Пакет отозван",
+	"license_claimed":     "Заявлена лицензия",
 }
 
 // Title — заголовок уведомления; неизвестное событие показывается кодом, а не

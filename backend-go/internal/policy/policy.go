@@ -114,6 +114,27 @@ func (p *LicensePolicy) Entry(spdx string) (LicenseEntry, bool) {
 	return entry, ok
 }
 
+// KnownIDs — идентификаторы из справочника, не больше limit, по алфавиту.
+//
+// Нужен сообщению об ошибке: «выберите из известных» без списка ничем не
+// помогает, а весь справочник в сообщение не влезает.
+func (p *LicensePolicy) KnownIDs(limit int) []string {
+	if p == nil {
+		return nil
+	}
+	out := make([]string, 0, len(p.Allowed)+len(p.Forbidden))
+	for _, entry := range p.SortedAllowed() {
+		out = append(out, entry.SPDXID)
+	}
+	for _, entry := range p.SortedForbidden() {
+		out = append(out, entry.SPDXID)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
 // SortedAllowed и SortedForbidden — записи для выдачи в API, по алфавиту:
 // обход map в Go случаен, а справочник читает человек.
 func (p *LicensePolicy) SortedAllowed() []LicenseEntry   { return sortedEntries(p.Allowed) }

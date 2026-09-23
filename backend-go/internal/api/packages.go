@@ -7,7 +7,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"time"
+
+	"moderation/internal/artifactstore"
 	"moderation/internal/config"
+	"moderation/internal/decisions"
 	"moderation/internal/domain"
 	"moderation/internal/registry"
 	"moderation/internal/repo"
@@ -23,6 +27,21 @@ type PackagesHandler struct {
 	Repo     *repo.Repo
 	Registry *registry.Registry
 	Cfg      *config.Config
+	// Decisions — сервис решений, нужен отзыву пакета. nil — маршрут отзыва
+	// не подключается: отдать его неработающим хуже, чем не отдать совсем.
+	Decisions *decisions.Service
+	// Artifacts — артефактори, откуда снимается отозванный пакет. nil
+	// допустим: сервис поднимается и без него, и тогда отзыв меняет только
+	// статус, о чём ответ говорит прямо.
+	Artifacts artifactstore.Store
+	Now       func() time.Time
+}
+
+func (h *PackagesHandler) now() time.Time {
+	if h.Now != nil {
+		return h.Now()
+	}
+	return time.Now().UTC()
 }
 
 // MountPackages подключает справочник менеджеров и базу пакетов. Всё закрыто
@@ -37,7 +56,18 @@ func MountPackages(r chi.Router, h *PackagesHandler, a *Auth) {
 		sub.Get("/api/v1/managers/detect", h.DetectManager)
 		sub.Get("/api/v1/packages", h.Search)
 		sub.Get("/api/v1/packages/{versionID}", h.Version)
+		// «Найти пакет»: отвечает не «есть в базе», а можно ли ставить.
+		sub.Post("/api/v1/packages/check", h.Check)
 	})
+	// Отзыв — только DevSecOps и админу: он отменяет ранее принятое решение и
+	// снимает пакет с публикации у всех сразу.
+	if h.Decisions != nil {
+		r.Group(func(sub chi.Router) {
+			sub.Use(a.Authenticate)
+			sub.Use(RequireRoles("admin", "devsecops"))
+			sub.Post("/api/v1/packages/{versionID}/revoke", h.Revoke)
+		})
+	}
 }
 
 // Managers — GET /api/v1/managers. Порядок совпадает с python-версией

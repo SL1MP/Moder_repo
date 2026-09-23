@@ -116,4 +116,8 @@ const (
 	EventAwaitsSecurity  = "request_awaits_security"
 	EventPackageApproved = "package_approved"
 	EventDecisionMade    = "decision_made"
+	// EventLicenseClaimed — разработчик приложил ссылку на текст лицензии.
+	// Отдельное событие, а не EventAwaitsLegal: юристу важно отличать «пакет
+	// пришёл на рассмотрение» от «по нему появились новые сведения».
+	EventLicenseClaimed = "license_claimed"
 )

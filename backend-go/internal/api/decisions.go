@@ -14,6 +14,7 @@ import (
 	"moderation/internal/auth"
 	"moderation/internal/decisions"
 	"moderation/internal/domain"
+	"moderation/internal/policy"
 	"moderation/internal/repo"
 )
 
@@ -31,7 +32,14 @@ import (
 type DecisionsHandler struct {
 	Repo      *repo.Repo
 	Decisions *decisions.Service
-	Now       func() time.Time
+	// Policies — держатель политик: по справочнику проверяется SPDX,
+	// заявленный разработчиком. Через держатель, а не по загруженной копии,
+	// потому что POST /admin/reload перечитывает файл без перезапуска.
+	Policies *policy.Holder
+	// HTTP — клиент для снятия текста лицензии по приложенной ссылке.
+	// nil — собирается свой со скромным таймаутом.
+	HTTP *http.Client
+	Now  func() time.Time
 }
 
 func (h *DecisionsHandler) now() time.Time {
@@ -56,6 +64,10 @@ func MountDecisions(r chi.Router, h *DecisionsHandler, a *Auth) {
 			Post("/api/v1/license-claims/{claimID}/decision", h.LicenseDecision)
 		sub.Get("/api/v1/license-claims", h.ListClaims)
 		sub.Get("/api/v1/license-claims/{claimID}", h.GetClaim)
+		// Заявление лицензии роли не требует: это действие автора заявки.
+		// Кто именно вправе его выполнить, решает обработчик — там видно и
+		// автора заявки, и роли.
+		sub.Post("/api/v1/items/{itemID}/license-claim", h.ClaimLicense)
 	})
 }
 
@@ -306,6 +318,13 @@ func (h *DecisionsHandler) respond(w http.ResponseWriter, r *http.Request, itemI
 
 // writeDecisionError переводит ошибку сервиса решений в ответ API.
 func (h *DecisionsHandler) writeDecisionError(w http.ResponseWriter, r *http.Request, err error) {
+	writeDecisionsError(w, r, err)
+}
+
+// writeDecisionsError — то же самое свободной функцией: сервис решений зовут и
+// другие обработчики (отзыв пакета, заявление лицензии), а своя копия разбора
+// ошибок рядом разъезжается с этой при первом же новом виде ошибки.
+func writeDecisionsError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, decisions.ErrConflict):
 		// Пакет не в том состоянии: кто-то решил раньше, либо интерфейс

@@ -319,14 +319,21 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	// заберёт пакет и продолжит с нужного шага. Прямой прогон здесь, в
 	// процессе API, был бы вторым движком конвейера — и двумя реализациями,
 	// пишущими шаги одного пакета.
-	options.Decisions = &api.DecisionsHandler{
+	decisionsService := &decisions.Service{
 		Repo: r,
-		Decisions: &decisions.Service{
-			Repo: r,
-			Resume: func(ctx context.Context, item *domain.RequestItem, fromStep string) error {
-				return pipelineQueue.Enqueue(ctx, item.ID, fromStep)
-			},
+		Resume: func(ctx context.Context, item *domain.RequestItem, fromStep string) error {
+			return pipelineQueue.Enqueue(ctx, item.ID, fromStep)
 		},
+	}
+	options.Decisions = &api.DecisionsHandler{
+		Repo: r, Decisions: decisionsService, Policies: policies, HTTP: newHTTPClient(),
+	}
+	// Отзыв пакета — тот же сервис решений: отзыв обязан вести себя одинаково,
+	// кем бы он ни был вызван, кнопкой в карточке или перепроверкой по новой
+	// базе уязвимостей.
+	options.Packages.Decisions = decisionsService
+	if st != nil {
+		options.Packages.Artifacts = st.Artifacts
 	}
 
 	return options, blacklist, st
