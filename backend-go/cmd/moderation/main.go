@@ -24,6 +24,8 @@ import (
 	"moderation/internal/db"
 	"moderation/internal/decisions"
 	"moderation/internal/domain"
+	"moderation/internal/maintenance"
+	"moderation/internal/osv"
 	"moderation/internal/policy"
 	"moderation/internal/queue"
 	"moderation/internal/registry"
@@ -246,7 +248,8 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 		logger.Info("правила blacklist загружены", "path", blacklist.Path, "правил", len(blacklist.Rules))
 	}
 	options.Licenses = &api.LicensesHandler{Policies: policies}
-	options.Admin = &api.AdminHandler{Policies: policies, Repo: r}
+	// Админка собирается ниже, вместе с очередью: экран «Настройка» показывает
+	// её состояние, а очередь создаётся после обработчиков заявок.
 
 	// Хранилище отчётов необязательно: без него сервис поднимается и отвечает
 	// health, просто маршруты отчётов не подключаются. Падать на старте из-за
@@ -328,6 +331,29 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	options.Decisions = &api.DecisionsHandler{
 		Repo: r, Decisions: decisionsService, Policies: policies, HTTP: newHTTPClient(),
 	}
+
+	// Экран «Настройка» и журнал аудита.
+	//
+	// Снапшот уязвимостей и очередь передаются те же, что у конвейера: экран
+	// обязан показывать состояние ТОГО, что работает, а не отдельной копии.
+	admin := &api.AdminHandler{
+		Policies: policies, Repo: r, Cfg: cfg,
+		Index: osv.NewSnapshotIndex(cfg.OSVLocalDBPath),
+		Queue: pipelineQueue,
+	}
+	if st != nil {
+		// Ручной запуск синхронизации подключается, только когда есть чем её
+		// выполнить: кнопка, отвечающая «не настроено», хуже отсутствующей.
+		maintenanceService := &maintenance.Service{
+			Repo: r, Storage: st.Staging, Artifacts: st.Artifacts, Logger: logger,
+			Decisions: decisionsService,
+		}
+		osvCfg := osvConfig(cfg)
+		admin.OSVSync = func(ctx context.Context, force bool) (maintenance.SyncResult, error) {
+			return maintenanceService.SyncOSVSnapshot(ctx, osvCfg, force)
+		}
+	}
+	options.Admin = admin
 	// Отзыв пакета — тот же сервис решений: отзыв обязан вести себя одинаково,
 	// кем бы он ни был вызван, кнопкой в карточке или перепроверкой по новой
 	// базе уязвимостей.
