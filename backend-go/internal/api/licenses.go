@@ -13,7 +13,11 @@ import (
 
 // LicensesHandler — зависимости маршрута справочника.
 type LicensesHandler struct {
-	Policy *policy.LicensePolicy
+	// Policies — держатель, а не загруженный справочник: POST /admin/reload
+	// перечитывает файл без перезапуска сервиса, и обработчик, взявший копию
+	// один раз при сборке, отдавал бы устаревший список до следующего
+	// рестарта — то есть ровно то, ради отмены чего перезагрузка и заводилась.
+	Policies *policy.Holder
 }
 
 // MountLicenses подключает справочник. Закрыт токеном, как и остальная база:
@@ -31,7 +35,11 @@ func MountLicenses(r chi.Router, h *LicensesHandler, a *Auth) {
 // где интерфейс может узнать, что автодополнение пусто не потому, что
 // справочник пуст, а потому что его не прочитали.
 func (h *LicensesHandler) List(w http.ResponseWriter, r *http.Request) {
-	p := h.Policy
+	if h.Policies == nil {
+		writeError(w, r, errInternal("Справочник лицензий не настроен"))
+		return
+	}
+	p := h.Policies.Licenses()
 	if p == nil {
 		writeError(w, r, errInternal("Справочник лицензий не настроен"))
 		return

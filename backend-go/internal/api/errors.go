@@ -70,6 +70,12 @@ func errValidation(message string) *Error {
 	return &Error{Code: "validation_error", Status: http.StatusUnprocessableEntity, Message: message}
 }
 
+// errTooManyRequests — превышено ограничение частоты запросов. Код тот же, что
+// у python-версии: клиенты разбирают его, а не текст.
+func errTooManyRequests(message string) *Error {
+	return &Error{Code: "rate_limited", Status: http.StatusTooManyRequests, Message: message}
+}
+
 // schemaError — ошибка не в данных, а в схеме базы: она не разрешает значение
 // (23514), не знает столбца (42703) или таблицы (42P01). Практически всегда
 // это значит «не накатили миграцию».

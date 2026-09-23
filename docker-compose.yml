@@ -105,10 +105,39 @@ services:
   # Go-сервису ровно префикс /api/v1/request-items/ (см. nginx/snippets/app.conf).
   # У сервиса нет собственной аутентификации, и выставлять его на хост нельзя.
   #
-  # ВАЖНО: миграции 0005-0007 этот сервис НЕ применяет — в базе уже работает
-  # Alembic python-версии, и второй автоматический мигратор поверх неё создал
-  # бы трудноотлаживаемую гонку. Накатываются вручную один раз, см.
-  # backend-go/README.md, раздел "Как запустить сервис".
+  # Миграции go-набора. Отдельный одноразовый сервис, а не автоматический
+  # мигратор внутри api-go: два процесса, накатывающих схему при старте,
+  # соревнуются друг с другом, и проигравший падает на полуприменённой
+  # миграции. Здесь порядок явный — `docker compose up migrate-go` доходит до
+  # конца и завершается.
+  #
+  # Именно отсутствие этого сервиса дважды выглядело как «кнопка не работает»:
+  # go-набор накатывали руками, забывали, сервис писал в несуществующие
+  # столбцы и отвечал 500. Теперь тот же `make migrate-go`, что и остальное.
+  #
+  # Набор идемпотентен (IF EXISTS / ON CONFLICT DO NOTHING в каждой миграции),
+  # поэтому повторный прогон безопасен и на базе, созданной Alembic'ом:
+  # ограничения там называются иначе, и каждая миграция снимает оба имени.
+  migrate-go:
+    build:
+      context: ./backend-go
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    image: moderation-backend-go:local
+    command: ["migrate"]
+    env_file: [.env]
+    environment:
+      <<: *proxy-env
+      DATABASE_URL: postgres://${POSTGRES_USER:-moderation}:${POSTGRES_PASSWORD:-moderation}@db:5432/${POSTGRES_DB:-moderation}
+    # restart не указан намеренно: это разовая задача, а не служба. `no` —
+    # значение по умолчанию, и перезапускать успешно завершившийся мигратор
+    # означало бы гонять схему по кругу.
+    depends_on:
+      db:
+        condition: service_healthy
+
   api-go:
     build:
       context: ./backend-go
@@ -137,6 +166,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      # Схема накатывается до старта сервиса. Без этого api-go поднимается на
+      # неполной схеме и отвечает 500 на первой же кнопке — ровно так и
+      # выглядели оба разбора «кнопка не работает».
+      migrate-go:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 30s
@@ -182,6 +216,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate-go:
+        condition: service_completed_successfully
 
   worker:
     <<: *backend

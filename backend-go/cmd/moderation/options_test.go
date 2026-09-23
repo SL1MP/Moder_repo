@@ -52,8 +52,8 @@ func TestBuildOptionsMountsEverything(t *testing.T) {
 	if blacklist.Failed() {
 		t.Errorf("blacklist не прочитан: %s", blacklist.Err)
 	}
-	if options.Licenses.Policy.Failed() {
-		t.Errorf("справочник лицензий не прочитан: %s", options.Licenses.Policy.Err)
+	if licenses := options.Licenses.Policies.Licenses(); licenses.Failed() {
+		t.Errorf("справочник лицензий не прочитан: %s", licenses.Err)
 	}
 }
 
@@ -93,7 +93,7 @@ func TestBuildOptionsSurvivesBrokenPolicyFiles(t *testing.T) {
 	if !blacklist.Failed() {
 		t.Error("отсутствующий файл blacklist должен быть отмечен как неудача, а не как пустой список")
 	}
-	if !options.Licenses.Policy.Failed() {
+	if !options.Licenses.Policies.Licenses().Failed() {
 		t.Error("отсутствующий справочник лицензий должен быть отмечен как неудача")
 	}
 }

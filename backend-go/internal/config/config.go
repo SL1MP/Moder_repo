@@ -117,6 +117,15 @@ type Config struct {
 	RegistryTerraformURL   string
 	RegistryPackagistURL   string
 
+	// Повторы и предохранитель на вызовах к реестрам. Без них один моргнувший
+	// запрос переигрывает весь прогон пакета целиком — со скачиванием
+	// артефакта и обращением в песочницу.
+	RegistryRetryAttempts    int
+	RegistryRetryBaseDelay   time.Duration
+	RegistryRetryMaxDelay    time.Duration
+	RegistryBreakerThreshold int
+	RegistryBreakerOpenFor   time.Duration
+
 	// Менеджер git обращается к репозиториям внешним бинарём: протокол git
 	// реализовать внутри сервиса несопоставимо дороже, чем вызвать тот же
 	// клиент, которым пользуются все.
@@ -209,6 +218,10 @@ type Config struct {
 	// Окно, в течение которого правка сообщения не помечается как «изменено».
 	CommentEditWindow time.Duration
 
+	// RateLimitPerMinute — сколько запросов в минуту разрешено одному
+	// пользователю. Ноль и меньше — ограничение выключено.
+	RateLimitPerMinute int
+
 	// Лимиты.
 	MaxArtifactSizeBytes  int64
 	MaxUploadSizeBytes    int64
@@ -287,6 +300,12 @@ func Load(getenv func(string) string) (*Config, error) {
 		RegistryTerraformURL:   valueOr(getenv("REGISTRY_TERRAFORM_URL"), "https://registry.terraform.io"),
 		RegistryPackagistURL:   valueOr(getenv("REGISTRY_PACKAGIST_URL"), "https://repo.packagist.org"),
 
+		RegistryRetryAttempts:    intOr(getenv("REGISTRY_RETRY_ATTEMPTS"), 3),
+		RegistryRetryBaseDelay:   millisOr(getenv("REGISTRY_RETRY_BASE_DELAY_MS"), 300),
+		RegistryRetryMaxDelay:    millisOr(getenv("REGISTRY_RETRY_MAX_DELAY_MS"), 3000),
+		RegistryBreakerThreshold: intOr(getenv("REGISTRY_BREAKER_THRESHOLD"), 5),
+		RegistryBreakerOpenFor:   secondsOr(getenv("REGISTRY_BREAKER_OPEN_SECONDS"), 30),
+
 		GitBinary:  valueOr(getenv("GIT_BINARY"), "git"),
 		GitTimeout: secondsOr(getenv("GIT_CLONE_TIMEOUT_SECONDS"), 600),
 
@@ -338,6 +357,12 @@ func Load(getenv func(string) string) (*Config, error) {
 		S3OrphanTTL:             time.Duration(intOr(getenv("S3_ORPHAN_TTL_HOURS"), 24)) * time.Hour,
 
 		CommentEditWindow: time.Duration(intOr(getenv("COMMENT_EDIT_WINDOW_MINUTES"), 15)) * time.Minute,
+
+		// Имя переменной то же, что у python-версии: обе читают один .env, и
+		// разные лимиты в них означали бы, что один и тот же пользователь
+		// упирается в разный порог в зависимости от того, какой сервис принял
+		// запрос.
+		RateLimitPerMinute: intOr(getenv("RATE_LIMIT_REQUESTS_PER_MINUTE"), 30),
 
 		MaxArtifactSizeBytes:  bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 500*1024*1024),
 		MaxUploadSizeBytes:    bytesOr(getenv("MAX_UPLOAD_SIZE_BYTES"), 5*1024*1024),
@@ -465,6 +490,10 @@ func bytesOr(v string, fallback int64) int64 {
 
 func secondsOr(v string, fallback int) time.Duration {
 	return time.Duration(intOr(v, fallback)) * time.Second
+}
+
+func millisOr(v string, fallback int) time.Duration {
+	return time.Duration(intOr(v, fallback)) * time.Millisecond
 }
 
 func floatOr(v string, fallback float64) float64 {

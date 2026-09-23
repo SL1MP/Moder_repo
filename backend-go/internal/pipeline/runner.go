@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"moderation/internal/domain"
+	"moderation/internal/metrics"
 	"moderation/internal/repo"
 )
 
@@ -71,7 +72,18 @@ func Run(ctx context.Context, pc *Context, fromCode string) (Result, error) {
 
 	for i := startIdx; i < len(Steps); i++ {
 		step := Steps[i]
+		startedAt := pc.now()
 		outcome, err := step.Run(ctx, pc)
+		// Метрику пишем и по упавшему шагу: прогон, оборвавшийся ошибкой, —
+		// это тоже исход, и не видеть его на графике хуже всего. Результат
+		// «error» в шкале pipeline_step.result отсутствует намеренно: там
+		// записываются вердикты шага, а это авария выполнения.
+		outcomeResult := outcome.Result
+		if err != nil {
+			outcomeResult = "error"
+		}
+		metrics.ObserveStep(step.Code(), outcomeResult, pc.Package.Manager,
+			pc.now().Sub(startedAt).Seconds())
 		if err != nil {
 			return result, fmt.Errorf("шаг %s: %w", step.Code(), err)
 		}

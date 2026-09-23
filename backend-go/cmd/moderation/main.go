@@ -43,6 +43,8 @@ func main() {
 			os.Exit(runScan(os.Args[2:], logger))
 		case "worker":
 			os.Exit(runWorker(os.Args[2:], logger))
+		case "migrate":
+			os.Exit(runMigrate(os.Args[2:], logger))
 		case "schema":
 			os.Exit(runSchemaCheck(os.Args[2:], logger))
 		case "maintenance":
@@ -201,8 +203,11 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	// недоступный на старте Keycloak сервис не роняет.
 	options.Auth = &api.AuthHandler{
 		Auth: &api.Auth{
-			Verifier: auth.NewVerifier(auth.SettingsFromConfig(cfg), nil, nil),
-			Repo:     repo.New(pool),
+			// Ограничение частоты — после опознания пользователя: считаем по
+			// нему, а не по адресу, за которым сидит весь офис.
+			RateLimit: api.NewRateLimit(cfg.RateLimitPerMinute),
+			Verifier:  auth.NewVerifier(auth.SettingsFromConfig(cfg), nil, nil),
+			Repo:      repo.New(pool),
 		},
 		Cfg: cfg,
 	}
@@ -220,7 +225,13 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	// Политики из файлов. Сервис поднимается и с непрочитанным файлом, но
 	// молча это не проходит: шаги blacklist и license в таком случае отдают
 	// решение человеку, а не пропускают пакет (см. internal/pipeline/steps.go).
-	licenses := policy.LoadLicensePolicy(cfg.AllowedLicensesFile)
+	//
+	// Держатель, а не две загруженные структуры: POST /api/v1/admin/reload
+	// перечитывает файлы без перезапуска сервиса, и всё, что читает политики,
+	// обязано читать их через него — иначе часть сервиса продолжит работать
+	// по правилам, которых на диске уже нет.
+	policies := policy.NewHolder(cfg.BlacklistFile, cfg.AllowedLicensesFile)
+	licenses, blacklist := policies.Licenses(), policies.Blacklist()
 	if licenses.Failed() {
 		logger.Error("справочник лицензий не загружен — каждый пакет уйдёт юристам",
 			"path", licenses.Path, "error", licenses.Err)
@@ -228,14 +239,14 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 		logger.Info("справочник лицензий загружен", "path", licenses.Path,
 			"разрешено", len(licenses.Allowed), "запрещено", len(licenses.Forbidden))
 	}
-	blacklist := policy.LoadBlacklist(cfg.BlacklistFile)
 	if blacklist.Failed() {
 		logger.Error("правила blacklist не загружены — запрет проверить нельзя, пакеты уйдут DevSecOps",
 			"path", blacklist.Path, "error", blacklist.Err)
 	} else {
 		logger.Info("правила blacklist загружены", "path", blacklist.Path, "правил", len(blacklist.Rules))
 	}
-	options.Licenses = &api.LicensesHandler{Policy: licenses}
+	options.Licenses = &api.LicensesHandler{Policies: policies}
+	options.Admin = &api.AdminHandler{Policies: policies, Repo: r}
 
 	// Хранилище отчётов необязательно: без него сервис поднимается и отвечает
 	// health, просто маршруты отчётов не подключаются. Падать на старте из-за

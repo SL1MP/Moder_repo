@@ -100,6 +100,28 @@ func newSandbox(cfg *config.Config) sandbox.Client {
 // означали бы, что заявка заводится по одному реестру, а проверяется по
 // другому.
 func newRegistry(cfg *config.Config, httpClient registry.Doer) *registry.Registry {
+	// Повторы и предохранитель — обёрткой над клиентом, а не в каждом плагине:
+	// плагины отвечают за формат ответа реестра, а не за сетевые неполадки, и
+	// повтор, размазанный по двенадцати плагинам, в одном из них обязательно
+	// окажется забыт.
+	//
+	// Без предохранителя упавший реестр превращает разбор очереди в
+	// последовательное ожидание таймаута на каждом пакете: снаружи сервис
+	// выглядит зависшим, хотя работает ровно как написано.
+	if httpClient == nil {
+		httpClient = newHTTPClient()
+	}
+	resilient := registry.NewResilientDoer(httpClient,
+		registry.RetryPolicy{
+			Attempts:  cfg.RegistryRetryAttempts,
+			BaseDelay: cfg.RegistryRetryBaseDelay,
+			MaxDelay:  cfg.RegistryRetryMaxDelay,
+		},
+		registry.BreakerPolicy{
+			FailureThreshold: cfg.RegistryBreakerThreshold,
+			OpenFor:          cfg.RegistryBreakerOpenFor,
+		})
+
 	return registry.New(registry.Config{
 		PyPIURL: cfg.RegistryPyPIURL, NpmURL: cfg.RegistryNpmURL,
 		GoProxy: cfg.RegistryGoProxy, NuGetURL: cfg.RegistryNuGetURL,
@@ -112,7 +134,7 @@ func newRegistry(cfg *config.Config, httpClient registry.Doer) *registry.Registr
 
 		GitBinary: cfg.GitBinary, GitTimeout: cfg.GitTimeout,
 
-		HTTP: httpClient,
+		HTTP: resilient,
 	})
 }
 

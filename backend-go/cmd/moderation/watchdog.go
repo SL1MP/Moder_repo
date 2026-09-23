@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"moderation/internal/metrics"
 	"moderation/internal/queue"
 )
 
@@ -44,6 +45,9 @@ const minWatchdogInterval = 5 * time.Second
 // очереди (internal/queue).
 type staleClaimer interface {
 	ClaimStale(ctx context.Context, minAge time.Duration) (queue.Job, error)
+	// Stuck — сколько пакетов лежит в очереди дольше minAge. Нужен метрикам:
+	// сторож забирает по одному, а знать надо, сколько их всего.
+	Stuck(ctx context.Context, minAge time.Duration) (int, error)
 }
 
 // watchdog — параметры прохода. Отдельный тип, а не замыкание: в тестах проход
@@ -87,9 +91,39 @@ func (wd *watchdog) run(ctx context.Context) {
 			wd.logger.Info("сторож очереди остановлен")
 			return
 		case <-ticker.C:
+			wd.observe(ctx)
 			wd.sweep(ctx)
 		}
 	}
+}
+
+// observe обновляет метрики состояния очереди.
+//
+// Что такое worker_alive здесь: в python-версии это был ответ Celery на ping,
+// а у go-воркера своего HTTP нет и пинговать его нечем. Поэтому метрика
+// выводится из наблюдаемого следствия: если в очереди лежат пакеты, которых
+// никто не забрал дольше порога, значит воркер свою работу не делает — что бы
+// ни показывал `docker compose ps`. Обратное тоже верно: пустая очередь
+// залежавшихся означает, что забирать успевают.
+//
+// Определение косвенное, и врать им нельзя: метрика отвечает на вопрос
+// «разбирается ли очередь», а не «жив ли процесс».
+func (wd *watchdog) observe(ctx context.Context) {
+	stuck, err := wd.claim.Stuck(ctx, wd.minAge)
+	if err != nil {
+		if ctx.Err() == nil {
+			wd.logger.Warn("состояние очереди не измерено", "error", err)
+		}
+		// Прежние значения не трогаем: обнулить их значило бы показать на
+		// графике «всё хорошо» ровно тогда, когда мы перестали это знать.
+		return
+	}
+	metrics.StuckItems.Set(float64(stuck))
+	if stuck > 0 {
+		metrics.WorkerAlive.Set(0)
+		return
+	}
+	metrics.WorkerAlive.Set(1)
 }
 
 // sweep — один проход: разобрать всё, что залежалось. Возвращает число
@@ -124,5 +158,10 @@ func (wd *watchdog) sweep(ctx context.Context) int {
 		}
 		wd.handle(ctx, job)
 		processed++
+		// Срабатывания сторожа — метрика, по которой видно, что выделенный
+		// воркер не справляется. Сторож — страховка, и её работа не должна
+		// быть нормой; без счётчика это заметно только по логам, которые
+		// никто не читает, пока не сломалось.
+		metrics.WatchdogRecoveredTotal.WithLabelValues("api").Inc()
 	}
 }

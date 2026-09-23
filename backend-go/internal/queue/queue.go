@@ -242,6 +242,23 @@ func (q *Queue) Depth(ctx context.Context) (queued, running int, err error) {
 	return queued, running, nil
 }
 
+// Stuck — сколько пакетов ждут в очереди дольше minAge.
+//
+// Отдельно от Depth: глубина очереди сама по себе ни о чём не говорит — сто
+// пакетов, разбираемых за минуту, это норма. Говорит то, что пакет ЛЕЖИТ:
+// значит, его никто не забрал.
+func (q *Queue) Stuck(ctx context.Context, minAge time.Duration) (int, error) {
+	var count int
+	err := q.pool.QueryRow(ctx, `
+		SELECT count(*) FROM request_item
+		WHERE status = 'queued' AND updated_at < now() - $1::interval
+	`, minAge.String()).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("подсчёт залежавшихся пакетов: %w", err)
+	}
+	return count, nil
+}
+
 // Wait ждёт уведомления о новой задаче, но не дольше timeout.
 //
 // Отдельное подключение из пула: LISTEN — состояние сессии, и держать его на

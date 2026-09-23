@@ -24,6 +24,15 @@ type fakeClaimer struct {
 	err     error // возвращается после того, как закончились jobs
 	calls   int
 	minAges []time.Duration
+	// stuck — что вернуть измерению очереди; stuckErr — ошибка измерения.
+	stuck    int
+	stuckErr error
+}
+
+func (f *fakeClaimer) Stuck(context.Context, time.Duration) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stuck, f.stuckErr
 }
 
 func (f *fakeClaimer) ClaimStale(ctx context.Context, minAge time.Duration) (queue.Job, error) {

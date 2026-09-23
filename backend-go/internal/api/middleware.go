@@ -32,6 +32,14 @@ type Auth struct {
 	Verifier *auth.Verifier
 	Repo     UserStore
 	Now      func() time.Time
+	// RateLimit — ограничение частоты запросов, применяется ПОСЛЕ опознания
+	// пользователя: считаем по нему, а не по адресу (см. ratelimit.go).
+	//
+	// Здесь, а не отдельным r.Use в роутере, потому что каждый маршрут
+	// закрывается своим Authenticate: отдельное подключение пришлось бы
+	// повторять в каждом Mount*, и первый же забытый вызов оставил бы
+	// маршрут без лимита незаметно.
+	RateLimit func(http.Handler) http.Handler
 }
 
 var _ UserStore = (*repo.Repo)(nil)
@@ -93,7 +101,12 @@ func (a *Auth) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
+		authed := r.WithContext(context.WithValue(r.Context(), userKey{}, user))
+		if a.RateLimit != nil {
+			a.RateLimit(next).ServeHTTP(w, authed)
+			return
+		}
+		next.ServeHTTP(w, authed)
 	})
 }
 

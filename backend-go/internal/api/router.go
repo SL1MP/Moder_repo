@@ -31,6 +31,7 @@ type Options struct {
 	Comments      *CommentsHandler
 	Notifications *NotificationsHandler
 	Decisions     *DecisionsHandler
+	Admin         *AdminHandler
 	// Auth — проверка токенов. Без неё закрытые маршруты НЕ подключаются
 	// вовсе: отдать их открытыми было бы хуже, чем не отдать совсем.
 	Auth *AuthHandler
@@ -94,6 +95,9 @@ func NewRouter(pool *pgxpool.Pool, opts ...Options) http.Handler {
 		}
 		if opt.Decisions != nil && opt.Auth != nil {
 			MountDecisions(r, opt.Decisions, opt.Auth.Auth)
+		}
+		if opt.Admin != nil && opt.Auth != nil {
+			MountAdmin(r, opt.Admin, opt.Auth.Auth)
 		}
 		if opt.Reports != nil {
 			if opt.Auth == nil {

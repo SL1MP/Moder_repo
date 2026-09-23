@@ -8,6 +8,7 @@ import (
 
 	"moderation/internal/artifactstore"
 	"moderation/internal/domain"
+	"moderation/internal/metrics"
 	"moderation/internal/osv"
 )
 
@@ -122,8 +123,12 @@ func (s *Service) SyncOSVSnapshot(ctx context.Context, cfg OSVConfig, force bool
 		if err != nil || current == nil {
 			return SyncResult{}, err
 		}
-		s.logger().Info("снапшот OSV актуален", "версия", current.Version,
-			"возраст, дней", ageDays(*current, s.now()))
+		age := ageDays(*current, s.now())
+		// Возраст снапшота — главная метрика для алерта: устаревшая база не
+		// роняет сервис, она тихо переводит каждый пакет на ручное решение
+		// DevSecOps, и снаружи это выглядит как «модерация стала медленной».
+		metrics.OSVIndexAgeDays.Set(age)
+		s.logger().Info("снапшот OSV актуален", "версия", current.Version, "возраст, дней", age)
 		return SyncResult{Version: current.Version, Records: current.RecordCount}, nil
 	}
 
@@ -141,6 +146,10 @@ func (s *Service) SyncOSVSnapshot(ctx context.Context, cfg OSVConfig, force bool
 	}
 	s.audit(ctx, "osv_snapshot_synced", "vuln_index_version", fmt.Sprint(row.ID),
 		map[string]any{"version": info.Version, "records": info.RecordCount})
+	// Только что загруженный снапшот — нулевого возраста, если издатель
+	// проставил дату. Ставим по той же формуле, а не нулём: дата публикации
+	// может быть и вчерашней, и тогда «0» был бы неправдой.
+	metrics.OSVIndexAgeDays.Set(ageDays(osv.IndexVersion{PublishedAt: info.PublishedAt}, s.now()))
 	s.logger().Info("снапшот OSV загружен", "версия", info.Version,
 		"записей", info.RecordCount, "источник", string(cfg.Kind), "откуда", cfg.location())
 

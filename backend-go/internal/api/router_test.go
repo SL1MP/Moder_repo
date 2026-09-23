@@ -19,7 +19,7 @@ func TestFullRouterMounts(t *testing.T) {
 		Reports:       &ReportsHandler{},
 		Packages:      &PackagesHandler{Cfg: h.cfg},
 		Requests:      &RequestsHandler{Cfg: h.cfg},
-		Licenses:      &LicensesHandler{Policy: &policy.LicensePolicy{}},
+		Licenses:      &LicensesHandler{Policies: policy.NewHolder("", "")},
 		Queues:        &QueuesHandler{},
 		Comments:      &CommentsHandler{Cfg: h.cfg},
 		Notifications: &NotificationsHandler{},
