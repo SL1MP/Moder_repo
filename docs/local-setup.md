@@ -262,7 +262,14 @@ docker compose run --rm api bootstrap --demo --service-password 'пароль'
 
 Лечится отметкой уже применённого:
 
+**Сначала пересоберите образ**: после `git pull` в контейнере лежит прежний
+бинарник, и `--baseline` он не знает — отвечает «flag provided but not
+defined».
+
 ```bash
+git pull
+docker compose build migrate-go
+
 # 1. что схема знает на самом деле
 docker compose run --rm migrate-go schema
 

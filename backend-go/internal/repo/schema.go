@@ -141,6 +141,20 @@ var requiredColumns = []struct {
 		"backend-go/migrations/0012_dependency_tree (или alembic 0007)"},
 	{"moderation_request", "resolve_summary",
 		"backend-go/migrations/0012_dependency_tree (или alembic 0007)"},
+	// Промежуточная зона вместо S3: столбцы переименованы, а не добавлены
+	// (s3_bucket -> staging_repo и далее). Проверять обязательно именно их:
+	// пока миграция не накатана, в базе лежат прежние имена, код пишет в
+	// новые, и первым это ловит не сервис, а шаг скачивания — уже после
+	// похода в реестр.
+	//
+	// Без этих строк сверка молчала бы о непринятой 0015: остальные её
+	// проверки смотрят на CHECK-ограничения и таблицы, а переименование не
+	// меняет ни того, ни другого.
+	{"artifact", "staging_repo", "backend-go/migrations/0015_staging_columns"},
+	{"artifact", "staging_path", "backend-go/migrations/0015_staging_columns"},
+	{"artifact", "staged_at", "backend-go/migrations/0015_staging_columns"},
+	{"artifact", "staging_cleared_at", "backend-go/migrations/0015_staging_columns"},
+	{"scan_report", "repo", "backend-go/migrations/0015_staging_columns"},
 }
 
 // requiredTables — таблицы поздних миграций.
