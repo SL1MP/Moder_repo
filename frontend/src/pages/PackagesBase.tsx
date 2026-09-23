@@ -32,6 +32,10 @@ export default function PackagesBase({ me }: { me: Me }) {
   const [version, setVersion] = useState('')
   const [status, setStatus] = useState(params.get('status') ?? '')
   const [selected, setSelected] = useState<number | null>(null)
+  // Список менеджеров берём у сервиса, а не перечисляем здесь: их двенадцать,
+  // и зашитый список молча отстаёт от бэкенда — ровно так docker не появлялся
+  // в поиске после того, как его уже поддержали.
+  const managers = useAsync(() => api.managers(), [])
 
   const { data, error, loading, reload } = useAsync(
     () =>
@@ -76,10 +80,11 @@ export default function PackagesBase({ me }: { me: Me }) {
             <span>Менеджер</span>
             <select value={manager} onChange={(e) => setManager(e.target.value as Manager | '')}>
               <option value="">все</option>
-              <option value="pypi">pypi</option>
-              <option value="npm">npm</option>
-              <option value="go">go</option>
-              <option value="nuget">nuget</option>
+              {(managers.data ?? []).map((m) => (
+                <option key={m.code} value={m.code}>
+                  {m.code}
+                </option>
+              ))}
             </select>
           </label>
           <label style={{ margin: 0, minWidth: 120 }}>

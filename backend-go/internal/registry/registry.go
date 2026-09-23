@@ -1,10 +1,17 @@
 // Package registry — плагины пакетных менеджеров: нормализация имени и версии,
 // разбор записи заявки, клиент реестра и правила публикации в артефактори.
 //
-// Порт backend/app/managers/. Перенесены четыре менеджера прототипа
-// (pypi, npm, go, nuget). Недостающие шесть (general, maven, terraform,
-// luarocks, docker, conan) — обязательный скоуп, не бэклог; порядок и
-// обоснование — docs/ci-parity-gaps.md, Docker вне очереди.
+// Порт backend/app/managers/. Реализованы все двенадцать менеджеров: четыре из
+// прототипа (pypi, npm, go, nuget) и восемь добавленных — maven, docker, conan,
+// luarocks, terraform, php, git, files.
+//
+// Два последних устроены иначе остальных, и это не недоработка, а природа
+// предмета: у git-репозитория и у принесённого файла нет реестра, у которого
+// можно спросить метаданные, и нет версии в привычном смысле. Как именно они
+// с этим обходятся — в git.go и files.go.
+//
+// Два (docker и git) реализуют Downloader: их артефакт не лежит по ссылке
+// одним файлом, его надо собрать. См. download.go.
 //
 // Разбор файлов зависимостей (requirements.txt, go.sum, packages.lock.json и
 // прочие) в этой ревизии сознательно не перенесён: конвейеру он не нужен, а
@@ -157,6 +164,22 @@ type Config struct {
 	NpmURL   string
 	GoProxy  string
 	NuGetURL string
+
+	MavenURL       string
+	MavenSearchURL string
+	DockerURL      string
+	DockerAuthURL  string
+	DockerService  string
+	ConanURL       string
+	LuaRocksURL    string
+	TerraformURL   string
+	PackagistURL   string
+
+	// GitBinary — исполняемый файл git для менеджера git. Пусто — «git» из PATH.
+	GitBinary string
+	// GitTimeout — потолок на одно клонирование.
+	GitTimeout time.Duration
+
 	// HTTP — клиент для походов в реестры. Обязателен: он несёт таймауты,
 	// повторы и корпоративный прокси.
 	HTTP Doer
@@ -176,11 +199,55 @@ func New(cfg Config) *Registry {
 	if cfg.NuGetURL == "" {
 		cfg.NuGetURL = "https://api.nuget.org"
 	}
+	// Адреса по умолчанию — публичные реестры. В бою сюда подставляются
+	// внутренние зеркала; пустое значение здесь означало бы плагин, который
+	// собирает запросы к «/v2/...» без хоста и падает на первом же пакете.
+	defaults := map[*string]string{
+		&cfg.MavenURL:       "https://repo1.maven.org/maven2",
+		&cfg.MavenSearchURL: "https://search.maven.org",
+		&cfg.DockerURL:      "https://registry-1.docker.io",
+		&cfg.DockerAuthURL:  "https://auth.docker.io/token",
+		&cfg.DockerService:  "registry.docker.io",
+		&cfg.ConanURL:       "https://center.conan.io",
+		&cfg.LuaRocksURL:    "https://luarocks.org",
+		&cfg.TerraformURL:   "https://registry.terraform.io",
+		&cfg.PackagistURL:   "https://repo.packagist.org",
+	}
+	for field, value := range defaults {
+		if strings.TrimSpace(*field) == "" {
+			*field = value
+		}
+	}
+
+	// Порядок объявления виден пользователю в выпадающем списке менеджеров —
+	// он тот же, что в domain.ManagerCodes: сначала четыре самых ходовых,
+	// затем остальные по алфавиту, и последними два «не из реестра».
 	plugins := []Plugin{
 		&PyPI{BaseURL: strings.TrimRight(cfg.PyPIURL, "/"), HTTP: cfg.HTTP},
 		&Npm{BaseURL: strings.TrimRight(cfg.NpmURL, "/"), HTTP: cfg.HTTP},
 		&Go{BaseURL: strings.TrimRight(cfg.GoProxy, "/"), HTTP: cfg.HTTP},
 		&NuGet{BaseURL: strings.TrimRight(cfg.NuGetURL, "/"), HTTP: cfg.HTTP},
+
+		&Conan{BaseURL: strings.TrimRight(cfg.ConanURL, "/"), HTTP: cfg.HTTP},
+		&Docker{
+			BaseURL: strings.TrimRight(cfg.DockerURL, "/"),
+			AuthURL: cfg.DockerAuthURL, Service: cfg.DockerService,
+			DefaultNamespace: "library", HTTP: cfg.HTTP,
+		},
+		&LuaRocks{BaseURL: strings.TrimRight(cfg.LuaRocksURL, "/"), HTTP: cfg.HTTP},
+		&Maven{
+			BaseURL:   strings.TrimRight(cfg.MavenURL, "/"),
+			SearchURL: strings.TrimRight(cfg.MavenSearchURL, "/"),
+			HTTP:      cfg.HTTP,
+		},
+		&PHP{BaseURL: strings.TrimRight(cfg.PackagistURL, "/"), HTTP: cfg.HTTP},
+		&Terraform{
+			BaseURL: strings.TrimRight(cfg.TerraformURL, "/"),
+			HTTP:    cfg.HTTP, DefaultPlatform: "linux_amd64",
+		},
+
+		&Git{Binary: cfg.GitBinary, Timeout: cfg.GitTimeout},
+		&Files{},
 	}
 	r := &Registry{plugins: make(map[string]Plugin, len(plugins)), order: plugins}
 	for _, p := range plugins {

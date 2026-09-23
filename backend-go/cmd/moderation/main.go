@@ -190,10 +190,10 @@ func usage() {
 func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (api.Options, *policy.Blacklist, *stores) {
 	var options api.Options
 	r := repo.New(pool)
-	reg := registry.New(registry.Config{
-		PyPIURL: cfg.RegistryPyPIURL, NpmURL: cfg.RegistryNpmURL,
-		GoProxy: cfg.RegistryGoProxy, NuGetURL: cfg.RegistryNuGetURL,
-	})
+	// Клиент тот же, что у хранилищ: реестры, артефактори и песочница ходят
+	// через один корпоративный прокси, и разные таймауты у них означали бы
+	// разное поведение при одной и той же недоступности сети.
+	reg := newRegistry(cfg, newHTTPClient())
 
 	// Проверка токенов. Собирается всегда: маршрут /auth/config нужен SPA даже
 	// тогда, когда войти некуда — по нему интерфейс и объясняет, что вход не

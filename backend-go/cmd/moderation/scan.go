@@ -18,7 +18,6 @@ import (
 	"moderation/internal/osv"
 	"moderation/internal/pipeline"
 	"moderation/internal/policy"
-	"moderation/internal/registry"
 	"moderation/internal/repo"
 	"moderation/internal/scanners"
 	"moderation/internal/storage"
@@ -194,11 +193,7 @@ func scanOne(ctx context.Context, r *repo.Repo, st *stores, cfg *config.Config, 
 // кроме самого пакета: его подставляет loadItem.
 func buildScanContext(_ context.Context, r *repo.Repo, st *stores, cfg *config.Config) (*pipeline.Context, error) {
 	httpClient := newHTTPClient()
-	reg := registry.New(registry.Config{
-		PyPIURL: cfg.RegistryPyPIURL, NpmURL: cfg.RegistryNpmURL,
-		GoProxy: cfg.RegistryGoProxy, NuGetURL: cfg.RegistryNuGetURL,
-		HTTP: httpClient,
-	})
+	reg := newRegistry(cfg, httpClient)
 
 	return &pipeline.Context{
 		Config: pipelineConfig(cfg),

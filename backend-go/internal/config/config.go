@@ -97,11 +97,30 @@ type Config struct {
 	// Ровно так уже разъезжались списки допустимых значений.
 	ArtifactRepos map[string]string
 
-	// Реестры пакетных менеджеров.
+	// Реестры пакетных менеджеров. В бою сюда подставляются внутренние
+	// зеркала: сервис ходит за метаданными и артефактами только по этим
+	// адресам, и подменить их значит перевести весь конвейер на другой
+	// источник, не трогая код.
 	RegistryPyPIURL  string
 	RegistryNpmURL   string
 	RegistryGoProxy  string
 	RegistryNuGetURL string
+
+	RegistryMavenURL       string
+	RegistryMavenSearchURL string
+	RegistryDockerURL      string
+	RegistryDockerAuthURL  string
+	RegistryDockerService  string
+	RegistryConanURL       string
+	RegistryLuaRocksURL    string
+	RegistryTerraformURL   string
+	RegistryPackagistURL   string
+
+	// Менеджер git обращается к репозиториям внешним бинарём: протокол git
+	// реализовать внутри сервиса несопоставимо дороже, чем вызвать тот же
+	// клиент, которым пользуются все.
+	GitBinary  string
+	GitTimeout time.Duration
 
 	// Наблюдатель сканирования: сам находит пакеты без отчётов и прогоняет по
 	// ним сканеры. Конструкция переходного периода — пока заявки ведёт
@@ -247,6 +266,19 @@ func Load(getenv func(string) string) (*Config, error) {
 		RegistryNpmURL:   valueOr(getenv("REGISTRY_NPM_URL"), "https://registry.npmjs.org"),
 		RegistryGoProxy:  valueOr(getenv("REGISTRY_GO_PROXY"), "https://proxy.golang.org"),
 		RegistryNuGetURL: valueOr(getenv("REGISTRY_NUGET_URL"), "https://api.nuget.org"),
+
+		RegistryMavenURL:       valueOr(getenv("REGISTRY_MAVEN_URL"), "https://repo1.maven.org/maven2"),
+		RegistryMavenSearchURL: valueOr(getenv("REGISTRY_MAVEN_SEARCH_URL"), "https://search.maven.org"),
+		RegistryDockerURL:      valueOr(getenv("REGISTRY_DOCKER_URL"), "https://registry-1.docker.io"),
+		RegistryDockerAuthURL:  valueOr(getenv("REGISTRY_DOCKER_AUTH_URL"), "https://auth.docker.io/token"),
+		RegistryDockerService:  valueOr(getenv("REGISTRY_DOCKER_SERVICE"), "registry.docker.io"),
+		RegistryConanURL:       valueOr(getenv("REGISTRY_CONAN_URL"), "https://center.conan.io"),
+		RegistryLuaRocksURL:    valueOr(getenv("REGISTRY_LUAROCKS_URL"), "https://luarocks.org"),
+		RegistryTerraformURL:   valueOr(getenv("REGISTRY_TERRAFORM_URL"), "https://registry.terraform.io"),
+		RegistryPackagistURL:   valueOr(getenv("REGISTRY_PACKAGIST_URL"), "https://repo.packagist.org"),
+
+		GitBinary:  valueOr(getenv("GIT_BINARY"), "git"),
+		GitTimeout: secondsOr(getenv("GIT_CLONE_TIMEOUT_SECONDS"), 600),
 
 		ScanWatcherEnabled:     boolOr(getenv("SCAN_WATCHER_ENABLED"), true),
 		ScanWatcherInterval:    secondsOr(getenv("SCAN_WATCHER_INTERVAL_SECONDS"), 60),

@@ -247,7 +247,10 @@ func TestCreateRequestValidation(t *testing.T) {
 		{"не json", `не json`, http.StatusUnprocessableEntity},
 		{"без менеджера", `{"packages":["a==1.0.0"]}`, http.StatusUnprocessableEntity},
 		{"пустой список", `{"manager":"pypi","packages":[]}`, http.StatusUnprocessableEntity},
-		{"неизвестный менеджер", `{"manager":"maven","packages":["a:b:1"]}`, http.StatusUnprocessableEntity},
+		// «docekr» — опечатка в коде менеджера, а не менеджер, который мы
+		// когда-нибудь поддержим: подставлять сюда настоящее имя значит
+		// сломать тест в день, когда этот менеджер появится.
+		{"неизвестный менеджер", `{"manager":"docekr","packages":["a:b:1"]}`, http.StatusUnprocessableEntity},
 		{"больше предела", `{"manager":"pypi","packages":["a==1","b==1","c==1","d==1","e==1","f==1"]}`,
 			http.StatusRequestEntityTooLarge},
 	}

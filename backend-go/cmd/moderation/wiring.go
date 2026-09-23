@@ -8,6 +8,7 @@ import (
 	"moderation/internal/artifactstore"
 	"moderation/internal/config"
 	"moderation/internal/pipeline"
+	"moderation/internal/registry"
 	"moderation/internal/sandbox"
 	"moderation/internal/storage"
 )
@@ -89,6 +90,27 @@ func newSandbox(cfg *config.Config) sandbox.Client {
 		BaseURL: cfg.SandboxURL, Token: cfg.SandboxToken,
 		Priority: cfg.SandboxPriority, ShortResult: cfg.SandboxShortResult,
 		Timeout: cfg.SandboxTimeout, InsecureTLS: cfg.SandboxInsecureTLS,
+	})
+}
+
+// newRegistry — плагины пакетных менеджеров с адресами реестров из
+// конфигурации. Одна функция на все команды: разные адреса в api и worker
+// означали бы, что заявка заводится по одному реестру, а проверяется по
+// другому.
+func newRegistry(cfg *config.Config, httpClient registry.Doer) *registry.Registry {
+	return registry.New(registry.Config{
+		PyPIURL: cfg.RegistryPyPIURL, NpmURL: cfg.RegistryNpmURL,
+		GoProxy: cfg.RegistryGoProxy, NuGetURL: cfg.RegistryNuGetURL,
+
+		MavenURL: cfg.RegistryMavenURL, MavenSearchURL: cfg.RegistryMavenSearchURL,
+		DockerURL: cfg.RegistryDockerURL, DockerAuthURL: cfg.RegistryDockerAuthURL,
+		DockerService: cfg.RegistryDockerService,
+		ConanURL:      cfg.RegistryConanURL, LuaRocksURL: cfg.RegistryLuaRocksURL,
+		TerraformURL: cfg.RegistryTerraformURL, PackagistURL: cfg.RegistryPackagistURL,
+
+		GitBinary: cfg.GitBinary, GitTimeout: cfg.GitTimeout,
+
+		HTTP: httpClient,
 	})
 }
 

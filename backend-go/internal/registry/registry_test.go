@@ -135,14 +135,23 @@ func TestInvalidVersionsRejected(t *testing.T) {
 	}
 }
 
+// TestUnknownManager — менеджер, которого нет, обязан называть себя в ошибке.
+//
+// Сообщение «менеджер не поддерживается» без имени бесполезно ровно там, где
+// нужно: при опечатке в коде менеджера (docekr вместо docker) оно не
+// подсказывает, что искать.
 func TestUnknownManager(t *testing.T) {
 	r := registry.New(registry.Config{})
-	if _, err := r.Get("maven"); err == nil {
-		t.Error("неперенесённый менеджер отдан как поддерживаемый")
+	_, err := r.Get("docekr")
+	if err == nil {
+		t.Fatal("несуществующий менеджер отдан как поддерживаемый")
 	}
-	if len(r.Codes()) != 4 {
-		t.Errorf("Codes() = %v, ожидались четыре менеджера прототипа", r.Codes())
+	if !strings.Contains(err.Error(), "docekr") {
+		t.Errorf("ошибка не называет менеджер: %v", err)
 	}
+	// Полнота набора проверяется отдельно, сверкой с domain.ManagerCodes —
+	// см. TestEveryManagerCodeHasPlugin. Числа здесь намеренно нет: оно
+	// устаревало бы при каждом новом менеджере, ничего при этом не проверяя.
 }
 
 // --------------------------------------------------------------------- метаданные

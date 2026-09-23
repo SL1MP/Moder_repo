@@ -11,6 +11,7 @@ import (
 	"hash"
 	"strings"
 
+	"moderation/internal/registry"
 	"moderation/internal/storage"
 )
 
@@ -41,26 +42,17 @@ func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 			WithStatus("failed", "failed").
 			WithNextAction("Проверьте, что версия опубликована в реестре, и повторите заявку."), nil
 	}
-	if meta.ArtifactURL == "" {
-		return Fail("Реестр не сообщил URL артефакта — скачать пакет невозможно.").
-			WithStatus("failed", "failed").
-			WithNextAction("Проверьте, что версия опубликована в реестре, и повторите заявку."), nil
-	}
-
-	filename := meta.ArtifactFilename
-	if filename == "" {
-		filename = fmt.Sprintf("%s-%s", pc.Package.Name, pc.Version.RawVersion)
-	}
 
 	limit := pc.Config.MaxArtifactSizeBytes
 	if limit <= 0 {
 		limit = 512 * 1024 * 1024
 	}
-	payload, err := pc.Deps.Fetch.Fetch(ctx, meta.ArtifactURL, limit)
+
+	payload, filename, err := fetchArtifact(ctx, pc, meta, limit)
 	if err != nil {
 		return Fail(fmt.Sprintf("Артефакт не скачан: %v", err)).
 			WithStatus("failed", "failed").
-			WithNextAction("Повторите заявку позже: реестр не отдал артефакт."), nil
+			WithNextAction("Повторите заявку позже: артефакт получить не удалось."), nil
 	}
 
 	digest := sha256.Sum256(payload)
@@ -123,6 +115,51 @@ func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 			"staging_repo": pc.Deps.Storage.Bucket(), "staging_path": key,
 			"sha256": sha, "size_bytes": len(payload), "filename": filename,
 		}), nil
+}
+
+// fetchArtifact получает байты артефакта.
+//
+// Два пути, и выбор между ними — по тому, умеет ли менеджер забирать артефакт
+// сам. Большинству это не нужно: артефакт лежит по ссылке одним файлом, и
+// обычного GET достаточно. Docker и git — исключения по природе предмета: у
+// первого артефакт собирается из блобов по манифесту, у второго его как файла
+// вообще не существует, пока не создан (см. registry.Downloader).
+func fetchArtifact(
+	ctx context.Context, pc *Context, meta registry.Metadata, limit int64,
+) ([]byte, string, error) {
+	plugin, err := pc.Plugin()
+	if err != nil {
+		return nil, "", err
+	}
+	if downloader, ok := plugin.(registry.Downloader); ok {
+		payload, filename, err := downloader.Download(ctx, pc.Ref(), limit)
+		if err != nil {
+			return nil, "", err
+		}
+		if filename == "" {
+			filename = meta.ArtifactFilename
+		}
+		return payload, defaultFilename(filename, pc), nil
+	}
+
+	if meta.ArtifactURL == "" {
+		return nil, "", fmt.Errorf("реестр не сообщил адрес артефакта — скачивать нечего")
+	}
+	payload, err := pc.Deps.Fetch.Fetch(ctx, meta.ArtifactURL, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	return payload, defaultFilename(meta.ArtifactFilename, pc), nil
+}
+
+// defaultFilename — имя файла, если менеджер его не сообщил. Пустое имя
+// означало бы путь в хранилище, заканчивающийся слешем, то есть запись в
+// каталог вместо файла.
+func defaultFilename(filename string, pc *Context) string {
+	if strings.TrimSpace(filename) != "" {
+		return filename
+	}
+	return fmt.Sprintf("%s-%s", pc.Package.Name, pc.Version.RawVersion)
 }
 
 // hashWith считает сумму заявленным реестром алгоритмом. ok=false — алгоритм

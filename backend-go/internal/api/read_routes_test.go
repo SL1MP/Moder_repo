@@ -174,14 +174,16 @@ func TestManagersList(t *testing.T) {
 		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 	}
 	items := decodeArray(t, rec)
-	if len(items) != 4 {
-		t.Fatalf("ожидались четыре менеджера, получено %d", len(items))
+	if len(items) != len(domain.ManagerCodes) {
+		t.Fatalf("менеджеров получено %d, ожидалось %d — выпадающий список в интерфейсе "+
+			"строится по этому ответу, и отсутствующий менеджер выбрать нельзя",
+			len(items), len(domain.ManagerCodes))
 	}
-	// Порядок виден пользователю в выпадающем списке и должен совпадать с
-	// python-версией; обход map в Go случаен, и без явного порядка список
-	// прыгал бы от запроса к запросу.
-	want := []string{"pypi", "npm", "go", "nuget"}
-	for i, code := range want {
+	// Порядок виден пользователю в выпадающем списке; обход map в Go случаен,
+	// и без явного порядка список прыгал бы от запроса к запросу. Сверяем с
+	// domain.ManagerCodes, а не со своим списком рядом: две копии одного
+	// порядка разъезжаются при первом же новом менеджере.
+	for i, code := range domain.ManagerCodes {
 		got := items[i].(map[string]any)["code"]
 		if got != code {
 			t.Fatalf("менеджер %d: %v, ожидался %s", i, got, code)

@@ -99,7 +99,23 @@ export async function fetchFile(url: string): Promise<{ body: string; contentTyp
 }
 
 // --------------------------------------------------------------------------- типы
-export type Manager = 'pypi' | 'npm' | 'go' | 'nuget'
+// Список кодов держать 1:1 с domain.ManagerCodes на бэкенде. Тип нужен для
+// подсказок редактора; сам список менеджеров интерфейс всегда получает
+// запросом /managers, а не отсюда — зашитый в интерфейс перечень молча
+// отстаёт от бэкенда.
+export type Manager =
+  | 'pypi'
+  | 'npm'
+  | 'go'
+  | 'nuget'
+  | 'conan'
+  | 'docker'
+  | 'luarocks'
+  | 'maven'
+  | 'php'
+  | 'terraform'
+  | 'git'
+  | 'files'
 
 export interface ManagerInfo {
   code: Manager
