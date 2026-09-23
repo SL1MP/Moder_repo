@@ -53,6 +53,12 @@ func main() {
 			os.Exit(runSchemaCheck(os.Args[2:], logger))
 		case "maintenance":
 			os.Exit(runMaintenance(os.Args[2:], logger))
+		case "bootstrap":
+			os.Exit(runBootstrap(os.Args[2:], logger))
+		case "import-packages":
+			os.Exit(runImportPackages(os.Args[2:], logger))
+		case "service-account":
+			os.Exit(runServiceAccount(os.Args[2:], logger))
 		case "serve":
 			os.Args = append(os.Args[:1], os.Args[2:]...)
 		case "-h", "--help", "help":
@@ -172,6 +178,16 @@ func usage() {
   moderation worker --once    разобрать очередь и выйти
   moderation schema           сверить схему базы с кодом: чего не хватает и
                               какую миграцию накатить
+  moderation bootstrap        первичная настройка: справочники менеджеров и
+                              лицензий, проверка репозиториев артефактори
+                              (--demo — демо-данные стенда, --service-password —
+                              пароль демо-учёток, --repositories=false —
+                              не проверять репозитории)
+  moderation import-packages  разовый импорт package_list.txt как уже одобренных
+                              (--file, --manager, --actor, --origin, --dry-run)
+  moderation service-account  сервисная учётка для CI (--username, --roles;
+                              пароль — через MODERATION_SERVICE_PASSWORD или
+                              стандартный ввод)
   moderation maintenance      прогнать регламентные задачи разово: снять
                               истёкший карантин, убрать временное хранилище,
                               загрузить снапшот базы уязвимостей
@@ -179,7 +195,8 @@ func usage() {
                               только одну из них, --force — перезагрузить снапшот)
 
 Конфигурация — через переменные окружения, см. backend-go/README.md.
-Обязательна DATABASE_URL; для отчётов нужны также S3_*.
+Обязательна DATABASE_URL; для отчётов, промежуточной зоны и публикации —
+ARTIFACT_BASE_URL и ARTIFACT_REPO_*.
 `)
 }
 

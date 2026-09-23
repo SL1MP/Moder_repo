@@ -39,3 +39,6 @@ keycloak/certs/*
 # Страховка на случай ключа, положенного мимо этих каталогов.
 *.key
 *.pem
+
+# собранный бинарник go-сервиса (`go build ./cmd/moderation`)
+/backend-go/moderation

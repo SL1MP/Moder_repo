@@ -131,11 +131,19 @@ func DisplayName(u *domain.User, fallback string) string {
 // Нужен интеграционным тестам: без него они опирались бы на пользователя,
 // заведённого руками (AuthorID: 1), и падали бы на чистой базе или после
 // чужого прогона. Это уже случалось — см. handoff, п. 5, пункт 10.
+//
+// Имя перезаписывается на конфликте намеренно. Раньше выигрывал тот, кто
+// завёл учётку первым, и тест, проверяющий имя в отчёте, зависел от того, что
+// лежало в базе до него: стоило завести «sec.petrov» демо-данными
+// (`moderation bootstrap --demo`) или другим тестом — и он падал на СЛЕДУЮЩЕМ
+// прогоне с сообщением про отчёт, в котором про имена ни слова. Помощник,
+// молча игнорирующий переданное имя, — ловушка, а не удобство.
 func (r *Repo) GetOrCreateUser(ctx context.Context, username, fullName string) (*domain.User, error) {
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO "user" (username, full_name, roles, is_service, is_active)
 		VALUES ($1, $2, '["developer"]'::jsonb, FALSE, TRUE)
-		ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+		ON CONFLICT (username) DO UPDATE
+		SET username = EXCLUDED.username, full_name = EXCLUDED.full_name
 		RETURNING id, subject, username, email, full_name, roles, is_service, is_active,
 		          password_hash, last_login_at, created_at, updated_at
 	`, username, fullName)
