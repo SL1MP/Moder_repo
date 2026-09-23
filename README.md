@@ -376,6 +376,7 @@ make import-list FILE=./package_list.txt MANAGER=pypi   # одноразовый
 
 ## Документация
 
+- [`docs/status.md`](docs/status.md) — **состояние дел**: что сделано, какие проблемы вылезали и чем кончились, что осталось на Python, план и долги
 - [`docs/architecture.md`](docs/architecture.md) — схема конвейера, состояния, схема БД, интерфейсы адаптеров
 - [`docs/stakeholders.md`](docs/stakeholders.md) — роли, их цели и зоны ответственности за конфигурацию/интеграции
 - [`docs/user-stories.md`](docs/user-stories.md) — что закрыто для каждой роли и чем именно, статус по сверке с кодом
