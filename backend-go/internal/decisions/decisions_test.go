@@ -12,6 +12,7 @@ import (
 	"moderation/internal/db"
 	"moderation/internal/decisions"
 	"moderation/internal/domain"
+	"moderation/internal/pipeline"
 	"moderation/internal/repo"
 )
 
@@ -189,7 +190,7 @@ func TestSecurityApprovalReachesSiblings(t *testing.T) {
 	ctx := context.Background()
 
 	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{
-		"vuln_scan": "fail", "banner_scan": "warn", "sast_scan": "warn",
+		"vuln_scan": "fail", "sandbox_scan": "fail",
 	})
 	svc, rec := newService(r)
 
@@ -213,10 +214,13 @@ func TestSecurityApprovalReachesSiblings(t *testing.T) {
 	}
 
 	// Одно решение DevSecOps снимает блокировки по содержимому в ОБЕИХ
-	// заявках: он решает по пакету целиком, а не по каждому сканеру отдельно.
-	// SAST в этот список не входит — он информационный, снимать там нечего.
+	// заявках: он решает по пакету целиком, а не по каждой проверке отдельно.
+	//
+	// Список берём из pipeline.SecurityBlockers, а не своей копией рядом:
+	// именно расхождение двух таких списков в python-версии дало KeyError в
+	// бою (см. комментарий в blockers.go).
 	for _, item := range []*domain.RequestItem{f.first, f.second} {
-		for _, code := range []string{"vuln_scan", "banner_scan"} {
+		for _, code := range pipeline.SecurityBlockers {
 			if got := stepResult(t, r, item.ID, code); got != "pass" {
 				t.Errorf("заявка %d, шаг %s = %q, ожидался pass", item.ID, code, got)
 			}

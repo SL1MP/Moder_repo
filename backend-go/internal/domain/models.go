@@ -268,10 +268,10 @@ type Artifact struct {
 	SHA256           *string
 	DeclaredChecksum *string
 	ChecksumAlgo     *string
-	S3Bucket         *string
-	S3Key            *string
-	S3UploadedAt     *time.Time
-	S3DeletedAt      *time.Time
+	StagingRepo      *string
+	StagingPath      *string
+	StagedAt         *time.Time
+	StagingClearedAt *time.Time
 	NexusURL         *string
 	PublishedAt      *time.Time
 	Status           string
@@ -346,5 +346,10 @@ type ScanReport struct {
 // CHECK-ограничением в migrations/0005 (см. его комментарий).
 var ScanReportStates = []string{"clean", "findings", "unavailable"}
 
-// ScanReportStepCodes — шаги, порождающие отчёт. Тоже 1:1 с миграцией 0005.
-var ScanReportStepCodes = []string{"banner_scan", "sast_scan"}
+// ScanReportStepCodes — шаги, порождающие отчёт. Держать 1:1 с
+// CHECK-ограничением в migrations/0013.
+//
+// Снятые шаги (RetiredStepCodes) остаются: отчёты, сделанные до снятия, лежат
+// в хранилище, и запрет на код сломал бы не будущие вставки, а чтение
+// прошлого — ровно то, из-за чего отчёт переставал открываться.
+var ScanReportStepCodes = []string{"sandbox_scan", "banner_scan", "sast_scan"}

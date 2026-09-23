@@ -21,7 +21,7 @@ func TestBuildOptionsMountsEverything(t *testing.T) {
 
 	// pool = nil: сборка зависимостей к базе не ходит, а поднимать Postgres
 	// ради проверки того, что поля заполнены, незачем.
-	options, blacklist := buildOptions(cfg, nil, logger)
+	options, blacklist, _ := buildOptions(cfg, nil, logger)
 
 	if options.Auth == nil {
 		t.Error("не подключена проверка токенов")
@@ -57,13 +57,25 @@ func TestBuildOptionsMountsEverything(t *testing.T) {
 	}
 }
 
-// Хранилище отчётов не настроено — сервис всё равно собирается, просто без
-// выдачи отчётов. Падать на старте из-за MinIO нельзя.
+// Хранилище отчётов недоступно — сервис всё равно собирается, просто без
+// выдачи отчётов. Падать на старте из-за артефактори нельзя: health обязан
+// отвечать, а чтение — работать.
+//
+// Адрес здесь заведомо мёртвый, и это важно: у ARTIFACT_BASE_URL есть значение
+// по умолчанию, поэтому «не настроено» проверяется обращением к артефактори, а
+// не пустой строкой в конфигурации.
 func TestBuildOptionsWithoutStorage(t *testing.T) {
-	cfg := testConfig(t, nil)
-	options, _ := buildOptions(cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cfg := testConfig(t, map[string]string{
+		// 127.0.0.1:1 — порт, на котором заведомо никто не слушает: соединение
+		// отвергается сразу, без ожидания таймаута.
+		"ARTIFACT_BASE_URL": "http://127.0.0.1:1",
+	})
+	options, _, st := buildOptions(cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if options.Reports != nil {
-		t.Error("без S3_ENDPOINT выдача отчётов подключаться не должна")
+		t.Error("при недоступном артефактори выдача отчётов подключаться не должна")
+	}
+	if st != nil {
+		t.Error("хранилища не собраны — наблюдатель сканирования запускать не на чем")
 	}
 	if options.Auth == nil || options.Packages == nil {
 		t.Error("остальные маршруты обязаны подключиться и без хранилища")
@@ -77,7 +89,7 @@ func TestBuildOptionsSurvivesBrokenPolicyFiles(t *testing.T) {
 		"BLACKLIST_FILE":        "/nonexistent/blacklist.yml",
 		"ALLOWED_LICENSES_FILE": "/nonexistent/licenses.yml",
 	})
-	options, blacklist := buildOptions(cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	options, blacklist, _ := buildOptions(cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if !blacklist.Failed() {
 		t.Error("отсутствующий файл blacklist должен быть отмечен как неудача, а не как пустой список")
 	}

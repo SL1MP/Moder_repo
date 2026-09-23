@@ -7,7 +7,6 @@ import (
 
 	"moderation/internal/config"
 	"moderation/internal/repo"
-	"moderation/internal/storage"
 )
 
 // Фоновый наблюдатель: сам находит пакеты заявок, по которым отчётов ещё нет,
@@ -33,7 +32,7 @@ import (
 // остальные.
 type watcher struct {
 	repo        *repo.Repo
-	storage     storage.Store
+	stores      *stores
 	cfg         *config.Config
 	logger      *slog.Logger
 	interval    time.Duration
@@ -136,7 +135,7 @@ func (w *watcher) tick(ctx context.Context, first bool) {
 		// Прогон одного пакета ограничен по времени отдельно: зависший сканер
 		// не должен останавливать разбор очереди целиком.
 		itemCtx, cancel := context.WithTimeout(ctx, w.itemTimeout)
-		err := scanOne(itemCtx, w.repo, w.storage, w.cfg, itemID, w.logger)
+		err := scanOne(itemCtx, w.repo, w.stores, w.cfg, itemID, w.logger)
 		cancel()
 		if err != nil {
 			w.attempts[itemID]++

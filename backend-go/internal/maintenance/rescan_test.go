@@ -53,6 +53,25 @@ func (d *deletingStore) StatFile(context.Context, string, string) (*artifactstor
 }
 func (d *deletingStore) ReadFile(context.Context, string, string) ([]byte, error) { return nil, nil }
 
+// Сырые операции по путям отзыву пакета не нужны — он снимает опубликованный
+// компонент, а не файл из промежуточной зоны. Реализованы минимально, чтобы
+// удовлетворить контракт.
+func (d *deletingStore) WriteFile(context.Context, string, string, []byte, string) error {
+	return nil
+}
+
+func (d *deletingStore) DeleteFile(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (d *deletingStore) ListFiles(context.Context, string, string) ([]artifactstore.RemoteFile, error) {
+	return nil, nil
+}
+
+func (d *deletingStore) MoveFile(context.Context, string, string, string, string) error {
+	return artifactstore.ErrMoveUnsupported
+}
+
 func (d *deletingStore) Delete(_ context.Context, t artifactstore.Target) (bool, error) {
 	if d.fail {
 		return false, fmt.Errorf("артефактори недоступно")

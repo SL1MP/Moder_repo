@@ -38,6 +38,9 @@ const SchemaVersion = "moderation.scan-report/v1"
 type Kind string
 
 const (
+	KindSandbox Kind = "sandbox_scan"
+	// Виды снятых с конвейера шагов остаются: отчёты, сделанные до снятия,
+	// лежат в хранилище и обязаны читаться (см. domain.RetiredStepCodes).
 	KindBanner Kind = "banner_scan"
 	KindSAST   Kind = "sast_scan"
 )
@@ -45,6 +48,12 @@ const (
 // Title — заголовок вида проверки для человека.
 func (k Kind) Title() string {
 	switch k {
+	case KindSandbox:
+		return "Проверка в песочнице"
+	// Названия снятых видов остаются прежними: отчёт — снимок прогона, и
+	// заголовок в нём отвечает на вопрос «что проверяли», а не «выполняется ли
+	// этот шаг сегодня». Пометка о снятии живёт в domain.StepTitles, то есть
+	// там, где показывается конвейер.
 	case KindBanner:
 		return "Политические баннеры"
 	case KindSAST:

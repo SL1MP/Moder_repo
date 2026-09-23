@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"moderation/internal/artifactstore"
 	"moderation/internal/config"
 	"moderation/internal/db"
 	"moderation/internal/decisions"
@@ -19,7 +18,6 @@ import (
 	"moderation/internal/osv"
 	"moderation/internal/queue"
 	"moderation/internal/repo"
-	"moderation/internal/storage"
 )
 
 // Регламентные задачи рядом с воркером.
@@ -59,19 +57,7 @@ type maintenanceRunner struct {
 	vulnMaxScore       float64
 }
 
-func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, store storage.Store, logger *slog.Logger) *maintenanceRunner {
-	// Артефактори нужно только для снапшота OSV. Его недоступность не должна
-	// мешать остальным задачам, поэтому ошибка сборки клиента — не отказ, а
-	// выключенная синхронизация.
-	artifacts, err := artifactstore.New(artifactstore.Config{
-		Kind: cfg.ArtifactStore, BaseURL: cfg.ArtifactBaseURL,
-		AuthType: artifactstore.AuthType(cfg.ArtifactAuthType),
-		Token:    cfg.ArtifactToken, Username: cfg.ArtifactUser, Password: cfg.ArtifactToken,
-	})
-	if err != nil {
-		logger.Warn("снапшот OSV синхронизироваться не будет: артефактори не настроено", "error", err)
-		artifacts = nil
-	}
+func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, st *stores, logger *slog.Logger) *maintenanceRunner {
 	return &maintenanceRunner{
 		service: &maintenance.Service{
 			Repo: r,
@@ -84,8 +70,8 @@ func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, stor
 					return q.Enqueue(ctx, item.ID, fromStep)
 				},
 			},
-			Storage:   store,
-			Artifacts: artifacts,
+			Storage:   st.Staging,
+			Artifacts: st.Artifacts,
 			Logger:    logger,
 		},
 		logger:             logger,
@@ -236,25 +222,19 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 
 	r := repo.New(pool)
 	q := queue.New(pool, staleAfter(cfg))
-	var store storage.Store
-	if cfg.S3Endpoint != "" {
-		store, err = storage.NewS3(storage.S3Config{
-			Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
-			AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Region: cfg.S3Region,
-			VirtualHost: cfg.S3VirtualHost,
-		})
-		if err != nil {
-			logger.Error("хранилище", "error", err)
-			return 1
+	st, err := newStores(cfg, newHTTPClient())
+	if err != nil {
+		if doCleanup {
+			// Молча пропустить уборку значило бы отчитаться об успехе, ничего
+			// не сделав: хранилище не настроено, а файлы в нём — есть.
+			fmt.Fprintf(os.Stderr, "промежуточная зона недоступна (%v) — уборка пропущена\n", err)
+			doCleanup = false
 		}
-	} else if doCleanup {
-		// Молча пропустить уборку значило бы отчитаться об успехе, ничего не
-		// сделав: хранилище не настроено, а объекты в нём — есть.
-		fmt.Fprintln(os.Stderr, "S3_ENDPOINT не задан — убирать нечего; уборка пропущена")
-		doCleanup = false
+		logger.Error("хранилище", "error", err)
+		return 1
 	}
 
-	runner := newMaintenanceRunner(cfg, r, q, store, logger)
+	runner := newMaintenanceRunner(cfg, r, q, st, logger)
 	code := 0
 	if doOSV {
 		if runner.service.Artifacts == nil {

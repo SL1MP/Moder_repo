@@ -354,13 +354,15 @@ func TestRequestCard(t *testing.T) {
 	}
 	pkg := packages[0].(map[string]any)
 
-	// Шаги отдаются все девять, включая те, до которых прогон не дошёл:
-	// иначе в карточке не видно, что ещё впереди.
+	// Шаги отдаются все, включая те, до которых прогон не дошёл: иначе в
+	// карточке не видно, что ещё впереди. Число берём из domain.StepCodes, а
+	// не литералом: снятие или добавление шага не должно требовать правки
+	// числа в тесте, который проверяет не количество, а полноту.
 	steps := pkg["steps"].([]any)
-	if len(steps) != 9 {
-		t.Fatalf("шагов %d, ожидалось 9", len(steps))
+	if len(steps) != len(domain.StepCodes) {
+		t.Fatalf("шагов %d, ожидалось %d", len(steps), len(domain.StepCodes))
 	}
-	last := steps[8].(map[string]any)
+	last := steps[len(steps)-1].(map[string]any)
 	if last["code"] != "publish" || last["result"] != "pending" {
 		t.Fatalf("последний шаг: %v", last)
 	}

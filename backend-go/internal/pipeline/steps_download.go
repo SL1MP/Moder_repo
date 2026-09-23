@@ -16,8 +16,20 @@ import (
 
 // --------------------------------------------------------------------------- шаг 4
 // DownloadStep — скачивание артефакта из реестра пакетного менеджера напрямую
-// (не через proxy-репозиторий артефактори), через корпоративный HTTP_PROXY, во
-// временное хранилище.
+// (не через proxy-репозиторий артефактори), через корпоративный HTTP_PROXY, в
+// промежуточную зону.
+//
+// Промежуточная зона — отдельный raw-репозиторий артефактори
+// (ARTIFACT_REPO_STAGING), а не объектное хранилище рядом: пакет и так поедет в
+// артефактори, и держать его до этого в другой системе значит админить две.
+// Публикация после этого становится переносом файла внутри одной системы
+// (PublishStep), а не повторной выгрузкой байтов.
+//
+// Из зоны пакет уходит всегда: при публикации — переносом, при отклонении и по
+// таймауту — удалением (purgeArtifact, maintenance.CleanupOrphanObjects). Из
+// репозитория, откуда ставят разработчики, он при этом не виден: конфигурация
+// на старте проверяет, что промежуточная зона не совпадает ни с одним целевым
+// репозиторием.
 type DownloadStep struct{}
 
 func (DownloadStep) Code() string { return "download" }
@@ -83,7 +95,7 @@ func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 
 	key := storage.ArtifactKey(pc.Package.Manager, pc.Package.Name, pc.Version.RawVersion, filename)
 	if _, err := pc.Deps.Storage.Put(ctx, key, payload, "application/octet-stream"); err != nil {
-		return StepOutcome{}, fmt.Errorf("запись артефакта во временное хранилище: %w", err)
+		return StepOutcome{}, fmt.Errorf("запись артефакта в промежуточную зону: %w", err)
 	}
 
 	artifact, err := pc.Deps.Repo.GetOrCreateArtifact(ctx, pc.Version.ID, filename)
@@ -95,20 +107,21 @@ func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	artifact.SHA256 = ptr(sha)
 	artifact.ChecksumAlgo = nilIfEmpty(meta.ChecksumAlgo)
 	artifact.DeclaredChecksum = nilIfEmpty(meta.Checksum)
-	artifact.S3Bucket = ptr(pc.Deps.Storage.Bucket())
-	artifact.S3Key = ptr(key)
-	artifact.S3UploadedAt = timePtr(pc.now())
-	artifact.S3DeletedAt = nil
+	artifact.StagingRepo = ptr(pc.Deps.Storage.Bucket())
+	artifact.StagingPath = ptr(key)
+	artifact.StagedAt = timePtr(pc.now())
+	artifact.StagingClearedAt = nil
 	if err := pc.Deps.Repo.UpdateArtifactDownloaded(ctx, artifact); err != nil {
 		return StepOutcome{}, err
 	}
 	pc.SetPayload(payload)
 
 	return Pass(fmt.Sprintf(
-		"Артефакт %s (%d КБ) скачан из реестра, %s; помещён во временное хранилище: %s",
-		filename, len(payload)/1024, checksumNote, key)).
+		"Артефакт %s (%d КБ) скачан из реестра, %s; помещён в промежуточную зону %s: %s",
+		filename, len(payload)/1024, checksumNote, pc.Deps.Storage.Bucket(), key)).
 		WithDetails(map[string]any{
-			"s3_key": key, "sha256": sha, "size_bytes": len(payload), "filename": filename,
+			"staging_repo": pc.Deps.Storage.Bucket(), "staging_path": key,
+			"sha256": sha, "size_bytes": len(payload), "filename": filename,
 		}), nil
 }
 

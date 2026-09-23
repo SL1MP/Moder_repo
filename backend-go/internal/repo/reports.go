@@ -13,7 +13,7 @@ import (
 
 const scanReportColumns = `id, request_item_id, package_version_id, step_code, scanner, rules,
 	state, threshold, findings_total, findings_blocking, worst_severity, detail,
-	json_key, html_key, bucket, duration_ms, created_at`
+	json_key, html_key, repo, duration_ms, created_at`
 
 // UpsertScanReport — один актуальный отчёт на пару (пакет заявки, шаг):
 // повторный прогон обновляет его, а не плодит строки.
@@ -22,14 +22,14 @@ func (r *Repo) UpsertScanReport(ctx context.Context, report domain.ScanReport) (
 		INSERT INTO scan_report
 			(request_item_id, package_version_id, step_code, scanner, rules, state, threshold,
 			 findings_total, findings_blocking, worst_severity, detail, json_key, html_key,
-			 bucket, duration_ms)
+			 repo, duration_ms)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT ON CONSTRAINT uq_scan_report_item_step DO UPDATE SET
 			scanner = EXCLUDED.scanner, rules = EXCLUDED.rules, state = EXCLUDED.state,
 			threshold = EXCLUDED.threshold, findings_total = EXCLUDED.findings_total,
 			findings_blocking = EXCLUDED.findings_blocking, worst_severity = EXCLUDED.worst_severity,
 			detail = EXCLUDED.detail, json_key = EXCLUDED.json_key, html_key = EXCLUDED.html_key,
-			bucket = EXCLUDED.bucket, duration_ms = EXCLUDED.duration_ms, created_at = now()
+			repo = EXCLUDED.repo, duration_ms = EXCLUDED.duration_ms, created_at = now()
 		RETURNING `+scanReportColumns, //nolint:gocritic // константа колонок, не пользовательский ввод
 		report.RequestItemID, report.PackageVersionID, report.StepCode, report.Scanner,
 		report.Rules, report.State, report.Threshold, report.FindingsTotal,

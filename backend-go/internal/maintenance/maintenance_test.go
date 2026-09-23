@@ -310,13 +310,13 @@ func artifactWithObject(t *testing.T, r *repo.Repo, store *fakeStorage, uploaded
 	}
 	var id int64
 	err = testPool.QueryRow(ctx, `
-		INSERT INTO artifact (package_version_id, filename, s3_bucket, s3_key, s3_uploaded_at, status)
+		INSERT INTO artifact (package_version_id, filename, staging_repo, staging_path, staged_at, status)
 		VALUES ($1, $2, 'test', $3, $4, $5) RETURNING id`,
 		version.ID, name+".whl", key, uploadedAt, status).Scan(&id)
 	if err != nil {
 		t.Fatalf("вставка артефакта: %v", err)
 	}
-	return domain.Artifact{ID: id, S3Key: &key, Status: status}
+	return domain.Artifact{ID: id, StagingPath: &key, Status: status}
 }
 
 // Карантинная зона временная по замыслу: если её не убирать, место кончится
@@ -337,17 +337,17 @@ func TestCleanupRemovesStaleObjects(t *testing.T) {
 	if removed < 1 {
 		t.Fatalf("удалено объектов: %d", removed)
 	}
-	if _, ok := store.objects[*stale.S3Key]; ok {
+	if _, ok := store.objects[*stale.StagingPath]; ok {
 		t.Error("зависший объект остался в хранилище")
 	}
-	if _, ok := store.objects[*fresh.S3Key]; !ok {
+	if _, ok := store.objects[*fresh.StagingPath]; !ok {
 		t.Error("свежий объект удалён — срок жизни не соблюдён")
 	}
 
 	var deletedAt *time.Time
 	var status string
 	if err := testPool.QueryRow(context.Background(),
-		`SELECT s3_deleted_at, status FROM artifact WHERE id=$1`, stale.ID).Scan(&deletedAt, &status); err != nil {
+		`SELECT staging_cleared_at, status FROM artifact WHERE id=$1`, stale.ID).Scan(&deletedAt, &status); err != nil {
 		t.Fatalf("чтение артефакта: %v", err)
 	}
 	if deletedAt == nil {
@@ -387,7 +387,7 @@ func TestCleanupMarksRowEvenWhenStorageFails(t *testing.T) {
 	store := newFakeStorage()
 	now := time.Now().UTC()
 	stale := artifactWithObject(t, r, store, now.Add(-48*time.Hour), "downloaded")
-	store.failOn[*stale.S3Key] = true
+	store.failOn[*stale.StagingPath] = true
 
 	service, _ := newService(t, r, store, now)
 	removed, err := service.CleanupOrphanObjects(context.Background(), 24*time.Hour)
@@ -399,7 +399,7 @@ func TestCleanupMarksRowEvenWhenStorageFails(t *testing.T) {
 	}
 	var deletedAt *time.Time
 	if err := testPool.QueryRow(context.Background(),
-		`SELECT s3_deleted_at FROM artifact WHERE id=$1`, stale.ID).Scan(&deletedAt); err != nil {
+		`SELECT staging_cleared_at FROM artifact WHERE id=$1`, stale.ID).Scan(&deletedAt); err != nil {
 		t.Fatalf("чтение артефакта: %v", err)
 	}
 	if deletedAt == nil {
@@ -447,6 +447,24 @@ func (f *fakeArtifacts) StatFile(context.Context, string, string) (*artifactstor
 func (f *fakeArtifacts) ReadFile(context.Context, string, string) ([]byte, error) {
 	f.reads++
 	return f.payload, nil
+}
+
+// Сырые операции по путям регламентным задачам не нужны: снапшот OSV они
+// только читают. Реализованы минимально, чтобы удовлетворить контракт.
+func (f *fakeArtifacts) WriteFile(context.Context, string, string, []byte, string) error {
+	return nil
+}
+
+func (f *fakeArtifacts) DeleteFile(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeArtifacts) ListFiles(context.Context, string, string) ([]artifactstore.RemoteFile, error) {
+	return nil, nil
+}
+
+func (f *fakeArtifacts) MoveFile(context.Context, string, string, string, string) error {
+	return artifactstore.ErrMoveUnsupported
 }
 
 func snapshotArchive(t *testing.T) ([]byte, string) {

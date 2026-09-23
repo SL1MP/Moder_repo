@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"moderation/internal/artifactstore"
 	"moderation/internal/config"
 	"moderation/internal/db"
 	"moderation/internal/domain"
@@ -107,11 +106,7 @@ func runScan(args []string, logger *slog.Logger) int {
 		return explainItem(ctx, r, *why)
 	}
 
-	store, err := storage.NewS3(storage.S3Config{
-		Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
-		AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Region: cfg.S3Region,
-		VirtualHost: cfg.S3VirtualHost,
-	})
+	st, err := newStores(cfg, newHTTPClient())
 	if err != nil {
 		logger.Error("хранилище не настроено — отчёты некуда положить", "error", err)
 		return 1
@@ -137,7 +132,7 @@ func runScan(args []string, logger *slog.Logger) int {
 
 	failedAny := false
 	for _, target := range targets {
-		if err := scanOne(ctx, r, store, cfg, target, logger); err != nil {
+		if err := scanOne(ctx, r, st, cfg, target, logger); err != nil {
 			logger.Error("пакет не просканирован", "item", target, "error", err)
 			failedAny = true
 		}
@@ -156,8 +151,8 @@ func runScan(args []string, logger *slog.Logger) int {
 }
 
 // scanOne прогоняет сканеры по одному пакету заявки.
-func scanOne(ctx context.Context, r *repo.Repo, store storage.Store, cfg *config.Config, itemID int64, logger *slog.Logger) error {
-	pc, err := buildScanContext(ctx, r, store, cfg)
+func scanOne(ctx context.Context, r *repo.Repo, st *stores, cfg *config.Config, itemID int64, logger *slog.Logger) error {
+	pc, err := buildScanContext(ctx, r, st, cfg)
 	if err != nil {
 		return err
 	}
@@ -197,17 +192,8 @@ func scanOne(ctx context.Context, r *repo.Repo, store storage.Store, cfg *config
 
 // buildScanContext собирает конвейерный контекст со всеми зависимостями,
 // кроме самого пакета: его подставляет loadItem.
-func buildScanContext(_ context.Context, r *repo.Repo, store storage.Store, cfg *config.Config) (*pipeline.Context, error) {
-	httpClient := &http.Client{Timeout: 60 * time.Second}
-	artifacts, err := artifactstore.New(artifactstore.Config{
-		Kind:    cfg.ArtifactStore,
-		BaseURL: cfg.ArtifactBaseURL, AuthType: artifactstore.AuthType(cfg.ArtifactAuthType),
-		Token: cfg.ArtifactToken, Username: cfg.ArtifactUser, Password: cfg.ArtifactToken,
-		DryRun: cfg.ArtifactDryRun, HTTPClient: httpClient,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("артефактори: %w", err)
-	}
+func buildScanContext(_ context.Context, r *repo.Repo, st *stores, cfg *config.Config) (*pipeline.Context, error) {
+	httpClient := newHTTPClient()
 	reg := registry.New(registry.Config{
 		PyPIURL: cfg.RegistryPyPIURL, NpmURL: cfg.RegistryNpmURL,
 		GoProxy: cfg.RegistryGoProxy, NuGetURL: cfg.RegistryNuGetURL,
@@ -215,35 +201,23 @@ func buildScanContext(_ context.Context, r *repo.Repo, store storage.Store, cfg 
 	})
 
 	return &pipeline.Context{
-		Config: pipeline.Config{
-			ArtifactBaseURL: cfg.ArtifactBaseURL,
-			ArtifactRepos: map[string]string{
-				"pypi": cfg.ArtifactRepoPyPI, "npm": cfg.ArtifactRepoNpm,
-				"go": cfg.ArtifactRepoGo, "nuget": cfg.ArtifactRepoNuGet,
-			},
-			QuarantineDays:       cfg.QuarantineDays,
-			VulnMaxScore:         cfg.VulnMaxScore,
-			OSVMaxStalenessDays:  cfg.OSVMaxStalenessDays,
-			MaxArtifactSizeBytes: cfg.MaxArtifactSizeBytes,
-			BannerScanEnabled:    cfg.BannerScanEnabled,
-			SASTEnabled:          cfg.SASTEnabled,
-			SASTMinSeverity:      cfg.SASTMinSeverity,
-			ScanMaxUnpackedBytes: cfg.ScanMaxUnpackedBytes,
-			ScanMaxFiles:         cfg.ScanMaxFiles,
-		},
+		Config: pipelineConfig(cfg),
 		// Политики нужны шагам 1 и 3. Команда их не запускает, но контекст
 		// собирается один и тот же — неполный контекст здесь означал бы, что
 		// при следующем расширении команды шаги молча получат nil.
 		BL:  policy.LoadBlacklist(cfg.BlacklistFile),
 		Lic: policy.LoadLicensePolicy(cfg.AllowedLicensesFile),
 		Deps: pipeline.Deps{
-			Repo: r, Storage: store, Registry: reg,
-			// Индекс уязвимостей и артефактори нужны шагам 5 и 8. Команде
+			Repo: r, Storage: st.Staging, Reports: st.Reports, Registry: reg,
+			// Индекс уязвимостей и артефактори нужны шагам 5 и 7. Команде
 			// `scan` они не требуются, но контекст собирается один и тот же:
 			// неполный контекст уже приводил к падению воркера на шаге, до
 			// которого `scan` не доходит.
 			Index:     osv.NewSnapshotIndex(cfg.OSVLocalDBPath),
-			Artifacts: artifacts,
+			Artifacts: st.Artifacts,
+			Sandbox:   newSandbox(cfg),
+			// Сканеры снятых шагов: конвейер их не вызывает, но контекст
+			// собирается целиком — см. комментарий к Validate.
 			Banner: scanners.YaraScanner{
 				Binary: cfg.BannerScanBin, RulesFile: cfg.BannerRulesFile,
 				Timeout: cfg.BannerScanTimeout,
@@ -282,8 +256,8 @@ func ensureArtifact(ctx context.Context, r *repo.Repo, pc *pipeline.Context, log
 	if err != nil {
 		return err
 	}
-	if artifact != nil && artifact.S3Key != nil && *artifact.S3Key != "" && artifact.S3DeletedAt == nil {
-		if _, err := pc.Deps.Storage.Stat(ctx, *artifact.S3Key); err == nil {
+	if artifact != nil && artifact.StagingPath != nil && *artifact.StagingPath != "" && artifact.StagingClearedAt == nil {
+		if _, err := pc.Deps.Storage.Stat(ctx, *artifact.StagingPath); err == nil {
 			return nil
 		} else if !errors.Is(err, storage.ErrNotFound) {
 			return err

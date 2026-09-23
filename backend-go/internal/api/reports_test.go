@@ -64,8 +64,8 @@ func fixture(t *testing.T, r *repo.Repo, store storage.Store, state string) (int
 		t.Fatal(err)
 	}
 
-	jsonKey := storage.ReportKey(item.ID, "sast_scan", "json")
-	htmlKey := storage.ReportKey(item.ID, "sast_scan", "html")
+	jsonKey := storage.ReportKey(item.ID, "sandbox_scan", "json")
+	htmlKey := storage.ReportKey(item.ID, "sandbox_scan", "html")
 	if _, err := store.Put(ctx, jsonKey,
 		[]byte(`{"schema":"moderation.scan-report/v1","summary":{"blocking":1},"detail":"кириллица"}`),
 		storage.ContentTypeFor("json")); err != nil {
@@ -79,7 +79,7 @@ func fixture(t *testing.T, r *repo.Repo, store storage.Store, state string) (int
 
 	report, err := r.UpsertScanReport(ctx, domain.ScanReport{
 		RequestItemID: item.ID, PackageVersionID: ver.ID,
-		StepCode: "sast_scan", Scanner: "semgrep",
+		StepCode: "sandbox_scan", Scanner: "sandbox (https://sandbox.test)",
 		Rules: strPtr("p/default"), State: state, Threshold: "medium",
 		FindingsTotal: 1, FindingsBlocking: 1, WorstSeverity: strPtr("high"),
 		Detail:  strPtr("файлов просканировано: 12"),
@@ -184,15 +184,15 @@ func TestListReports(t *testing.T) {
 		t.Fatalf("отчётов = %d", len(payload.Reports))
 	}
 	got := payload.Reports[0]
-	if got.StepCode != "sast_scan" || got.StepTitle != "SAST-анализ" {
+	if got.StepCode != "sandbox_scan" || got.StepTitle != "Проверка в песочнице" {
 		t.Errorf("шаг = %+v", got)
 	}
 	// Ссылки относительные и сразу пригодны для UI; ключ хранилища наружу не
 	// уходит.
-	if !strings.HasSuffix(got.JSONURL, "/reports/sast_scan.json") {
+	if !strings.HasSuffix(got.JSONURL, "/reports/sandbox_scan.json") {
 		t.Errorf("JSONURL = %q", got.JSONURL)
 	}
-	if strings.Contains(rec.Body.String(), "reports/"+itoa(itemID)+"/sast_scan.json") {
+	if strings.Contains(rec.Body.String(), "reports/"+itoa(itemID)+"/sandbox_scan.json") {
 		t.Error("ключ объекта в хранилище утёк в ответ API")
 	}
 }
@@ -222,7 +222,7 @@ func TestDownloadJSONAndHTML(t *testing.T) {
 	itemID, _ := fixture(t, r, store, "findings")
 	h := newServer(t, r, store)
 
-	jsonRec := get(t, h, "/api/v1/request-items/"+itoa(itemID)+"/reports/sast_scan.json")
+	jsonRec := get(t, h, "/api/v1/request-items/"+itoa(itemID)+"/reports/sandbox_scan.json")
 	if jsonRec.Code != http.StatusOK {
 		t.Fatalf("json: код = %d", jsonRec.Code)
 	}
@@ -237,7 +237,7 @@ func TestDownloadJSONAndHTML(t *testing.T) {
 		t.Error("json: кириллица искажена по дороге")
 	}
 
-	htmlRec := get(t, h, "/api/v1/request-items/"+itoa(itemID)+"/reports/sast_scan.html")
+	htmlRec := get(t, h, "/api/v1/request-items/"+itoa(itemID)+"/reports/sandbox_scan.html")
 	if htmlRec.Code != http.StatusOK {
 		t.Fatalf("html: код = %d", htmlRec.Code)
 	}
@@ -283,7 +283,7 @@ func TestMissingFileInStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := get(t, newServer(t, r, store), "/api/v1/request-items/"+itoa(itemID)+"/reports/sast_scan.json")
+	rec := get(t, newServer(t, r, store), "/api/v1/request-items/"+itoa(itemID)+"/reports/sandbox_scan.json")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("код = %d", rec.Code)
 	}
@@ -302,7 +302,7 @@ func TestUnknownFileNameRejected(t *testing.T) {
 	h := newServer(t, r, store)
 
 	for _, name := range []string{
-		"sast_scan.txt", "../../etc/passwd", "sast_scan", "vuln_scan.json", "sast_scan.json.bak",
+		"sandbox_scan.txt", "../../etc/passwd", "sandbox_scan", "vuln_scan.json", "sandbox_scan.json.bak",
 	} {
 		rec := get(t, h, "/api/v1/request-items/"+itoa(itemID)+"/reports/"+name)
 		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMovedPermanently {

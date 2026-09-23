@@ -47,6 +47,19 @@ func SeverityRank(severity string) int {
 	return 2 // medium
 }
 
+// KnownSeverity — есть ли такое значение в шкале. Отличать «high» от значения,
+// которого мы не знаем, обязательно: SeverityRank незнакомое молча приравнивает
+// к medium, и вызывающий код не может увидеть, что серьёзность на самом деле не
+// сообщили. Песочнице это важно — она серьёзность присылает не всегда.
+func KnownSeverity(severity string) bool {
+	for _, s := range SeverityOrder {
+		if s == severity {
+			return true
+		}
+	}
+	return false
+}
+
 // Finding — находка сканера содержимого.
 type Finding struct {
 	Scanner  string `json:"scanner"`

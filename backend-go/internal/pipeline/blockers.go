@@ -12,21 +12,29 @@ import "moderation/internal/domain"
 // ВАЖНО: таблицы ниже — единственный источник правды по тому, чьё решение
 // требуется. Дублировать их в другом модуле нельзя: в Python-версии это уже
 // один раз сделали и получили KeyError: 'banner_scan' в бою.
+//
+// Снятых шагов (domain.RetiredStepCodes) здесь нет и быть не должно: в таблицах
+// перечислено, чьё решение ждёт пакет ПРЯМО СЕЙЧАС, а шаг, который больше не
+// выполняется, ждать ничего не может. Старые строки banner_scan с результатом
+// warn перевела в info миграция 0013 — иначе пакеты, остановленные снятым
+// шагом, ждали бы решения, которого никто уже не примет (ровно та же история,
+// что с sast_scan в 0010).
 
 // BlockerPriority — порядок по «блокирующей силе». Статус у пакета один, а
 // ждать он может двух решений сразу; показываем самое блокирующее, чтобы
 // статус не «слабел» при действиях по менее важному шагу.
 //
-// sast_scan здесь нет и быть не должно: SAST — информационный шаг, он ничьего
-// решения не ждёт (см. contentScanStep.advisory).
-var BlockerPriority = []string{"vuln_scan", "banner_scan", "license", "quarantine"}
+// Песочница стоит первой: её вердикт DANGEROUS — это «в пакете нашли вредонос
+// при запуске», то есть находка весомее и уязвимости по базе, и просроченной
+// лицензии.
+var BlockerPriority = []string{"sandbox_scan", "vuln_scan", "license", "quarantine"}
 
 // BlockerStatus — статус пакета, пока шаг не погашен.
 var BlockerStatus = map[string]string{
-	"vuln_scan":   "awaiting_security",
-	"banner_scan": "awaiting_security",
-	"license":     "awaiting_legal",
-	"quarantine":  "quarantined",
+	"sandbox_scan": "awaiting_security",
+	"vuln_scan":    "awaiting_security",
+	"license":      "awaiting_legal",
+	"quarantine":   "quarantined",
 }
 
 // OpenResults — какие результаты шага означают «решение роли ещё не принято».
@@ -34,42 +42,44 @@ var BlockerStatus = map[string]string{
 // порога. Оба уходят к DevSecOps, а не отклоняют пакет сами по себе.
 var OpenResults = map[string][]string{
 	"vuln_scan": {"warn", "fail"},
-	// Баннерный сканер конвейер не останавливает: находка уходит DevSecOps
-	// как warn, чтобы он увидел все срабатывания разом, а не по одному.
-	"banner_scan": {"warn"},
-	// sast_scan не указан СОЗНАТЕЛЬНО: результат SAST не блокирует публикацию
-	// ни при каком значении. Пустой список тут равносилен отсутствию ключа, но
-	// отсутствие — это ещё и то, что видно при чтении: шага в таблице нет.
-	"license":    {"warn"},
-	"quarantine": {"warn"},
+	// У песочницы их два по той же причине, что у проверки уязвимостей:
+	// fail — вердикт DANGEROUS, warn — песочница не ответила или вернула
+	// вердикт, которого мы не знаем. Оба случая — «публиковать нельзя, пока не
+	// посмотрит человек», а не «чисто».
+	//
+	// Вердикта UNWANTED здесь нет СОЗНАТЕЛЬНО: он отдаётся результатом info —
+	// пометка в карточке и в отчёте, публикацию не держит (решение
+	// пользователя, docs/scanning-and-reports.md).
+	"sandbox_scan": {"warn", "fail"},
+	"license":      {"warn"},
+	"quarantine":   {"warn"},
 }
 
 // BlockerRole — кто выносит решение. У карантина роли нет: это срок, а не
 // решение (снять досрочно может DevSecOps, но обычный путь — истечение).
 var BlockerRole = map[string]string{
-	"vuln_scan":   "devsecops",
-	"banner_scan": "devsecops",
-	"license":     "legal",
-	"quarantine":  "",
+	"sandbox_scan": "devsecops",
+	"vuln_scan":    "devsecops",
+	"license":      "legal",
+	"quarantine":   "",
 }
 
 // BlockerWaitingFor — как назвать ожидание пользователю.
 var BlockerWaitingFor = map[string]string{
-	"vuln_scan":   "DevSecOps",
-	"banner_scan": "DevSecOps",
-	"license":     "юристов",
-	"quarantine":  "окончания карантина",
+	"sandbox_scan": "DevSecOps",
+	"vuln_scan":    "DevSecOps",
+	"license":      "юристов",
+	"quarantine":   "окончания карантина",
 }
 
 // SecurityBlockers — шаги, которые снимает одно решение DevSecOps: он
 // принимает решение по содержимому пакета целиком, а не по каждому сканеру
 // отдельно.
 //
-// sast_scan сюда не входит: снимать нечего, его результат публикацию не
-// держит. Строки sast_scan со старым результатом warn миграция 0010
-// перевела в info — без этого карточка показывала «остановка» по шагу,
-// который уже ничего не останавливает.
-var SecurityBlockers = []string{"vuln_scan", "banner_scan"}
+// Снятых шагов тут нет по той же причине, что и в таблицах выше: снимать
+// нечего. Строки banner_scan со старым результатом warn перевела в info
+// миграция 0013.
+var SecurityBlockers = []string{"vuln_scan", "sandbox_scan"}
 
 // PendingBlockers — шаги, ждущие решения роли, в порядке убывания блокирующей
 // силы.

@@ -222,8 +222,8 @@ func artifactViews(artifacts []domain.Artifact) []map[string]any {
 			"nexus_url":     a.NexusURL,
 			"sha256":        a.SHA256,
 			"size_bytes":    a.SizeBytes,
-			"s3_key":        a.S3Key,
-			"s3_deleted_at": a.S3DeletedAt,
+			"s3_key":        a.StagingPath,
+			"s3_deleted_at": a.StagingClearedAt,
 			"status":        a.Status,
 		})
 	}

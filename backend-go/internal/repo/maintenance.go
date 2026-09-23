@@ -53,13 +53,13 @@ func (r *Repo) ExpiredQuarantineItems(ctx context.Context, now time.Time) ([]dom
 func (r *Repo) OrphanArtifacts(ctx context.Context, cutoff time.Time) ([]domain.Artifact, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, package_version_id, filename, source_url, size_bytes, sha256,
-		       declared_checksum, checksum_algo, s3_bucket, s3_key, s3_uploaded_at,
-		       s3_deleted_at, nexus_url, published_at, status
+		       declared_checksum, checksum_algo, staging_repo, staging_path, staged_at,
+		       staging_cleared_at, nexus_url, published_at, status
 		FROM artifact
-		WHERE s3_key IS NOT NULL
-		  AND s3_deleted_at IS NULL
-		  AND s3_uploaded_at IS NOT NULL
-		  AND s3_uploaded_at < $1
+		WHERE staging_path IS NOT NULL
+		  AND staging_cleared_at IS NULL
+		  AND staged_at IS NOT NULL
+		  AND staged_at < $1
 		ORDER BY id
 	`, cutoff)
 	if err != nil {

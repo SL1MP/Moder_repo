@@ -22,19 +22,53 @@ var Steps = []Step{
 	LicenseStep{},
 	DownloadStep{},
 	VulnScanStep{},
-	BannerScanStep,
-	SastScanStep,
+	SandboxScanStep{},
 	PublishStep{},
 }
 
-// StepByCode — шаг по коду.
+// RetiredSteps — шаги, снятые с конвейера, но не удалённые.
+//
+// Они не выполняются: в Steps их нет, и runner до них не доходит. Хранятся
+// собранными, потому что «на данном этапе пока убрать» — это не «удалить
+// насовсем»: вернуть шаг в строй нужно уметь одной строкой в Steps плюс
+// миграцией на CHECK-ограничение, а не переписыванием сканера заново.
+//
+// Второе их назначение — чтение истории: StepByCode находит и снятый шаг,
+// поэтому карточка заявки, проверенной до снятия, показывает шаг с его
+// настоящим названием, а не «unknown».
+var RetiredSteps = []Step{
+	BannerScanStep,
+	SastScanStep,
+}
+
+// StepByCode — шаг по коду: сначала среди действующих, затем среди снятых.
+//
+// Порядок важен: действующий шаг обязан найтись первым, даже если когда-нибудь
+// код совпадёт. Возобновление конвейера ищет шаг именно здесь, и подсунуть ему
+// снятый шаг значило бы выполнить проверку, которую решили не выполнять.
 func StepByCode(code string) (Step, bool) {
 	for _, step := range Steps {
 		if step.Code() == code {
 			return step, true
 		}
 	}
+	for _, step := range RetiredSteps {
+		if step.Code() == code {
+			return step, true
+		}
+	}
 	return nil, false
+}
+
+// IsActiveStep — выполняется ли шаг сейчас. Снятый шаг в StepByCode есть, но
+// запускать его нельзя.
+func IsActiveStep(code string) bool {
+	for _, step := range Steps {
+		if step.Code() == code {
+			return true
+		}
+	}
+	return false
 }
 
 // --------------------------------------------------------------------------- шаг 0
@@ -200,21 +234,37 @@ func (LicenseStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 
 // --------------------------------------------------------------------------- вспомогательное
 
-// purgeArtifact удаляет объект из карантинной зоны и фиксирует время удаления.
-// keepStatus=true — объект удалён после успешной публикации, это штатная
-// уборка, а не «purged».
+// purgeArtifact удаляет файл из промежуточной зоны и фиксирует время очистки.
+// keepStatus=true — файл убран после успешной публикации, это штатная уборка,
+// а не «purged».
 func purgeArtifact(ctx context.Context, pc *Context, artifact *domain.Artifact, keepStatus bool) error {
-	if artifact == nil || artifact.S3Key == nil || *artifact.S3Key == "" || artifact.S3DeletedAt != nil {
+	if artifact == nil || artifact.StagingPath == nil || *artifact.StagingPath == "" ||
+		artifact.StagingClearedAt != nil {
 		return nil
 	}
-	if err := pc.Deps.Storage.Delete(ctx, *artifact.S3Key); err != nil {
-		return fmt.Errorf("удаление объекта из временного хранилища: %w", err)
+	if err := pc.Deps.Storage.Delete(ctx, *artifact.StagingPath); err != nil {
+		return fmt.Errorf("удаление файла из промежуточной зоны: %w", err)
+	}
+	return markStagingCleared(ctx, pc, artifact)
+}
+
+// markStagingCleared фиксирует, что в промежуточной зоне файла больше нет.
+//
+// Отдельно от purgeArtifact, потому что после переноса внутри артефактори
+// удалять уже нечего — файл переложил сам артефактори, — но отметку поставить
+// обязательно: без неё уборка будет вечно находить «забытый» артефакт и
+// пытаться удалить то, чего нет.
+func markStagingCleared(ctx context.Context, pc *Context, artifact *domain.Artifact) error {
+	if artifact == nil || artifact.StagingClearedAt != nil {
+		return nil
 	}
 	now := pc.now()
-	if err := pc.Deps.Repo.MarkArtifactPurged(ctx, artifact.ID, now, keepStatus); err != nil {
+	// keepStatus=true: сюда приходят только после успешной публикации, а
+	// «purged» рядом с published означало бы, что пакет сняли.
+	if err := pc.Deps.Repo.MarkArtifactPurged(ctx, artifact.ID, now, true); err != nil {
 		return err
 	}
-	artifact.S3DeletedAt = &now
+	artifact.StagingClearedAt = &now
 	pc.DropPayload()
 	return nil
 }

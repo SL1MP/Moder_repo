@@ -24,6 +24,7 @@ import (
 	"moderation/internal/policy"
 	"moderation/internal/registry"
 	"moderation/internal/repo"
+	"moderation/internal/sandbox"
 	"moderation/internal/scanners"
 	"moderation/internal/storage"
 )
@@ -194,7 +195,92 @@ func (f *fakeArtifactStore) ReadFile(_ context.Context, repoName, path string) (
 	return data, nil
 }
 
+func (f *fakeArtifactStore) WriteFile(_ context.Context, repoName, path string, data []byte, _ string) error {
+	f.published[repoName+"/"+path] = data
+	return nil
+}
+
+func (f *fakeArtifactStore) DeleteFile(_ context.Context, repoName, path string) (bool, error) {
+	key := repoName + "/" + path
+	if _, ok := f.published[key]; !ok {
+		return false, nil
+	}
+	delete(f.published, key)
+	return true, nil
+}
+
+func (f *fakeArtifactStore) ListFiles(_ context.Context, repoName, prefix string) ([]artifactstore.RemoteFile, error) {
+	var out []artifactstore.RemoteFile
+	for key, data := range f.published {
+		path, ok := strings.CutPrefix(key, repoName+"/")
+		if !ok || !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		out = append(out, artifactstore.RemoteFile{Path: path, SizeBytes: int64(len(data))})
+	}
+	return out, nil
+}
+
+// MoveFile — перенос поддержан: тесты обязаны проходить основной путь
+// публикации (перенос внутри артефактори), а не только запасной.
+func (f *fakeArtifactStore) MoveFile(_ context.Context, srcRepo, srcPath, dstRepo, dstPath string) error {
+	// publishErr относится и к переносу: для вызывающего это одно и то же —
+	// «артефактори не принял пакет». Проверять отказ только на запасном пути
+	// значило бы не проверять основной.
+	if f.publishErr != nil {
+		return f.publishErr
+	}
+	src := srcRepo + "/" + srcPath
+	data, ok := f.published[src]
+	if !ok {
+		return fmt.Errorf("переносить нечего: в %s нет файла %s", srcRepo, srcPath)
+	}
+	delete(f.published, src)
+	f.published[dstRepo+"/"+dstPath] = data
+	return nil
+}
+
 func (f *fakeArtifactStore) DryRun() bool { return f.dryRun }
+
+// fakeSandbox — песочница с заранее заданным вердиктом.
+//
+// Настоящая реализация контракта, а не заглушка на один вызов: считает
+// обращения и умеет быть ненастроенной (available=false) — именно это
+// различие шаг обязан отличать от «чисто».
+type fakeSandbox struct {
+	available bool
+	result    sandbox.Result
+	err       error
+	calls     int
+	// lastFile — имя файла, которое шаг отправил. Проверяется тестом: в
+	// песочницу обязан уходить тот файл, который будет опубликован.
+	lastFile string
+	lastSize int
+}
+
+func newFakeSandbox() *fakeSandbox {
+	return &fakeSandbox{
+		available: true,
+		result:    sandbox.Result{Verdict: sandbox.VerdictClean, ScanID: "scan-1"},
+	}
+}
+
+func (f *fakeSandbox) Available() bool { return f.available }
+
+func (f *fakeSandbox) Endpoint() string { return "https://sandbox.test" }
+
+func (f *fakeSandbox) Check(_ context.Context, filename string, payload []byte) (sandbox.Result, error) {
+	f.calls++
+	f.lastFile, f.lastSize = filename, len(payload)
+	if f.err != nil {
+		return sandbox.Result{}, f.err
+	}
+	result := f.result
+	if result.ScanID != "" && result.TaskURL == "" {
+		result.TaskURL = f.Endpoint() + "/tasks/" + result.ScanID
+	}
+	return result, nil
+}
 
 // fakeScanner — сканер содержимого с заранее заданным исходом.
 type fakeScanner struct {
@@ -214,9 +300,14 @@ func (f *fakeScanner) Scan(context.Context, string) (scanners.Outcome, error) {
 // --------------------------------------------------------------------- сборка окружения
 
 type env struct {
-	t         *testing.T
-	repo      *repo.Repo
-	storage   *storage.Memory
+	t       *testing.T
+	repo    *repo.Repo
+	storage *storage.Memory
+	// reports — хранилище отчётов, отдельное от промежуточной зоны: в бою это
+	// разные репозитории артефактори, и тест, складывающий их в одно место,
+	// не заметил бы, что отчёт вычищается вместе с артефактом.
+	reports   *storage.Memory
+	sandbox   *fakeSandbox
 	artifacts *fakeArtifactStore
 	fetcher   *fakeFetcher
 	banner    *fakeScanner
@@ -271,10 +362,27 @@ func newEnv(t *testing.T, r *repo.Repo) *env {
 		}`},
 	})
 
+	staging := storage.NewMemory("test-staging")
+	artifacts := newFakeArtifactStore()
+	// Перенос внутри артефактори — основной путь публикации, и проверяться он
+	// обязан так же, как запасной. Приёмник кладёт байты в тот же фейковый
+	// артефактори, куда их положила бы выгрузка.
+	staging.SetMoveSink(func(ctx context.Context, _ string, data []byte, dstRepo, dstPath string) error {
+		// publishErr относится и к переносу: для вызывающего это одно и то же —
+		// «артефактори не принял пакет». Проверять отказ только на запасном
+		// пути (скачать и выгрузить) значило бы не проверять основной.
+		if artifacts.publishErr != nil {
+			return artifacts.publishErr
+		}
+		return artifacts.WriteFile(ctx, dstRepo, dstPath, data, "application/octet-stream")
+	})
+
 	return &env{
 		t: t, repo: r,
-		storage:   storage.NewMemory("test-artifacts"),
-		artifacts: newFakeArtifactStore(),
+		storage:   staging,
+		reports:   storage.NewMemory("test-reports"),
+		sandbox:   newFakeSandbox(),
+		artifacts: artifacts,
 		fetcher:   &fakeFetcher{files: map[string][]byte{artifactURL: payload}},
 		banner:    &fakeScanner{name: "yara", outcome: scanners.Outcome{Available: true, Detail: "правил сработало: 0"}},
 		sast:      &fakeScanner{name: "semgrep", outcome: scanners.Outcome{Available: true, Detail: "файлов: 1"}},
@@ -286,6 +394,7 @@ func newEnv(t *testing.T, r *repo.Repo) *env {
 			MaxArtifactSizeBytes: 10 << 20,
 			VulnMaxScore:         70,
 			OSVMaxStalenessDays:  7,
+			SandboxEnabled:       true,
 			BannerScanEnabled:    true,
 			SASTEnabled:          true,
 			SASTMinSeverity:      "medium",
@@ -297,8 +406,8 @@ func newEnv(t *testing.T, r *repo.Repo) *env {
 
 func (e *env) deps() pipeline.Deps {
 	return pipeline.Deps{
-		Repo: e.repo, Storage: e.storage, Artifacts: e.artifacts,
-		Index: e.index, Registry: e.registry,
+		Repo: e.repo, Storage: e.storage, Reports: e.reports, Artifacts: e.artifacts,
+		Index: e.index, Registry: e.registry, Sandbox: e.sandbox,
 		Banner: e.banner, SAST: e.sast, Fetch: e.fetcher,
 		Now: func() time.Time { return e.now },
 	}

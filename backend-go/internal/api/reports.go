@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -104,7 +105,7 @@ func (h *ReportsHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Download — GET /api/v1/request-items/{itemID}/reports/{file}
-// где file — `banner_scan.json`, `sast_scan.html` и т.п.
+// где file — `sandbox_scan.json`, `sandbox_scan.html` и т.п.
 func (h *ReportsHandler) Download(w http.ResponseWriter, r *http.Request) {
 	itemID, ok := pathInt64(w, r, "itemID")
 	if !ok {
@@ -112,8 +113,11 @@ func (h *ReportsHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	stepCode, format, ok := splitReportFile(chi.URLParam(r, "file"))
 	if !ok {
+		// Список собирается из тех же кодов, по которым отчёты пишутся:
+		// своя копия рядом разъехалась бы при первом же изменении набора
+		// шагов, и сообщение называло бы имена, которых больше нет.
 		writeError(w, r, errNotFound(
-			"Отчёт запрашивается как banner_scan.json, banner_scan.html, sast_scan.json или sast_scan.html"))
+			"Отчёт запрашивается как "+strings.Join(reportFileNames(), ", ")))
 		return
 	}
 
@@ -155,12 +159,28 @@ func (h *ReportsHandler) Download(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
-// splitReportFile разбирает `sast_scan.json` на код шага и формат. Проверка по
+// reportFileNames — все допустимые имена файлов отчёта, для сообщения об
+// ошибке. Отдельная функция, чтобы список в сообщении не мог разойтись со
+// списком, по которому имя проверяется.
+func reportFileNames() []string {
+	names := make([]string, 0, len(domain.ScanReportStepCodes)*2)
+	for _, code := range domain.ScanReportStepCodes {
+		for _, ext := range reportFormats {
+			names = append(names, code+"."+ext)
+		}
+	}
+	return names
+}
+
+// reportFormats — форматы, в которых отдаётся отчёт.
+var reportFormats = []string{"json", "html"}
+
+// splitReportFile разбирает `sandbox_scan.json` на код шага и формат. Проверка по
 // белым спискам, а не по разбору строки: код шага и формат уходят в ключ
 // объекта, и принимать сюда произвольную строку из URL нельзя.
 func splitReportFile(file string) (stepCode, format string, ok bool) {
 	for _, code := range domain.ScanReportStepCodes {
-		for _, ext := range []string{"json", "html"} {
+		for _, ext := range reportFormats {
 			if file == code+"."+ext {
 				return code, ext, true
 			}

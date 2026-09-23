@@ -78,6 +78,19 @@ type Store interface {
 	StatFile(ctx context.Context, repo, path string) (*RemoteFile, error)
 	// ReadFile — содержимое файла (нужно для снапшота OSV).
 	ReadFile(ctx context.Context, repo, path string) ([]byte, error)
+
+	// Сырые операции по произвольному пути внутри repo — промежуточная зона
+	// артефактов и хранилище отчётов (см. files.go). От Publish отличаются
+	// тем, что путь задаёт вызывающий, а не формат репозитория.
+	WriteFile(ctx context.Context, repo, path string, data []byte, contentType string) error
+	// DeleteFile: false без ошибки — файла и не было, это штатный исход.
+	DeleteFile(ctx context.Context, repo, path string) (bool, error)
+	ListFiles(ctx context.Context, repo, prefix string) ([]RemoteFile, error)
+	// MoveFile переносит файл внутри артефактори, не прогоняя байты через
+	// сервис. ErrMoveUnsupported — так делать нельзя, вызывающий обязан
+	// скачать и выгрузить сам.
+	MoveFile(ctx context.Context, srcRepo, srcPath, dstRepo, dstPath string) error
+
 	// DryRun — включён ли режим «проверить доступ, но не писать».
 	DryRun() bool
 }

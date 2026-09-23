@@ -123,7 +123,7 @@ func (s contentScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, err
 		Now:       pc.now,
 	})
 
-	reportKeys, reportErr := s.saveReport(ctx, pc, report)
+	reportKeys, reportErr := saveScanReport(ctx, pc, s.code, report)
 	// Отчёт — не условие прохождения шага: если хранилище недоступно, вердикт
 	// по пакету всё равно вынесен, и терять его из-за отчёта нельзя. Но
 	// умолчать тоже нельзя — недоступность попадает в сообщение шага.
@@ -288,10 +288,16 @@ func (s contentScanStep) storeFindings(ctx context.Context, pc *Context, outcome
 
 type reportKeys struct{ json, html string }
 
-// saveReport кладёт оба файла отчёта в объектное хранилище и пишет строку
-// scan_report. Отчёт живёт под префиксом reports/ и переживает вычистку
-// артефактов при отклонении пакета — именно им DevSecOps объясняет решение.
-func (s contentScanStep) saveReport(ctx context.Context, pc *Context, report *reports.Report) (reportKeys, error) {
+// saveReport кладёт оба файла отчёта в хранилище отчётов и пишет строку
+// scan_report. Отчёт живёт отдельно от артефакта и переживает его вычистку при
+// отклонении пакета — именно им DevSecOps объясняет решение.
+//
+// Свободная функция, а не метод: тем же кодом сохраняет отчёт шаг песочницы,
+// который сканером содержимого не является (он отправляет архив целиком, а не
+// обходит распакованные файлы). Своя копия этой функции рядом разъехалась бы с
+// этой при первом же изменении формата — ровно так в python-версии разъехались
+// таблицы блокировок.
+func saveScanReport(ctx context.Context, pc *Context, code string, report *reports.Report) (reportKeys, error) {
 	jsonBody, err := report.JSON()
 	if err != nil {
 		return reportKeys{}, err
@@ -302,20 +308,20 @@ func (s contentScanStep) saveReport(ctx context.Context, pc *Context, report *re
 	}
 
 	keys := reportKeys{
-		json: storage.ReportKey(pc.Item.ID, s.code, "json"),
-		html: storage.ReportKey(pc.Item.ID, s.code, "html"),
+		json: storage.ReportKey(pc.Item.ID, code, "json"),
+		html: storage.ReportKey(pc.Item.ID, code, "html"),
 	}
-	if _, err := pc.Deps.Storage.Put(ctx, keys.json, jsonBody, storage.ContentTypeFor("json")); err != nil {
+	if _, err := pc.Deps.Reports.Put(ctx, keys.json, jsonBody, storage.ContentTypeFor("json")); err != nil {
 		return reportKeys{}, err
 	}
-	if _, err := pc.Deps.Storage.Put(ctx, keys.html, htmlBody, storage.ContentTypeFor("html")); err != nil {
+	if _, err := pc.Deps.Reports.Put(ctx, keys.html, htmlBody, storage.ContentTypeFor("html")); err != nil {
 		return reportKeys{}, err
 	}
 
 	row := domain.ScanReport{
 		RequestItemID:    pc.Item.ID,
 		PackageVersionID: pc.Version.ID,
-		StepCode:         s.code,
+		StepCode:         code,
 		Scanner:          report.Scan.Scanner,
 		Rules:            nilIfEmpty(report.Scan.Rules),
 		State:            report.State(),
@@ -326,7 +332,7 @@ func (s contentScanStep) saveReport(ctx context.Context, pc *Context, report *re
 		Detail:           nilIfEmpty(report.Scan.Detail),
 		JSONKey:          keys.json,
 		HTMLKey:          keys.html,
-		Bucket:           nilIfEmpty(pc.Deps.Storage.Bucket()),
+		Bucket:           nilIfEmpty(pc.Deps.Reports.Bucket()),
 		DurationMs:       ptr(int(report.Scan.DurationMs)),
 	}
 	if _, err := pc.Deps.Repo.UpsertScanReport(ctx, row); err != nil {

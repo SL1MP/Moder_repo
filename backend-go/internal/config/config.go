@@ -25,22 +25,18 @@ type Config struct {
 	ListenAddr  string
 	DatabaseURL string
 
-	// Хранилище отчётов и артефактов (карантинная зона). Пустой S3Endpoint —
-	// хранилище не настроено: сервис поднимается, но выдача отчётов отключена.
-	// Падать на старте из-за отчётов нельзя: health должен отвечать.
-	S3Endpoint  string
-	S3Bucket    string
-	S3AccessKey string
-	S3SecretKey string
-	S3Region    string
-	// S3VirtualHost — адресация bucket.endpoint/key вместо endpoint/bucket/key.
+	// Хранилища сервиса — оба в артефактори, отдельного объектного хранилища
+	// у сервиса больше нет (отказ от S3, решение пользователя).
 	//
-	// По умолчанию false (path-style): так работают MinIO и SeaweedFS, то есть
-	// то, что поднимается рядом в compose. Внешние хранилища — в том числе
-	// сертифицированные — часто требуют именно virtual-host, и без этой
-	// настройки подключить их было нельзя: клиент умел оба стиля, но выбрать
-	// было нечем.
-	S3VirtualHost bool
+	// ArtifactRepoStaging — промежуточная зона: скачанный пакет лежит в ней,
+	// пока идут проверки, и переезжает в репозиторий своего менеджера после
+	// того, как все они пройдены. ArtifactRepoReports — отчёты сканирования,
+	// живущие дольше самого артефакта.
+	//
+	// Оба обязаны быть репозиториями типа raw (generic у Artifactory): в них
+	// кладутся файлы по произвольным путям, а не пакеты.
+	ArtifactRepoStaging string
+	ArtifactRepoReports string
 
 	// Файлы политик. Те же, что читает python-версия, и монтируются они тем
 	// же томом (./config:/config:ro): расхождение в том, какая лицензия
@@ -48,9 +44,30 @@ type Config struct {
 	BlacklistFile       string
 	AllowedLicensesFile string
 
-	// Сканеры содержимого. Имена переменных те же, что у python-версии
-	// (см. .env.example): обе версии читают один .env, и расхождение в именах
-	// означало бы, что шаг выключен в одной и включён в другой.
+	// Песочница — шаг sandbox_scan. Артефакт целиком уходит во внешнюю
+	// систему, та запускает его и возвращает вердикт (CLEAN / UNWANTED /
+	// DANGEROUS). Имена переменных — те же, что в CI-шаблоне `.send_to_sandbox`
+	// (SANDBOX_URL, SEC_TOKEN), чтобы один и тот же секрет не приходилось
+	// заводить дважды под разными именами.
+	SandboxEnabled bool
+	SandboxURL     string
+	SandboxToken   string
+	// SandboxPriority — приоритет задачи в очереди песочницы; в CI-шаблоне 3.
+	SandboxPriority int
+	// SandboxShortResult — короткий ответ вместо полного (в CI — true).
+	SandboxShortResult bool
+	// SandboxTimeout — потолок на один запрос. Песочница запускает образец
+	// по-настоящему, поэтому потолок минутный, а не секундный.
+	SandboxTimeout time.Duration
+	// SandboxInsecureTLS — принимать самоподписанный сертификат: это `curl -k`
+	// из CI-шаблона. Отдельной настройкой, а не молча: выключенная проверка
+	// сертификата обязана быть видимым решением, а не строчкой в скрипте.
+	SandboxInsecureTLS bool
+
+	// Сканеры содержимого СНЯТЫХ шагов (pipeline.RetiredSteps): политические
+	// баннеры и SAST. Конвейер их не запускает — настройки оставлены вместе с
+	// самими шагами, чтобы возврат в строй не требовал ещё и восстановления
+	// конфигурации. Имена переменных те же, что у python-версии.
 	BannerScanEnabled bool
 	BannerRulesFile   string
 	BannerScanBin     string
@@ -71,11 +88,14 @@ type Config struct {
 	// Артефактори: адрес и целевые репозитории. Нужны, чтобы отдавать команду
 	// установки одобренного пакета — её показывает карточка пакета и карточка
 	// заявки.
-	ArtifactBaseURL   string
-	ArtifactRepoPyPI  string
-	ArtifactRepoNpm   string
-	ArtifactRepoGo    string
-	ArtifactRepoNuGet string
+	ArtifactBaseURL string
+	// ArtifactRepos — репозиторий на каждый менеджер, ключ — код менеджера.
+	// Читается из ARTIFACT_REPO_{МЕНЕДЖЕР}, по умолчанию «{менеджер}-internal».
+	//
+	// Карта, а не поле на менеджер: менеджеров двенадцать, и каждый новый
+	// требовал бы правки в четырёх местах (поле, чтение, switch, .env.example).
+	// Ровно так уже разъезжались списки допустимых значений.
+	ArtifactRepos map[string]string
 
 	// Реестры пакетных менеджеров.
 	RegistryPyPIURL  string
@@ -182,26 +202,35 @@ func Load(getenv func(string) string) (*Config, error) {
 	var errs []error
 
 	cfg := &Config{
-		AppEnv:      valueOr(getenv("APP_ENV"), "dev"),
-		AppName:     valueOr(getenv("APP_NAME"), "Модерация пакетов"),
-		ListenAddr:  valueOr(getenv("LISTEN_ADDR"), ":8000"),
-		DatabaseURL: getenv("DATABASE_URL"),
-		S3Endpoint:  getenv("S3_ENDPOINT"),
-		S3Bucket:    valueOr(getenv("S3_BUCKET"), "moderation-artifacts"),
-		S3AccessKey: getenv("S3_ACCESS_KEY"),
-		S3SecretKey: getenv("S3_SECRET_KEY"),
-		S3Region:    valueOr(getenv("S3_REGION"), "us-east-1"),
-		// Значение по умолчанию false: см. комментарий к полю.
-		S3VirtualHost: boolOr(getenv("S3_VIRTUAL_HOST"), false),
+		AppEnv:              valueOr(getenv("APP_ENV"), "dev"),
+		AppName:             valueOr(getenv("APP_NAME"), "Модерация пакетов"),
+		ListenAddr:          valueOr(getenv("LISTEN_ADDR"), ":8000"),
+		DatabaseURL:         getenv("DATABASE_URL"),
+		ArtifactRepoStaging: valueOr(getenv("ARTIFACT_REPO_STAGING"), "moderation-staging"),
+		ArtifactRepoReports: valueOr(getenv("ARTIFACT_REPO_REPORTS"), "moderation-reports"),
 
 		BlacklistFile:       valueOr(getenv("BLACKLIST_FILE"), "/config/blacklist.yml"),
 		AllowedLicensesFile: valueOr(getenv("ALLOWED_LICENSES_FILE"), "/config/licenses.yml"),
 
-		BannerScanEnabled: boolOr(getenv("BANNER_SCAN_ENABLED"), true),
+		// По умолчанию шаг включён ровно тогда, когда задан адрес песочницы.
+		// Так набор настроек по умолчанию остаётся рабочим (иначе сервис не
+		// поднимался бы без SANDBOX_URL), а явное SANDBOX_ENABLED=true без
+		// адреса остаётся ошибкой — это уже не умолчание, а противоречие.
+		SandboxEnabled:     boolOr(getenv("SANDBOX_ENABLED"), strings.TrimSpace(getenv("SANDBOX_URL")) != ""),
+		SandboxURL:         strings.TrimRight(strings.TrimSpace(getenv("SANDBOX_URL")), "/"),
+		SandboxToken:       valueOr(getenv("SANDBOX_TOKEN"), getenv("SEC_TOKEN")),
+		SandboxPriority:    intOr(getenv("SANDBOX_PRIORITY"), 3),
+		SandboxShortResult: boolOr(getenv("SANDBOX_SHORT_RESULT"), true),
+		SandboxTimeout:     secondsOr(getenv("SANDBOX_TIMEOUT_SECONDS"), 900),
+		SandboxInsecureTLS: boolOr(getenv("SANDBOX_INSECURE_TLS"), false),
+
+		// Шаги сняты с конвейера: значения по умолчанию false, чтобы включённым
+		// оказался только тот шаг, который явно включили обратно.
+		BannerScanEnabled: boolOr(getenv("BANNER_SCAN_ENABLED"), false),
 		BannerRulesFile:   valueOr(getenv("BANNER_RULES_FILE"), "/config/rules.yar"),
 		BannerScanBin:     valueOr(getenv("BANNER_SCANNER_BIN"), "yara"),
 		BannerScanTimeout: secondsOr(getenv("BANNER_SCAN_TOTAL_TIMEOUT_SECONDS"), 300),
-		SASTEnabled:       boolOr(getenv("SAST_ENABLED"), true),
+		SASTEnabled:       boolOr(getenv("SAST_ENABLED"), false),
 		SASTScannerBin:    valueOr(getenv("SAST_SCANNER_BIN"), "semgrep"),
 		SASTRules:         valueOr(getenv("SAST_RULES"), "p/default"),
 		SASTTimeout:       secondsOr(getenv("SAST_TIMEOUT_SECONDS"), 300),
@@ -211,11 +240,8 @@ func Load(getenv func(string) string) (*Config, error) {
 		VulnMaxScore:        floatOr(getenv("VULN_MAX_SCORE"), 80),
 		OSVMaxStalenessDays: intOr(getenv("OSV_MAX_STALENESS_DAYS"), 3),
 
-		ArtifactBaseURL:   valueOr(getenv("ARTIFACT_BASE_URL"), "http://nexus:8081"),
-		ArtifactRepoPyPI:  valueOr(getenv("ARTIFACT_REPO_PYPI"), "pypi-internal"),
-		ArtifactRepoNpm:   valueOr(getenv("ARTIFACT_REPO_NPM"), "npm-internal"),
-		ArtifactRepoGo:    valueOr(getenv("ARTIFACT_REPO_GO"), "go-internal"),
-		ArtifactRepoNuGet: valueOr(getenv("ARTIFACT_REPO_NUGET"), "nuget-internal"),
+		ArtifactBaseURL: valueOr(getenv("ARTIFACT_BASE_URL"), "http://nexus:8081"),
+		ArtifactRepos:   artifactRepos(getenv),
 
 		RegistryPyPIURL:  valueOr(getenv("REGISTRY_PYPI_URL"), "https://pypi.org"),
 		RegistryNpmURL:   valueOr(getenv("REGISTRY_NPM_URL"), "https://registry.npmjs.org"),
@@ -285,21 +311,45 @@ func Load(getenv func(string) string) (*Config, error) {
 	if strings.TrimSpace(cfg.DatabaseURL) == "" {
 		errs = append(errs, errors.New("DATABASE_URL: не задан — подключение к Postgres невозможно"))
 	}
-	// Хранилище задано наполовину — это почти наверняка опечатка в .env, и
-	// молча работать без отчётов здесь хуже, чем сказать об этом на старте.
-	if strings.TrimSpace(cfg.S3Endpoint) != "" {
-		if strings.TrimSpace(cfg.S3AccessKey) == "" || strings.TrimSpace(cfg.S3SecretKey) == "" {
-			errs = append(errs, errors.New(
-				"S3_ACCESS_KEY/S3_SECRET_KEY: не заданы при заданном S3_ENDPOINT — хранилище отчётов не настроится"))
+	// Оба хранилища живут в артефактори, и пустое имя репозитория означало бы
+	// запись в корень — то есть мусор вперемешку с пакетами.
+	if strings.TrimSpace(cfg.ArtifactRepoStaging) == "" {
+		errs = append(errs, errors.New(
+			"ARTIFACT_REPO_STAGING: не задан — скачанному пакету негде лежать во время проверок"))
+	}
+	if strings.TrimSpace(cfg.ArtifactRepoReports) == "" {
+		errs = append(errs, errors.New(
+			"ARTIFACT_REPO_REPORTS: не задан — отчёты сканирования негде хранить"))
+	}
+	// Промежуточная зона и целевые репозитории обязаны различаться: иначе
+	// непроверенный пакет лежал бы там же, откуда его ставят разработчики, —
+	// то есть до всякой модерации был бы доступен для установки.
+	for manager, repoName := range cfg.ArtifactRepos {
+		if repoName == cfg.ArtifactRepoStaging {
+			errs = append(errs, fmt.Errorf(
+				"ARTIFACT_REPO_%s совпадает с ARTIFACT_REPO_STAGING (%q): непроверенный пакет "+
+					"оказался бы в репозитории, из которого ставят разработчики",
+				strings.ToUpper(manager), repoName))
 		}
 	}
 
 	// Порог SAST проверяем явно: опечатка в нём ("hight") молча превратилась бы
 	// в "medium" и тихо изменила бы то, какие находки блокируют публикацию.
+	// Шаг снят с конвейера, но настройка осталась вместе с ним, и молча
+	// принимать в ней мусор незачем.
 	if !domain.Contains([]string{"info", "low", "medium", "high", "critical"}, cfg.SASTMinSeverity) {
 		errs = append(errs, fmt.Errorf(
 			"SAST_MIN_SEVERITY: недопустимое значение %q, ожидается info|low|medium|high|critical",
 			cfg.SASTMinSeverity))
+	}
+
+	// Песочница включена явно, но адрес не задан — шаг не сможет ничего
+	// проверить и будет звать DevSecOps на каждый пакет. Это противоречие в
+	// настройках, а не умолчание, и сказать о нём надо на старте.
+	if cfg.SandboxEnabled && strings.TrimSpace(cfg.SandboxURL) == "" {
+		errs = append(errs, errors.New(
+			"SANDBOX_URL: не задан при SANDBOX_ENABLED=true — шаг песочницы будет отдавать "+
+				"каждый пакет на ручное решение DevSecOps. Задайте адрес или выключите шаг"))
 	}
 
 	// Тип артефактори проверяем на старте: опечатка ("nexsus") иначе всплыла
@@ -391,20 +441,22 @@ func (c *Config) AcceptedIssuers() []string {
 	return out
 }
 
+// artifactRepos собирает карту «менеджер → репозиторий» по всем известным
+// менеджерам. Имя переменной — ARTIFACT_REPO_{МЕНЕДЖЕР} в верхнем регистре,
+// значение по умолчанию — «{менеджер}-internal».
+func artifactRepos(getenv func(string) string) map[string]string {
+	repos := make(map[string]string, len(domain.ManagerCodes))
+	for _, manager := range domain.ManagerCodes {
+		key := "ARTIFACT_REPO_" + strings.ToUpper(manager)
+		repos[manager] = valueOr(getenv(key), manager+"-internal")
+	}
+	return repos
+}
+
 // ArtifactRepo — целевой репозиторий артефактори для менеджера. Пустая
 // строка — менеджер неизвестен.
 func (c *Config) ArtifactRepo(manager string) string {
-	switch manager {
-	case "pypi":
-		return c.ArtifactRepoPyPI
-	case "npm":
-		return c.ArtifactRepoNpm
-	case "go":
-		return c.ArtifactRepoGo
-	case "nuget":
-		return c.ArtifactRepoNuGet
-	}
-	return ""
+	return c.ArtifactRepos[manager]
 }
 
 // RoleForGroup — роль сервиса по группе каталога. Пустая строка — группа не

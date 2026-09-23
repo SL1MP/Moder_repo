@@ -6,10 +6,18 @@
 // другого (тот же урок, что в migrations/0004, см. её комментарий).
 package domain
 
-// ManagerCodes — поддерживаемые пакетные менеджеры. Расширение до полного
-// набора CI-версии (maven/docker/conan/terraform/luarocks/general) —
-// см. docs/ci-parity-gaps.md, требует новой миграции на CHECK-ограничение.
-var ManagerCodes = []string{"pypi", "npm", "go", "nuget"}
+// ManagerCodes — поддерживаемые пакетные менеджеры. Держать 1:1 с
+// CHECK-ограничением в migrations/0014: новый менеджер — новая миграция ПЛЮС
+// правка здесь, не одно без другого.
+//
+// Порядок — тот, в котором менеджеры показываются в выпадающем списке
+// интерфейса: сначала четыре самых ходовых, затем остальные по алфавиту,
+// и последними два «не из реестра» (git и files).
+var ManagerCodes = []string{
+	"pypi", "npm", "go", "nuget",
+	"conan", "docker", "luarocks", "maven", "php", "terraform",
+	"git", "files",
+}
 
 // Roles — роли RBAC. auditor — целевая пятая роль, см. docs/auth.md; ещё не
 // заведена в БД/CHECK-ограничениях, добавить вместе с реализацией.
@@ -56,16 +64,34 @@ var DependencyKinds = []string{"direct", "transitive"}
 
 // StepCodes — порядок конвейера, индекс в срезе = StepOrder.
 var StepCodes = []string{
-	"db_check",    // шаг 0 — наличие в базе
-	"blacklist",   // шаг 1
-	"quarantine",  // шаг 2
-	"license",     // шаг 3
-	"download",    // шаг 4
-	"vuln_scan",   // шаг 5
-	"banner_scan", // шаг 6 — политические баннеры (YARA)
-	"sast_scan",   // шаг 7 — SAST по исходникам пакета
-	"publish",     // шаг 8
+	"db_check",     // шаг 0 — наличие в базе
+	"blacklist",    // шаг 1
+	"quarantine",   // шаг 2
+	"license",      // шаг 3
+	"download",     // шаг 4
+	"vuln_scan",    // шаг 5 — уязвимости по снапшоту OSV
+	"sandbox_scan", // шаг 6 — динамический анализ в песочнице
+	"publish",      // шаг 7
 }
+
+// RetiredStepCodes — шаги, снятые с конвейера, но оставшиеся в истории.
+//
+// Они не выполняются и в StepCodes их нет, однако строки pipeline_step с этими
+// кодами лежат в базе у каждой заявки, проверенной до снятия. Поэтому:
+// CHECK-ограничение обязано их принимать (migrations/0013), StepTitles —
+// называть по-человечески, а карточка заявки — показывать как есть. Удалить
+// код из списка допустимых значений значило бы сломать чтение старых заявок.
+//
+// banner_scan (политические баннеры, YARA) и sast_scan (semgrep) сняты по
+// решению пользователя «на данном этапе». Реализация обоих сохранена —
+// pipeline.RetiredSteps, internal/scanners; возврат в строй это добавление
+// шага обратно в Steps и StepCodes плюс миграция на CHECK.
+var RetiredStepCodes = []string{"banner_scan", "sast_scan"}
+
+// AllStepCodes — действующие и снятые коды вместе: то, что допустимо встретить
+// в базе. Именно этот список, а не StepCodes, годится для проверки «знаем ли
+// мы такой шаг» при чтении строки.
+var AllStepCodes = append(append([]string{}, StepCodes...), RetiredStepCodes...)
 
 // StepOrder — код шага -> порядковый номер, вычисляется из StepCodes один раз.
 var StepOrder = buildStepOrder()
@@ -78,16 +104,19 @@ func buildStepOrder() map[string]int {
 	return m
 }
 
+// StepTitles — названия шагов, включая снятые: старые заявки обязаны читаться.
 var StepTitles = map[string]string{
-	"db_check":    "Проверка наличия в базе",
-	"blacklist":   "Blacklist",
-	"quarantine":  "Карантин",
-	"license":     "Лицензия",
-	"download":    "Скачивание артефакта",
-	"vuln_scan":   "Проверка на уязвимости",
-	"banner_scan": "Политические баннеры",
-	"sast_scan":   "SAST-анализ",
-	"publish":     "Выгрузка в артефактори",
+	"db_check":     "Проверка наличия в базе",
+	"blacklist":    "Blacklist",
+	"quarantine":   "Карантин",
+	"license":      "Лицензия",
+	"download":     "Скачивание артефакта",
+	"vuln_scan":    "Проверка на уязвимости",
+	"sandbox_scan": "Проверка в песочнице",
+	"publish":      "Выгрузка в артефактори",
+	// Снятые с конвейера — см. RetiredStepCodes.
+	"banner_scan": "Политические баннеры (шаг снят)",
+	"sast_scan":   "SAST-анализ (шаг снят)",
 }
 
 // StepResults — результаты шага. info — шаг выполнен, публикацию не блокирует,

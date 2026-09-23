@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -35,11 +36,15 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"quarantine_days", cfg.QuarantineDays, 14},
 		{"vuln_max_score", cfg.VulnMaxScore, 80.0},
 		{"osv_max_staleness_days", cfg.OSVMaxStalenessDays, 3},
-		{"banner_scan_enabled", cfg.BannerScanEnabled, true},
+		// Шаги banner_scan и sast_scan сняты с конвейера (миграция 0013), и
+		// значение по умолчанию у них сознательно РАСХОДИТСЯ с python-версией:
+		// включённым должен оказаться только тот шаг, который вернули в строй
+		// явно. Сам конвейер их всё равно не запускает — см. pipeline.Steps.
+		{"banner_scan_enabled", cfg.BannerScanEnabled, false},
 		{"banner_rules_file", cfg.BannerRulesFile, "/config/rules.yar"},
 		{"blacklist_file", cfg.BlacklistFile, "/config/blacklist.yml"},
 		{"allowed_licenses_file", cfg.AllowedLicensesFile, "/config/licenses.yml"},
-		{"sast_enabled", cfg.SASTEnabled, true},
+		{"sast_enabled", cfg.SASTEnabled, false},
 		{"sast_rules", cfg.SASTRules, "p/default"},
 		{"sast_min_severity", cfg.SASTMinSeverity, "high"},
 		{"scan_max_files", cfg.ScanMaxFiles, 20000},
@@ -48,10 +53,23 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"max_upload_size_bytes", cfg.MaxUploadSizeBytes, int64(5 * 1024 * 1024)},
 		{"max_packages_per_request", cfg.MaxPackagesPerRequest, 200},
 		{"artifact_base_url", cfg.ArtifactBaseURL, "http://nexus:8081"},
-		{"artifact_repo_pypi", cfg.ArtifactRepoPyPI, "pypi-internal"},
-		{"artifact_repo_npm", cfg.ArtifactRepoNpm, "npm-internal"},
-		{"artifact_repo_go", cfg.ArtifactRepoGo, "go-internal"},
-		{"artifact_repo_nuget", cfg.ArtifactRepoNuGet, "nuget-internal"},
+		{"artifact_repo_pypi", cfg.ArtifactRepo("pypi"), "pypi-internal"},
+		{"artifact_repo_npm", cfg.ArtifactRepo("npm"), "npm-internal"},
+		{"artifact_repo_go", cfg.ArtifactRepo("go"), "go-internal"},
+		{"artifact_repo_nuget", cfg.ArtifactRepo("nuget"), "nuget-internal"},
+		// Менеджеры, добавленные миграцией 0014: репозиторий по умолчанию
+		// строится по тому же правилу, отдельной настройки не требуется.
+		{"artifact_repo_docker", cfg.ArtifactRepo("docker"), "docker-internal"},
+		{"artifact_repo_maven", cfg.ArtifactRepo("maven"), "maven-internal"},
+		{"artifact_repo_files", cfg.ArtifactRepo("files"), "files-internal"},
+		{"artifact_repo_staging", cfg.ArtifactRepoStaging, "moderation-staging"},
+		{"artifact_repo_reports", cfg.ArtifactRepoReports, "moderation-reports"},
+		// Без SANDBOX_URL шаг песочницы выключен: набор настроек по умолчанию
+		// обязан быть рабочим. Включение адресом проверяется отдельно.
+		{"sandbox_enabled", cfg.SandboxEnabled, false},
+		{"sandbox_priority", cfg.SandboxPriority, 3},
+		{"sandbox_short_result", cfg.SandboxShortResult, true},
+		{"sandbox_timeout", cfg.SandboxTimeout, 900 * time.Second},
 		{"oidc_client_id", cfg.OIDCClientID, "moderation-web"},
 		{"role_mapping_admin", cfg.RoleMappingAdmin, "moderation-admin"},
 		{"role_mapping_devsecops", cfg.RoleMappingDevSecOps, "moderation-devsecops"},
@@ -156,28 +174,90 @@ func contains(haystack, needle string) bool {
 // хранилища (в отличие от MinIO и SeaweedFS рядом в compose) часто требуют
 // virtual-host. Пока настройки не было, подключить такое хранилище было
 // нельзя — и это выяснялось уже на живом стенде.
-func TestS3AddressingStyleIsConfigurable(t *testing.T) {
+// Промежуточная зона обязана отличаться от целевых репозиториев: иначе
+// непроверенный пакет лежал бы там, откуда его ставят разработчики. Проверка
+// на старте, а не в рантайме — такую опечатку нельзя обнаруживать пакетом,
+// который уже уехал.
+func TestStagingRepoMustDifferFromTargetRepos(t *testing.T) {
 	base := map[string]string{
-		"DATABASE_URL":  "postgres://localhost/moderation",
-		"S3_ENDPOINT":   "https://s3.example.com",
-		"S3_BUCKET":     "packages",
-		"S3_ACCESS_KEY": "key",
-		"S3_SECRET_KEY": "secret",
+		"DATABASE_URL":          "postgres://localhost/moderation",
+		"ARTIFACT_REPO_STAGING": "pypi-internal",
+	}
+	_, err := Load(func(k string) string { return base[k] })
+	if err == nil {
+		t.Fatal("совпадение промежуточной зоны с репозиторием pypi должно быть ошибкой конфигурации")
+	}
+	if !strings.Contains(err.Error(), "ARTIFACT_REPO_STAGING") {
+		t.Errorf("ошибка не называет виновную настройку: %v", err)
+	}
+}
+
+// Песочница включена по умолчанию, и включённая без адреса она отдавала бы
+// каждый пакет на ручное решение. Это почти наверняка не то, чего хотели.
+func TestSandboxEnabledWithoutURLIsConfigError(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL":    "postgres://localhost/moderation",
+		"SANDBOX_ENABLED": "true",
+	}
+	_, err := Load(func(k string) string { return base[k] })
+	if err == nil {
+		t.Fatal("SANDBOX_ENABLED=true без SANDBOX_URL должен быть ошибкой конфигурации")
+	}
+	if !strings.Contains(err.Error(), "SANDBOX_URL") {
+		t.Errorf("ошибка не называет виновную настройку: %v", err)
+	}
+}
+
+// Заданный адрес песочницы сам включает шаг: заводить две настройки там, где
+// достаточно одной, значит получить инсталляцию с адресом и выключенным шагом.
+func TestSandboxEnabledByURL(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://localhost/moderation",
+		"SANDBOX_URL":  "https://sandbox.example.com",
 	}
 	cfg, err := Load(func(k string) string { return base[k] })
 	if err != nil {
 		t.Fatalf("конфигурация: %v", err)
 	}
-	if cfg.S3VirtualHost {
-		t.Error("по умолчанию должен быть path-style: так работают MinIO и SeaweedFS")
+	if !cfg.SandboxEnabled {
+		t.Error("заданный SANDBOX_URL должен включать шаг песочницы")
 	}
 
-	base["S3_VIRTUAL_HOST"] = "true"
+	// Явное выключение важнее адреса: выключить шаг, не стирая адрес, — это
+	// обычный способ временно снять проверку.
+	base["SANDBOX_ENABLED"] = "false"
 	cfg, err = Load(func(k string) string { return base[k] })
 	if err != nil {
 		t.Fatalf("конфигурация: %v", err)
 	}
-	if !cfg.S3VirtualHost {
-		t.Error("S3_VIRTUAL_HOST=true не включил адресацию bucket.endpoint/key")
+	if cfg.SandboxEnabled {
+		t.Error("SANDBOX_ENABLED=false должен выключать шаг даже при заданном адресе")
+	}
+}
+
+// SEC_TOKEN — имя переменной из CI-шаблона. Тот же секрет не должен
+// требовать второго имени только потому, что его читает другой сервис.
+func TestSandboxTokenFallsBackToSecToken(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://localhost/moderation",
+		"SANDBOX_URL":  "https://sandbox.example.com",
+		"SEC_TOKEN":    "from-ci",
+	}
+	cfg, err := Load(func(k string) string { return base[k] })
+	if err != nil {
+		t.Fatalf("конфигурация: %v", err)
+	}
+	if cfg.SandboxToken != "from-ci" {
+		t.Errorf("SEC_TOKEN не подхвачен: %q", cfg.SandboxToken)
+	}
+
+	// Своё имя важнее: если заданы оба, выигрывает SANDBOX_TOKEN.
+	base["SANDBOX_TOKEN"] = "own"
+	cfg, err = Load(func(k string) string { return base[k] })
+	if err != nil {
+		t.Fatalf("конфигурация: %v", err)
+	}
+	if cfg.SandboxToken != "own" {
+		t.Errorf("SANDBOX_TOKEN должен быть важнее SEC_TOKEN, получено %q", cfg.SandboxToken)
 	}
 }

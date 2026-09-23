@@ -30,7 +30,6 @@ import (
 	"moderation/internal/repo"
 	"moderation/internal/requests"
 	"moderation/internal/resolve"
-	"moderation/internal/storage"
 )
 
 func main() {
@@ -76,7 +75,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	options, blacklist := buildOptions(cfg, pool, logger)
+	options, blacklist, st := buildOptions(cfg, pool, logger)
 	_ = blacklist // политики попадают в конвейер вместе с переносом шагов 0-3
 
 	// Сверка схемы с тем, что пишет код. Не фатально — сервис обязан отвечать
@@ -100,10 +99,10 @@ func main() {
 			"отчёты появятся только после `moderation scan`")
 	case options.Reports == nil:
 		logger.Error("наблюдатель сканирования НЕ запущен: не настроено хранилище отчётов " +
-			"(S3_ENDPOINT/S3_ACCESS_KEY/S3_SECRET_KEY) — класть отчёты некуда")
+			"(ARTIFACT_BASE_URL/ARTIFACT_REPO_REPORTS) — класть отчёты некуда")
 	default:
 		w := &watcher{
-			repo: options.Reports.Repo, storage: options.Reports.Storage,
+			repo: options.Reports.Repo, stores: st,
 			cfg: cfg, logger: logger,
 			interval: cfg.ScanWatcherInterval, batch: cfg.ScanWatcherBatch,
 			itemTimeout: cfg.ScanWatcherItemTimeout,
@@ -184,7 +183,11 @@ func usage() {
 // тестом: маршруты уже один раз уехали в релиз объявленными, но не
 // подключёнными здесь — роутер их знал, а бинарник не отдавал, и снаружи это
 // выглядело как 404 на работающем сервисе.
-func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (api.Options, *policy.Blacklist) {
+// buildOptions собирает обработчики API. Третьим значением возвращает
+// хранилища: их же использует наблюдатель сканирования, и собирать подключение
+// к артефактори второй раз ради него незачем. nil — хранилища не настроены,
+// и тогда ни отчёты, ни наблюдатель не поднимаются.
+func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (api.Options, *policy.Blacklist, *stores) {
 	var options api.Options
 	r := repo.New(pool)
 	reg := registry.New(registry.Config{
@@ -236,21 +239,28 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 
 	// Хранилище отчётов необязательно: без него сервис поднимается и отвечает
 	// health, просто маршруты отчётов не подключаются. Падать на старте из-за
-	// отчётов нельзя — иначе недоступный MinIO роняет весь сервис.
-	if cfg.S3Endpoint != "" {
-		store, err := storage.NewS3(storage.S3Config{
-			Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
-			AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Region: cfg.S3Region,
-			VirtualHost: cfg.S3VirtualHost,
-		})
-		if err != nil {
-			logger.Error("хранилище отчётов не настроено, выдача отчётов отключена", "error", err)
-		} else {
-			options.Reports = &api.ReportsHandler{Repo: repo.New(pool), Storage: store}
-			logger.Info("хранилище отчётов подключено", "endpoint", cfg.S3Endpoint, "bucket", cfg.S3Bucket)
-		}
+	// отчётов нельзя — иначе недоступное артефактори роняет весь сервис.
+	// Доступность репозитория отчётов проверяется по-настоящему, а не по
+	// «настройка не пустая»: у ARTIFACT_BASE_URL есть значение по умолчанию, и
+	// без проверки маршруты отчётов подключались бы всегда, в том числе там,
+	// где артефактори не поднято или репозитория не существует. Тогда вместо
+	// честного «выдача отчётов отключена» в логе пользователь получал бы
+	// ошибку на каждой попытке открыть отчёт.
+	st, storesErr := newStores(cfg, newHTTPClient())
+	if storesErr == nil {
+		probe, cancel := context.WithTimeout(context.Background(), storeProbeTimeout)
+		storesErr = st.Reports.EnsureBucket(probe)
+		cancel()
+	}
+	if storesErr != nil {
+		logger.Error("хранилище отчётов недоступно, выдача отчётов отключена",
+			"артефактори", cfg.ArtifactBaseURL, "репозиторий", cfg.ArtifactRepoReports,
+			"error", storesErr)
+		st = nil
 	} else {
-		logger.Warn("S3_ENDPOINT не задан — выдача отчётов о сканировании отключена")
+		options.Reports = &api.ReportsHandler{Repo: repo.New(pool), Storage: st.Reports}
+		logger.Info("хранилище отчётов подключено",
+			"артефактори", cfg.ArtifactBaseURL, "репозиторий", cfg.ArtifactRepoReports)
 	}
 
 	options.Packages = &api.PackagesHandler{Repo: r, Registry: reg, Cfg: cfg}
@@ -308,7 +318,7 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 		},
 	}
 
-	return options, blacklist
+	return options, blacklist, st
 }
 
 // checkSchema сверяет CHECK-ограничения базы со значениями, которые пишет код,

@@ -96,7 +96,20 @@ var valueMigrations = map[string]string{
 		"(или alembic 0006_cancel_request)",
 	"banner_scan": "backend-go/migrations/0004_step_codes_content_scans (или alembic 0004)",
 	"sast_scan":   "backend-go/migrations/0004_step_codes_content_scans (или alembic 0004)",
+	// Шаг песочницы вместо снятых сканеров содержимого.
+	"sandbox_scan": "backend-go/migrations/0013_sandbox_step",
+	// Менеджеры сверх четырёх, перенесённых прототипом.
+	"conan":     migrationManagers,
+	"docker":    migrationManagers,
+	"luarocks":  migrationManagers,
+	"maven":     migrationManagers,
+	"php":       migrationManagers,
+	"terraform": migrationManagers,
+	"git":       migrationManagers,
+	"files":     migrationManagers,
 }
+
+const migrationManagers = "backend-go/migrations/0014_package_managers"
 
 const migrationsGeneric = "пропущенные миграции из backend-go/migrations (или alembic)"
 

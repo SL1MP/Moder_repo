@@ -423,10 +423,19 @@ class Artifact(Base):
     sha256: Mapped[str | None] = mapped_column(String(128))
     declared_checksum: Mapped[str | None] = mapped_column(String(160))
     checksum_algo: Mapped[str | None] = mapped_column(String(16))
-    s3_bucket: Mapped[str | None] = mapped_column(String(128))
-    s3_key: Mapped[str | None] = mapped_column(String(1024))
-    s3_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    s3_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Столбцы переименованы миграцией 0015 (S3 выведен из эксплуатации:
+    # промежуточная зона теперь в артефактори). Имена атрибутов оставлены
+    # прежними намеренно — их читает весь остальной код python-версии, и
+    # переименовывать его ради снятой системы незачем: python-версия
+    # доживает до конца переноса на Go.
+    s3_bucket: Mapped[str | None] = mapped_column("staging_repo", String(128))
+    s3_key: Mapped[str | None] = mapped_column("staging_path", String(1024))
+    s3_uploaded_at: Mapped[datetime | None] = mapped_column(
+        "staged_at", DateTime(timezone=True)
+    )
+    s3_deleted_at: Mapped[datetime | None] = mapped_column(
+        "staging_cleared_at", DateTime(timezone=True)
+    )
     nexus_url: Mapped[str | None] = mapped_column(String(2048))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(24), default="downloaded", nullable=False)

@@ -20,7 +20,6 @@ import (
 	"moderation/internal/pipeline"
 	"moderation/internal/queue"
 	"moderation/internal/repo"
-	"moderation/internal/storage"
 )
 
 // Команда `moderation worker` — прогон конвейера по пакетам из очереди.
@@ -108,7 +107,7 @@ func runWorker(args []string, logger *slog.Logger) int {
 	// Регламентные задачи: снятие истёкшего карантина и уборка временного
 	// хранилища. Выключаются флагом — в разовом прогоне и в CI они не нужны.
 	if cfg.MaintenanceEnabled {
-		go newMaintenanceRunner(cfg, w.repo, w.queue, w.storage, logger).run(ctx)
+		go newMaintenanceRunner(cfg, w.repo, w.queue, w.stores, logger).run(ctx)
 	} else {
 		logger.Warn("регламентные задачи выключены (MAINTENANCE_ENABLED=false) — " +
 			"карантин сам не снимется, временное хранилище не убирается")
@@ -133,30 +132,23 @@ type pipelineWorker struct {
 	// константа: в режиме --once ждать незачем.
 	retryPause time.Duration
 
-	cfg     *config.Config
-	repo    *repo.Repo
-	queue   *queue.Queue
-	storage storage.Store
-	logger  *slog.Logger
+	cfg    *config.Config
+	repo   *repo.Repo
+	queue  *queue.Queue
+	stores *stores
+	logger *slog.Logger
 }
 
 func newPipelineWorker(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*pipelineWorker, error) {
-	// Хранилище обязательно: без него шаг скачивания некуда класть артефакт, и
+	// Хранилище обязательно: без него шагу скачивания некуда класть артефакт, и
 	// каждый пакет упал бы на нём. Здесь это повод не стартовать, в отличие от
 	// HTTP-сервиса, который и без хранилища обязан отвечать health.
-	if cfg.S3Endpoint == "" {
-		return nil, errors.New("S3_ENDPOINT не задан — конвейеру некуда класть артефакты")
-	}
-	store, err := storage.NewS3(storage.S3Config{
-		Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
-		AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, Region: cfg.S3Region,
-		VirtualHost: cfg.S3VirtualHost,
-	})
+	st, err := newStores(cfg, newHTTPClient())
 	if err != nil {
 		return nil, fmt.Errorf("хранилище: %w", err)
 	}
 	return &pipelineWorker{
-		cfg: cfg, repo: repo.New(pool), storage: store, logger: logger,
+		cfg: cfg, repo: repo.New(pool), stores: st, logger: logger,
 		queue: queue.New(pool, staleAfter(cfg)), retryPause: defaultRetryPause,
 	}, nil
 }
@@ -334,7 +326,7 @@ func (w *pipelineWorker) beat(ctx context.Context, cancel context.CancelFunc, it
 
 // runPipeline собирает контекст и прогоняет конвейер.
 func (w *pipelineWorker) runPipeline(ctx context.Context, job queue.Job) (pipeline.Result, error) {
-	pc, err := buildScanContext(ctx, w.repo, w.storage, w.cfg)
+	pc, err := buildScanContext(ctx, w.repo, w.stores, w.cfg)
 	if err != nil {
 		return pipeline.Result{}, err
 	}

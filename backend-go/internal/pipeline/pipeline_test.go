@@ -13,6 +13,7 @@ import (
 	"moderation/internal/pipeline"
 	"moderation/internal/policy"
 	"moderation/internal/reports"
+	"moderation/internal/sandbox"
 	"moderation/internal/scanners"
 	"moderation/internal/storage"
 )
@@ -145,7 +146,7 @@ func TestLicenseDoesNotStopPipeline(t *testing.T) {
 		t.Fatalf("license = %q, ожидался warn", steps["license"].Result)
 	}
 	// Конвейер пошёл дальше: скачивание и сканирование выполнены.
-	for _, code := range []string{"download", "vuln_scan", "banner_scan", "sast_scan"} {
+	for _, code := range []string{"download", "vuln_scan", "sandbox_scan"} {
 		if _, ok := steps[code]; !ok {
 			t.Errorf("шаг %s не выполнен — конвейер остановился на лицензии", code)
 		}
@@ -184,8 +185,9 @@ func TestGoldenPathPublishes(t *testing.T) {
 	}
 
 	steps := stepsByCode(t, r, item.ID)
-	if len(steps) != 9 {
-		t.Fatalf("выполнено шагов: %d, ожидалось 9: %+v", len(steps), steps)
+	if len(steps) != len(domain.StepCodes) {
+		t.Fatalf("выполнено шагов: %d, ожидалось %d: %+v",
+			len(steps), len(domain.StepCodes), steps)
 	}
 	for code, step := range steps {
 		if step.Result != "pass" {
@@ -195,17 +197,24 @@ func TestGoldenPathPublishes(t *testing.T) {
 	if len(e.artifacts.published) != 1 {
 		t.Errorf("опубликовано артефактов: %d", len(e.artifacts.published))
 	}
-	// Карантинная зона временная: объект удаляется сразу после публикации.
+	// Основной путь публикации — перенос файла внутри артефактори, без
+	// прогона байтов через сервис. Запасной (скачать и выгрузить) существует
+	// для Nexus, и проверять по нему золотой путь значило бы не заметить, что
+	// перенос сломался.
+	if mode := steps["publish"].Details["publish_mode"]; mode != "move" {
+		t.Errorf("способ публикации = %v, ожидался перенос внутри артефактори", mode)
+	}
+	// Промежуточная зона временная: файл уходит из неё сразу после публикации.
 	objects, err := e.storage.List(ctx, "pypi/")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(objects) != 0 {
-		t.Errorf("объект остался во временном хранилище после публикации: %+v", objects)
+		t.Errorf("файл остался в промежуточной зоне после публикации: %+v", objects)
 	}
-	// А отчёты — остаются.
-	if got, _ := e.storage.List(ctx, "reports/"); len(got) != 4 {
-		t.Errorf("файлов отчётов: %d, ожидалось 4 (2 шага × json+html)", len(got))
+	// А отчёты — остаются, и в своём хранилище.
+	if got, _ := e.reports.List(ctx, "reports/"); len(got) != 2 {
+		t.Errorf("файлов отчётов: %d, ожидалось 2 (один шаг сканирования × json+html)", len(got))
 	}
 
 	artifact, err := r.CurrentArtifact(ctx, ver.ID)
@@ -215,8 +224,8 @@ func TestGoldenPathPublishes(t *testing.T) {
 	if artifact.Status != "published" || artifact.NexusURL == nil {
 		t.Errorf("артефакт = %+v", artifact)
 	}
-	if artifact.S3DeletedAt == nil {
-		t.Error("время удаления объекта из карантинной зоны не проставлено")
+	if artifact.StagingClearedAt == nil {
+		t.Error("время очистки промежуточной зоны не проставлено")
 	}
 }
 
@@ -369,16 +378,18 @@ func TestMissingSnapshotDoesNotAutoApprove(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------- шаги 6–7
+// --------------------------------------------------------------------- шаг 6: песочница
 
-// TestUnavailableScannerIsNotClean — самое важное свойство шагов сканирования.
-func TestUnavailableScannerIsNotClean(t *testing.T) {
+// TestSandboxUnavailableIsNotClean — песочница не ответила. Это «проверка не
+// выполнена», а не «чисто»: публикация останавливается, решение принимает
+// DevSecOps. Тот же принцип, что у устаревшего снапшота OSV.
+func TestSandboxUnavailableIsNotClean(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
 	ctx := context.Background()
 
 	e := newEnv(t, r)
-	e.banner.outcome = scanners.Outcome{Available: false, Detail: "правила не найдены: /config/rules.yar"}
+	e.sandbox.err = errors.New("запрос к песочнице https://sandbox.test: connection refused")
 	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
 
 	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
@@ -386,17 +397,18 @@ func TestUnavailableScannerIsNotClean(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if res.ItemStatus != "awaiting_security" {
-		t.Fatalf("ItemStatus = %q — недоступный сканер прочитан как «чисто»", res.ItemStatus)
+		t.Fatalf("ItemStatus = %q — неответившая песочница прочитана как «чисто»", res.ItemStatus)
 	}
 	steps := stepsByCode(t, r, item.ID)
-	if steps["banner_scan"].Result != "warn" {
-		t.Fatalf("banner_scan = %q", steps["banner_scan"].Result)
+	if steps["sandbox_scan"].Result != "warn" {
+		t.Fatalf("sandbox_scan = %q, ожидался warn", steps["sandbox_scan"].Result)
 	}
 	if len(e.artifacts.published) != 0 {
-		t.Error("пакет опубликован при неотработавшем сканере")
+		t.Error("пакет опубликован при неотработавшей песочнице")
 	}
-	// И отчёт об этом есть, с явным состоянием unavailable.
-	report, err := r.GetScanReport(ctx, item.ID, "banner_scan")
+	// Отчёт есть, с явным состоянием unavailable: «проверки не было» обязано
+	// быть видно, а не отсутствовать файлом.
+	report, err := r.GetScanReport(ctx, item.ID, "sandbox_scan")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,208 +418,224 @@ func TestUnavailableScannerIsNotClean(t *testing.T) {
 	// И никаких счётчиков находок: ноль по невыполненной проверке — не
 	// измерение, а его отсутствие. В карточке «найдено: 0» читалось ровно
 	// наоборот — «проверили, чисто».
-	if _, ok := steps["banner_scan"].Details["findings_total"]; ok {
+	if _, ok := steps["sandbox_scan"].Details["findings_total"]; ok {
 		t.Errorf("детали шага = %v — счётчик находок по невыполненной проверке",
-			steps["banner_scan"].Details)
+			steps["sandbox_scan"].Details)
 	}
 }
 
-// TestSastNeverBlocksPublication — SAST информационный: находки выше порога
-// сохраняются и попадают в отчёт, но публикацию не задерживают и в очередь
-// DevSecOps пакет из-за них не уходит.
-//
-// Именно этим SAST отличается от баннеров: срабатывание semgrep на
-// eval/exec в библиотеке — обычное дело, и блокировка означала бы ручное
-// подтверждение каждого второго пакета.
-func TestSastNeverBlocksPublication(t *testing.T) {
+// TestSandboxNotConfiguredIsNotClean — адрес песочницы не задан. Отличается от
+// предыдущего тем, что до сети дело не дошло вовсе, а вести себя обязано так
+// же: выключать проверку молча, потому что её забыли настроить, нельзя.
+func TestSandboxNotConfiguredIsNotClean(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
 	ctx := context.Background()
 
 	e := newEnv(t, r)
-	e.sast.outcome = scanners.Outcome{Available: true, Detail: "файлов: 30",
-		Findings: []scanners.Finding{
-			{Scanner: "semgrep", RuleID: "exec-detected", Severity: "critical",
-				Message: "exec", File: "pkg/gen.py", Line: 53},
-			{Scanner: "semgrep", RuleID: "eval-detected", Severity: "high",
-				Message: "eval", File: "pkg/recompiler.py", Line: 80},
-		}}
+	e.sandbox.available = false
 	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
 
 	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !res.Terminal || res.ItemStatus != "approved" {
-		t.Fatalf("результат = %+v — находки SAST задержали публикацию", res)
+	if res.ItemStatus != "awaiting_security" {
+		t.Fatalf("ItemStatus = %q — ненастроенная песочница прочитана как «чисто»", res.ItemStatus)
 	}
-	if len(e.artifacts.published) != 1 {
-		t.Fatal("пакет не опубликован — SAST не должен этому мешать")
+	if e.sandbox.calls != 0 {
+		t.Error("ненастроенная песочница всё-таки опрошена")
+	}
+	steps := stepsByCode(t, r, item.ID)
+	if !strings.Contains(stepMessage(steps["sandbox_scan"]), "SANDBOX_URL") {
+		t.Errorf("сообщение = %q — не названа настройка, которой задаётся адрес",
+			stepMessage(steps["sandbox_scan"]))
+	}
+}
+
+// TestSandboxDangerousBlocksPublication — вердикт DANGEROUS. Публикация
+// останавливается, пакет уходит DevSecOps, находки видны в карточке и в
+// отчёте, ссылка на задачу в песочнице — в деталях шага.
+func TestSandboxDangerousBlocksPublication(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	e.sandbox.result = sandbox.Result{
+		Verdict: sandbox.VerdictDangerous, ScanID: "scan-42",
+		Detections: []sandbox.Detection{
+			{Name: "Trojan.Generic", Type: "malware", Severity: "critical",
+				Details: "сетевое соединение с C2"},
+			{Name: "Persistence.Cron"},
+		},
+	}
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+
+	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ItemStatus != "awaiting_security" {
+		t.Fatalf("ItemStatus = %q, ожидался awaiting_security", res.ItemStatus)
+	}
+	if len(e.artifacts.published) != 0 {
+		t.Fatal("пакет с вердиктом DANGEROUS опубликован")
 	}
 
 	steps := stepsByCode(t, r, item.ID)
-	// info, а не pass: «пройден» рядом с двумя находками читается как «чисто».
-	if steps["sast_scan"].Result != "info" {
-		t.Errorf("sast_scan = %q, ожидался info", steps["sast_scan"].Result)
+	step := steps["sandbox_scan"]
+	if step.Result != "fail" {
+		t.Errorf("sandbox_scan = %q, ожидался fail", step.Result)
 	}
-	if !strings.Contains(stepMessage(steps["sast_scan"]), "найдено срабатываний — 2") {
-		t.Errorf("сообщение шага = %q — число находок должно быть в карточке",
-			stepMessage(steps["sast_scan"]))
+	if step.Details["verdict"] != sandbox.VerdictDangerous {
+		t.Errorf("вердикт в деталях = %v", step.Details["verdict"])
 	}
-	// Шаг не считается непогашенным согласованием ни при каком результате.
-	if pipeline.IsOpenResult("sast_scan", steps["sast_scan"].Result) {
-		t.Error("результат SAST считается непогашенной блокировкой")
+	// Ссылка на задачу — то, по чему DevSecOps открывает отчёт песочницы.
+	// Без неё «посмотрите в песочнице» означает «найдите сами».
+	if step.Details["task_url"] != "https://sandbox.test/tasks/scan-42" {
+		t.Errorf("ссылка на задачу = %v", step.Details["task_url"])
 	}
-	// Находки и отчёт при этом на месте — они и есть смысл шага.
-	report, err := r.GetScanReport(ctx, item.ID, "sast_scan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report == nil || report.FindingsTotal != 2 {
-		t.Fatalf("отчёт = %+v, ожидалось 2 находки", report)
-	}
+
+	// Находки сохранены и видны в карточке.
 	findings, err := r.ListCodeFindings(ctx, ver.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(findings) != 2 {
-		t.Errorf("находок сохранено %d, ожидалось 2", len(findings))
+		t.Fatalf("находок сохранено: %d, ожидалось 2 (%+v)", len(findings), findings)
 	}
-}
+	// Серьёзность, которую песочница не прислала, не проваливается в info:
+	// находка динамического анализа — это то, что образец сделал при запуске.
+	bySeverity := map[string]string{}
+	for _, f := range findings {
+		bySeverity[f.RuleID] = f.Severity
+	}
+	if bySeverity["Persistence.Cron"] != "high" {
+		t.Errorf("серьёзность без значения = %q, ожидалось high", bySeverity["Persistence.Cron"])
+	}
+	if bySeverity["Trojan.Generic"] != "critical" {
+		t.Errorf("серьёзность из ответа песочницы потеряна: %q", bySeverity["Trojan.Generic"])
+	}
 
-// TestSastUnavailableIsNotSilentPass — неотработавший SAST публикацию не
-// держит (шаг информационный), но и «чисто» не значит: pass здесь означал бы
-// «проверено, находок нет», а проверки не было.
-func TestSastUnavailableIsNotSilentPass(t *testing.T) {
-	r, cleanup := mustRepo(t)
-	defer cleanup()
-	ctx := context.Background()
-
-	e := newEnv(t, r)
-	e.sast.outcome = scanners.Outcome{Available: false, Detail: "сканер не установлен: semgrep"}
-	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
-
-	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !res.Terminal || res.ItemStatus != "approved" {
-		t.Fatalf("результат = %+v — информационный шаг задержал публикацию", res)
-	}
-	steps := stepsByCode(t, r, item.ID)
-	if steps["sast_scan"].Result != "info" {
-		t.Errorf("sast_scan = %q, ожидался info", steps["sast_scan"].Result)
-	}
-	if !strings.Contains(stepMessage(steps["sast_scan"]), "НЕ выполнена") {
-		t.Errorf("сообщение шага = %q — в карточке должно быть видно, что проверки не было",
-			stepMessage(steps["sast_scan"]))
-	}
-	// Счётчика находок по невыполненной проверке быть не должно: ноль здесь
-	// читается как «проверили, чисто».
-	if _, ok := steps["sast_scan"].Details["findings_total"]; ok {
-		t.Errorf("детали шага = %v — счётчик находок по невыполненной проверке",
-			steps["sast_scan"].Details)
-	}
-	report, err := r.GetScanReport(ctx, item.ID, "sast_scan")
+	report, err := r.GetScanReport(ctx, item.ID, "sandbox_scan")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report == nil || report.State != "unavailable" {
-		t.Fatalf("отчёт = %+v, ожидалось состояние unavailable", report)
-	}
-}
-
-// TestScannerErrorDoesNotBreakPipeline — падение сканера это «проверка не
-// выполнена», а не техническая авария заявки.
-func TestScannerErrorDoesNotBreakPipeline(t *testing.T) {
-	r, cleanup := mustRepo(t)
-	defer cleanup()
-	ctx := context.Background()
-
-	e := newEnv(t, r)
-	e.banner.err = errors.New("сегфолт в правилах")
-	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
-
-	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
-	if err != nil {
-		t.Fatalf("падение сканера уронило конвейер: %v", err)
-	}
-	if res.ItemStatus != "awaiting_security" {
-		t.Errorf("ItemStatus = %q", res.ItemStatus)
-	}
-	steps := stepsByCode(t, r, item.ID)
-	if steps["banner_scan"].Result != "warn" {
-		t.Errorf("banner_scan = %q", steps["banner_scan"].Result)
-	}
-}
-
-// TestBannerFindingHasNoThreshold — баннер находка сама по себе: любое
-// совпадение правила уходит DevSecOps, даже с низкой серьёзностью.
-func TestBannerFindingHasNoThreshold(t *testing.T) {
-	r, cleanup := mustRepo(t)
-	defer cleanup()
-	ctx := context.Background()
-
-	e := newEnv(t, r)
-	e.banner.outcome = scanners.Outcome{Available: true, Detail: "правил сработало: 1",
-		Findings: []scanners.Finding{{
-			Scanner: "yara", RuleID: "political_banner", Severity: "info",
-			Message: "Совпадение правила", File: "pkg/main.py", Line: 1,
-		}}}
-	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
-
-	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if res.ItemStatus != "awaiting_security" {
-		t.Fatalf("ItemStatus = %q — находка баннера ниже порога была пропущена", res.ItemStatus)
-	}
-	report, err := r.GetScanReport(ctx, item.ID, "banner_scan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.FindingsBlocking != 1 {
-		t.Errorf("FindingsBlocking = %d, у баннеров блокирует любое совпадение", report.FindingsBlocking)
-	}
-}
-
-// TestSastBelowThresholdPasses — у SAST порог есть, и находка ниже него
-// публикацию не блокирует, но в отчёте остаётся.
-func TestSastBelowThresholdPasses(t *testing.T) {
-	r, cleanup := mustRepo(t)
-	defer cleanup()
-	ctx := context.Background()
-
-	e := newEnv(t, r)
-	e.sast.outcome = scanners.Outcome{Available: true, Detail: "файлов: 1",
-		Findings: []scanners.Finding{{
-			Scanner: "semgrep", RuleID: "no-print", Severity: "low",
-			Message: "print в библиотеке", File: "pkg/main.py", Line: 1,
-		}}}
-	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
-
-	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if !res.Terminal || res.ItemStatus != "approved" {
-		t.Fatalf("результат = %+v, находка ниже порога не должна блокировать", res)
-	}
-	report, err := r.GetScanReport(ctx, item.ID, "sast_scan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.State != "clean" || report.FindingsTotal != 1 || report.FindingsBlocking != 0 {
+	if report == nil || report.State != "findings" || report.FindingsTotal != 2 {
 		t.Errorf("отчёт = %+v", report)
 	}
-	// Находка при этом сохранена и видна в карточке.
+}
+
+// TestSandboxUnwantedDoesNotBlock — вердикт UNWANTED информационный: пометка в
+// карточке и в отчёте есть, публикацию он не держит (решение пользователя).
+//
+// Это и отличает его от DANGEROUS: «нежелательное» — не «вредоносное», и
+// звать DevSecOps на каждый пакет с рекламным SDK внутри незачем.
+func TestSandboxUnwantedDoesNotBlock(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	e.sandbox.result = sandbox.Result{
+		Verdict: sandbox.VerdictUnwanted, ScanID: "scan-7",
+		Detections: []sandbox.Detection{{Name: "Adware.Tracker", Severity: "low"}},
+	}
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+
+	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Terminal || res.ItemStatus != "approved" {
+		t.Fatalf("результат = %+v — вердикт UNWANTED не должен держать публикацию", res)
+	}
+	if len(e.artifacts.published) != 1 {
+		t.Error("пакет не опубликован при вердикте UNWANTED")
+	}
+
+	steps := stepsByCode(t, r, item.ID)
+	// Именно info, а не pass: «пройден» рядом с находкой читается как «чисто».
+	if steps["sandbox_scan"].Result != "info" {
+		t.Errorf("sandbox_scan = %q, ожидался info", steps["sandbox_scan"].Result)
+	}
+	if !strings.Contains(stepMessage(steps["sandbox_scan"]), "UNWANTED") {
+		t.Errorf("сообщение = %q — вердикт не назван", stepMessage(steps["sandbox_scan"]))
+	}
+	// Находка при этом сохранена: не блокирует — не значит «не показываем».
 	findings, err := r.ListCodeFindings(ctx, ver.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(findings) != 1 || findings[0].RuleID != "no-print" {
-		t.Errorf("находки = %+v", findings)
+	if len(findings) != 1 {
+		t.Errorf("находки = %+v, ожидалась одна", findings)
+	}
+}
+
+// TestSandboxUnknownVerdictIsNotClean — песочница вернула значение, которого
+// мы не знаем. Пропустить пакет по вердикту, смысла которого мы не понимаем,
+// нельзя: это то же «проверка не выполнена».
+func TestSandboxUnknownVerdictIsNotClean(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	e.sandbox.result = sandbox.Result{Verdict: "SUSPICIOUS", ScanID: "scan-9"}
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+
+	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ItemStatus != "awaiting_security" {
+		t.Fatalf("ItemStatus = %q — незнакомый вердикт прочитан как «чисто»", res.ItemStatus)
+	}
+	steps := stepsByCode(t, r, item.ID)
+	if steps["sandbox_scan"].Result != "warn" {
+		t.Errorf("sandbox_scan = %q, ожидался warn", steps["sandbox_scan"].Result)
+	}
+	if !strings.Contains(stepMessage(steps["sandbox_scan"]), "SUSPICIOUS") {
+		t.Errorf("сообщение = %q — неизвестный вердикт не назван, искать причину негде",
+			stepMessage(steps["sandbox_scan"]))
+	}
+	if len(e.artifacts.published) != 0 {
+		t.Error("пакет опубликован при незнакомом вердикте")
+	}
+}
+
+// TestSandboxReceivesPublishedArtifact — в песочницу уходит ровно тот файл,
+// который будет опубликован, а не пересобранный архив.
+//
+// Проверять другое содержимое, чем то, что поедет разработчикам, значит
+// проверять не то: именно это и отличает шаг от CI-версии, которая отправляла
+// tar.gz всего проекта, собранный джобой.
+func TestSandboxReceivesPublishedArtifact(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+
+	if _, err := pipeline.Run(ctx, e.context(pkg, ver, item), ""); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if e.sandbox.calls != 1 {
+		t.Fatalf("обращений к песочнице: %d, ожидалось 1", e.sandbox.calls)
+	}
+	artifact, err := r.CurrentArtifact(ctx, ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.sandbox.lastFile != artifact.Filename {
+		t.Errorf("в песочницу ушёл файл %q, а опубликован %q",
+			e.sandbox.lastFile, artifact.Filename)
+	}
+	if artifact.SizeBytes == nil || int64(e.sandbox.lastSize) != *artifact.SizeBytes {
+		t.Errorf("в песочницу ушло %d байт, размер артефакта %v",
+			e.sandbox.lastSize, artifact.SizeBytes)
 	}
 }
 
@@ -619,28 +647,66 @@ func TestDisabledScanIsExplicit(t *testing.T) {
 	ctx := context.Background()
 
 	e := newEnv(t, r)
-	e.config.SASTEnabled = false
+	e.config.SandboxEnabled = false
 	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
 
 	if _, err := pipeline.Run(ctx, e.context(pkg, ver, item), ""); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	steps := stepsByCode(t, r, item.ID)
-	if steps["sast_scan"].Result != "pass" {
-		t.Fatalf("sast_scan = %q", steps["sast_scan"].Result)
+	if steps["sandbox_scan"].Result != "pass" {
+		t.Fatalf("sandbox_scan = %q", steps["sandbox_scan"].Result)
 	}
-	if !strings.Contains(*steps["sast_scan"].Message, "SAST_ENABLED") {
-		t.Errorf("сообщение = %q — не названа настройка, которой шаг выключен", stepMessage(steps["sast_scan"]))
+	if !strings.Contains(stepMessage(steps["sandbox_scan"]), "SANDBOX_ENABLED") {
+		t.Errorf("сообщение = %q — не названа настройка, которой шаг выключен",
+			stepMessage(steps["sandbox_scan"]))
 	}
-	if e.sast.calls != 0 {
-		t.Error("выключенный сканер всё-таки вызван")
+	if e.sandbox.calls != 0 {
+		t.Error("выключенная проверка всё-таки обратилась в песочницу")
 	}
-	report, err := r.GetScanReport(ctx, item.ID, "sast_scan")
+	report, err := r.GetScanReport(ctx, item.ID, "sandbox_scan")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report != nil {
 		t.Error("для выключенного шага записан отчёт — прогона не было")
+	}
+}
+
+// TestRetiredStepsDoNotRun — снятые шаги не выполняются.
+//
+// Настройки и сами шаги оставлены (pipeline.RetiredSteps), и без этой проверки
+// включённый по недосмотру BANNER_SCAN_ENABLED вернул бы шаг в строй молча.
+func TestRetiredStepsDoNotRun(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	// Настройки снятых шагов включены, сканеры готовы что-то найти.
+	e.config.BannerScanEnabled = true
+	e.config.SASTEnabled = true
+	e.banner.outcome = scanners.Outcome{Available: true, Detail: "1",
+		Findings: []scanners.Finding{{Scanner: "yara", RuleID: "banner", Severity: "high"}}}
+	e.sast.outcome = scanners.Outcome{Available: true, Detail: "1",
+		Findings: []scanners.Finding{{Scanner: "semgrep", RuleID: "exec", Severity: "high"}}}
+
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Terminal || res.ItemStatus != "approved" {
+		t.Fatalf("результат = %+v — снятый шаг задержал публикацию", res)
+	}
+	if e.banner.calls != 0 || e.sast.calls != 0 {
+		t.Errorf("снятые сканеры вызваны: banner=%d sast=%d", e.banner.calls, e.sast.calls)
+	}
+	steps := stepsByCode(t, r, item.ID)
+	for _, code := range []string{"banner_scan", "sast_scan"} {
+		if _, ok := steps[code]; ok {
+			t.Errorf("снятый шаг %s выполнен и записан в историю прогона", code)
+		}
 	}
 }
 
@@ -652,19 +718,20 @@ func TestReportFilesAreStored(t *testing.T) {
 	ctx := context.Background()
 
 	e := newEnv(t, r)
-	e.sast.outcome = scanners.Outcome{Available: true, Detail: "файлов: 1",
-		Findings: []scanners.Finding{{
-			Scanner: "semgrep", RuleID: "python.dangerous-exec", Severity: "high",
-			Message: "Вызов exec с внешними данными", File: "pkg/main.py", Line: 3,
-			Matched: "exec(code)",
-		}}}
+	e.sandbox.result = sandbox.Result{
+		Verdict: sandbox.VerdictDangerous, ScanID: "scan-1",
+		Detections: []sandbox.Detection{{
+			Name: "Backdoor.Python.Exec", Type: "malware", Severity: "high",
+			Details: "запуск стороннего кода при импорте",
+		}},
+	}
 	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
 
 	if _, err := pipeline.Run(ctx, e.context(pkg, ver, item), ""); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	row, err := r.GetScanReport(ctx, item.ID, "sast_scan")
+	row, err := r.GetScanReport(ctx, item.ID, "sandbox_scan")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -674,11 +741,16 @@ func TestReportFilesAreStored(t *testing.T) {
 	if row.State != "findings" || row.FindingsBlocking != 1 {
 		t.Errorf("сводка отчёта = %+v", row)
 	}
-	if row.JSONKey != storage.ReportKey(item.ID, "sast_scan", "json") {
+	if row.JSONKey != storage.ReportKey(item.ID, "sandbox_scan", "json") {
 		t.Errorf("JSONKey = %q", row.JSONKey)
 	}
+	// Отчёт лежит в СВОЁМ хранилище, а не рядом с артефактом: артефакт
+	// вычищается из промежуточной зоны, отчёт обязан это пережить.
+	if row.Bucket == nil || *row.Bucket != e.reports.Bucket() {
+		t.Errorf("репозиторий отчёта = %v, ожидался %q", row.Bucket, e.reports.Bucket())
+	}
 
-	jsonBody, err := e.storage.Get(ctx, row.JSONKey)
+	jsonBody, err := e.reports.Get(ctx, row.JSONKey)
 	if err != nil {
 		t.Fatalf("JSON-отчёт не найден в хранилище: %v", err)
 	}
@@ -689,7 +761,7 @@ func TestReportFilesAreStored(t *testing.T) {
 	if report.Package.Name != pkg.Name || report.Summary.Blocking != 1 {
 		t.Errorf("содержимое отчёта = %+v", report.Summary)
 	}
-	if len(report.Findings) != 1 || report.Findings[0].RuleID != "python.dangerous-exec" {
+	if len(report.Findings) != 1 || report.Findings[0].RuleID != "Backdoor.Python.Exec" {
 		t.Errorf("находки в отчёте = %+v", report.Findings)
 	}
 	// sha256 артефакта в отчёте — по нему отчёт связывается с конкретными байтами.
@@ -697,11 +769,11 @@ func TestReportFilesAreStored(t *testing.T) {
 		t.Error("sha256 артефакта отсутствует в отчёте")
 	}
 
-	htmlBody, err := e.storage.Get(ctx, row.HTMLKey)
+	htmlBody, err := e.reports.Get(ctx, row.HTMLKey)
 	if err != nil {
 		t.Fatalf("HTML-отчёт не найден: %v", err)
 	}
-	if !strings.Contains(string(htmlBody), "python.dangerous-exec") {
+	if !strings.Contains(string(htmlBody), "Backdoor.Python.Exec") {
 		t.Error("находка отсутствует в HTML-отчёте")
 	}
 }
@@ -719,18 +791,19 @@ func TestReportSurvivesRerun(t *testing.T) {
 	if _, err := pipeline.Run(ctx, pc, ""); err != nil {
 		t.Fatalf("первый прогон: %v", err)
 	}
-	first, _ := r.GetScanReport(ctx, item.ID, "banner_scan")
+	first, _ := r.GetScanReport(ctx, item.ID, "sandbox_scan")
 
-	// Второй прогон — сканер теперь что-то нашёл.
-	e.banner.outcome = scanners.Outcome{Available: true, Detail: "правил сработало: 1",
-		Findings: []scanners.Finding{{Scanner: "yara", RuleID: "banner", Severity: "high",
-			Message: "совпадение", File: "pkg/main.py", Line: 1}}}
+	// Второй прогон — песочница теперь что-то нашла.
+	e.sandbox.result = sandbox.Result{
+		Verdict: sandbox.VerdictDangerous, ScanID: "scan-2",
+		Detections: []sandbox.Detection{{Name: "Trojan.Generic", Severity: "critical"}},
+	}
 	pc2 := e.context(pkg, ver, item)
 	if _, err := pipeline.Run(ctx, pc2, "download"); err != nil {
 		t.Fatalf("второй прогон: %v", err)
 	}
 
-	second, err := r.GetScanReport(ctx, item.ID, "banner_scan")
+	second, err := r.GetScanReport(ctx, item.ID, "sandbox_scan")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,8 +817,8 @@ func TestReportSurvivesRerun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 2 {
-		t.Errorf("отчётов: %d, ожидалось 2 (по одному на шаг сканирования)", len(all))
+	if len(all) != 1 {
+		t.Errorf("отчётов: %d, ожидался 1 (по одному на шаг сканирования)", len(all))
 	}
 }
 
@@ -760,14 +833,11 @@ func TestSecurityOverrideUnblocksAllScanSteps(t *testing.T) {
 	ctx := context.Background()
 
 	e := newEnv(t, r)
-	// Всё сразу против пакета: уязвимость выше порога, баннер и находка SAST
-	// (последняя публикацию не блокирует, но в карточке должна остаться).
-	e.banner.outcome = scanners.Outcome{Available: true, Detail: "1",
-		Findings: []scanners.Finding{{Scanner: "yara", RuleID: "banner", Severity: "high",
-			Message: "совпадение", File: "pkg/main.py", Line: 1}}}
-	e.sast.outcome = scanners.Outcome{Available: true, Detail: "1",
-		Findings: []scanners.Finding{{Scanner: "semgrep", RuleID: "exec", Severity: "high",
-			Message: "exec", File: "pkg/main.py", Line: 1}}}
+	// Всё сразу против пакета: уязвимость выше порога и вердикт песочницы.
+	e.sandbox.result = sandbox.Result{
+		Verdict: sandbox.VerdictDangerous, ScanID: "scan-13",
+		Detections: []sandbox.Detection{{Name: "Trojan.Generic", Severity: "critical"}},
+	}
 
 	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
 	e.index.Records = []osv.Record{criticalRecord(t, pkg.Name)}
@@ -812,17 +882,13 @@ func TestSecurityOverrideUnblocksAllScanSteps(t *testing.T) {
 				"по содержимому сразу", code, steps[code].Result)
 		}
 	}
-	// SAST решение DevSecOps не касается: он информационный, и его находки
-	// остаются записью о прогоне, а не «разрешёнными вручную».
-	if steps["sast_scan"].Result != "info" {
-		t.Errorf("sast_scan = %q, ожидался info", steps["sast_scan"].Result)
-	}
-	// Имя принявшего решение попало в отчёт.
-	report, err := r.GetScanReport(ctx, item.ID, "sast_scan")
+	// Имя принявшего решение попало в отчёт: без этого находки песочницы
+	// выглядели бы просто проигнорированными.
+	report, err := r.GetScanReport(ctx, item.ID, "sandbox_scan")
 	if err != nil {
 		t.Fatal(err)
 	}
-	jsonBody, err := e.storage.Get(ctx, report.JSONKey)
+	jsonBody, err := e.reports.Get(ctx, report.JSONKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -969,8 +1035,9 @@ func TestResumeFromStepSkipsEarlier(t *testing.T) {
 			t.Errorf("шаг %s выполнен, хотя возобновление было с download", code)
 		}
 	}
-	if len(steps) != 5 {
-		t.Errorf("шагов: %d, ожидалось 5 (download..publish)", len(steps))
+	// download, vuln_scan, sandbox_scan, publish.
+	if want := len(domain.StepCodes) - 4; len(steps) != want {
+		t.Errorf("шагов: %d, ожидалось %d (download..publish)", len(steps), want)
 	}
 }
 

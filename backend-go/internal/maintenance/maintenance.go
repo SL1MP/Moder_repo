@@ -119,12 +119,12 @@ func (s *Service) CleanupOrphanObjects(ctx context.Context, ttl time.Duration) (
 
 	removed := 0
 	for _, artifact := range artifacts {
-		if artifact.S3Key == nil || *artifact.S3Key == "" {
+		if artifact.StagingPath == nil || *artifact.StagingPath == "" {
 			continue
 		}
-		if err := s.Storage.Delete(ctx, *artifact.S3Key); err != nil {
+		if err := s.Storage.Delete(ctx, *artifact.StagingPath); err != nil {
 			s.logger().Warn("объект не удалён из временного хранилища",
-				"artifact", artifact.ID, "key", *artifact.S3Key, "error", err)
+				"artifact", artifact.ID, "key", *artifact.StagingPath, "error", err)
 		} else {
 			removed++
 		}

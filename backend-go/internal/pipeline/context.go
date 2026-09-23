@@ -11,6 +11,7 @@ import (
 	"moderation/internal/osv"
 	"moderation/internal/registry"
 	"moderation/internal/repo"
+	"moderation/internal/sandbox"
 	"moderation/internal/scanners"
 	"moderation/internal/storage"
 )
@@ -29,10 +30,15 @@ type Config struct {
 	VulnMaxScore        float64
 	OSVMaxStalenessDays int
 
-	// BannerScanEnabled/SASTEnabled — выключатели шагов сканирования.
-	// SAST временно выключен целиком решением пользователя; код поддерживает
-	// чистое выключение — шаг отдаёт pass с явной пометкой, а не молча
-	// пропускается.
+	// SandboxEnabled — выключатель шага песочницы. Выключенный шаг отдаёт pass
+	// с явной пометкой, а не молча пропускается: «проверку не делали» обязано
+	// быть видно в карточке.
+	SandboxEnabled bool
+
+	// BannerScanEnabled/SASTEnabled — выключатели СНЯТЫХ шагов сканирования
+	// содержимого (pipeline.RetiredSteps). Конвейер их не запускает; поля
+	// оставлены, потому что шаги оставлены — возврат в строй не должен
+	// требовать ещё и восстановления настройки.
 	BannerScanEnabled bool
 	SASTEnabled       bool
 	// SASTMinSeverity — порог SAST. У баннеров порога нет: совпадение правила
@@ -60,13 +66,24 @@ func (c Config) ArtifactRepo(manager string) string {
 // Deps — внешние зависимости конвейера. Все интерфейсы: конвейер не знает, что
 // под ними — реальное хранилище или память.
 type Deps struct {
-	Repo      *repo.Repo
-	Storage   storage.Store
+	Repo *repo.Repo
+	// Storage — промежуточная зона для скачанного артефакта: пакет лежит в ней,
+	// пока идут проверки, и удаляется сразу после публикации или отклонения.
+	Storage storage.Store
+	// Reports — постоянное хранилище отчётов. Отдельно от Storage намеренно:
+	// артефакты вычищаются, отчёты обязаны это пережить — именно ими DevSecOps
+	// объясняет своё решение.
+	Reports   storage.Store
 	Artifacts artifactstore.Store
 	Index     osv.Index
 	Registry  *registry.Registry
-	Banner    scanners.Scanner
-	SAST      scanners.Scanner
+	// Sandbox — внешняя песочница шага sandbox_scan. nil означает «проверять
+	// нечем»: шаг позовёт DevSecOps, а не пропустит пакет.
+	Sandbox sandbox.Client
+	// Banner/SAST — сканеры СНЯТЫХ шагов (pipeline.RetiredSteps). Конвейер их
+	// не вызывает.
+	Banner scanners.Scanner
+	SAST   scanners.Scanner
 	// Fetch скачивает артефакт по адресу из реестра. Отдельно от Registry:
 	// качаем напрямую из реестра пакетного менеджера через корпоративный
 	// HTTP_PROXY, а не через proxy-репозиторий артефактори.
@@ -176,10 +193,10 @@ func (c *Context) Payload(ctx context.Context, artifact *domain.Artifact) ([]byt
 	if c.payload != nil {
 		return c.payload, nil
 	}
-	if artifact == nil || artifact.S3Key == nil || *artifact.S3Key == "" {
+	if artifact == nil || artifact.StagingPath == nil || *artifact.StagingPath == "" {
 		return nil, fmt.Errorf("артефакт отсутствует во временном хранилище")
 	}
-	data, err := c.Deps.Storage.Get(ctx, *artifact.S3Key)
+	data, err := c.Deps.Storage.Get(ctx, *artifact.StagingPath)
 	if err != nil {
 		return nil, fmt.Errorf("чтение артефакта из временного хранилища: %w", err)
 	}
@@ -207,7 +224,10 @@ func (d Deps) Validate() error {
 		missing = append(missing, "Repo (доступ к базе)")
 	}
 	if d.Storage == nil {
-		missing = append(missing, "Storage (карантинное хранилище артефактов)")
+		missing = append(missing, "Storage (промежуточная зона артефактов)")
+	}
+	if d.Reports == nil {
+		missing = append(missing, "Reports (хранилище отчётов сканирования)")
 	}
 	if d.Registry == nil {
 		missing = append(missing, "Registry (плагины пакетных менеджеров)")

@@ -23,8 +23,8 @@ func (r *Repo) GetOrCreateArtifact(ctx context.Context, packageVersionID int64, 
 		VALUES ($1, $2, 'downloaded')
 		ON CONFLICT ON CONSTRAINT uq_artifact_package_version_id_filename DO UPDATE SET filename = EXCLUDED.filename
 		RETURNING id, package_version_id, filename, source_url, size_bytes, sha256,
-		          declared_checksum, checksum_algo, s3_bucket, s3_key, s3_uploaded_at,
-		          s3_deleted_at, nexus_url, published_at, status
+		          declared_checksum, checksum_algo, staging_repo, staging_path, staged_at,
+		          staging_cleared_at, nexus_url, published_at, status
 	`, packageVersionID, filename)
 	return scanArtifact(row)
 }
@@ -35,11 +35,11 @@ func (r *Repo) GetOrCreateArtifact(ctx context.Context, packageVersionID int64, 
 func (r *Repo) CurrentArtifact(ctx context.Context, packageVersionID int64) (*domain.Artifact, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, package_version_id, filename, source_url, size_bytes, sha256,
-		       declared_checksum, checksum_algo, s3_bucket, s3_key, s3_uploaded_at,
-		       s3_deleted_at, nexus_url, published_at, status
+		       declared_checksum, checksum_algo, staging_repo, staging_path, staged_at,
+		       staging_cleared_at, nexus_url, published_at, status
 		FROM artifact
-		WHERE package_version_id = $1 AND (s3_key IS NOT NULL OR nexus_url IS NOT NULL)
-		ORDER BY (s3_deleted_at IS NOT NULL), id
+		WHERE package_version_id = $1 AND (staging_path IS NOT NULL OR nexus_url IS NOT NULL)
+		ORDER BY (staging_cleared_at IS NOT NULL), id
 		LIMIT 1
 	`, packageVersionID)
 	artifact, err := scanArtifact(row)
@@ -57,11 +57,11 @@ func (r *Repo) UpdateArtifactDownloaded(ctx context.Context, a *domain.Artifact)
 	_, err := r.pool.Exec(ctx, `
 		UPDATE artifact SET
 			source_url = $2, size_bytes = $3, sha256 = $4, declared_checksum = $5,
-			checksum_algo = $6, s3_bucket = $7, s3_key = $8, s3_uploaded_at = $9,
-			s3_deleted_at = NULL, status = 'downloaded'
+			checksum_algo = $6, staging_repo = $7, staging_path = $8, staged_at = $9,
+			staging_cleared_at = NULL, status = 'downloaded'
 		WHERE id = $1
 	`, a.ID, a.SourceURL, a.SizeBytes, a.SHA256, a.DeclaredChecksum,
-		a.ChecksumAlgo, a.S3Bucket, a.S3Key, a.S3UploadedAt)
+		a.ChecksumAlgo, a.StagingRepo, a.StagingPath, a.StagedAt)
 	if err != nil {
 		return fmt.Errorf("обновление артефакта после скачивания: %w", err)
 	}
@@ -91,9 +91,9 @@ func (r *Repo) MarkArtifactPublished(ctx context.Context, id int64, url string, 
 // оставляет статус published: объект удаляется и после успешной публикации,
 // и это не «purged», а штатная уборка.
 func (r *Repo) MarkArtifactPurged(ctx context.Context, id int64, at time.Time, keepStatus bool) error {
-	query := `UPDATE artifact SET s3_deleted_at = $2, status = 'purged' WHERE id = $1`
+	query := `UPDATE artifact SET staging_cleared_at = $2, status = 'purged' WHERE id = $1`
 	if keepStatus {
-		query = `UPDATE artifact SET s3_deleted_at = $2 WHERE id = $1`
+		query = `UPDATE artifact SET staging_cleared_at = $2 WHERE id = $1`
 	}
 	if _, err := r.pool.Exec(ctx, query, id, at); err != nil {
 		return fmt.Errorf("отметка объекта удалённым из хранилища: %w", err)
@@ -106,8 +106,8 @@ func (r *Repo) MarkArtifactPurged(ctx context.Context, id int64, at time.Time, k
 func (r *Repo) ListArtifacts(ctx context.Context, packageVersionID int64) ([]domain.Artifact, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, package_version_id, filename, source_url, size_bytes, sha256,
-		       declared_checksum, checksum_algo, s3_bucket, s3_key, s3_uploaded_at,
-		       s3_deleted_at, nexus_url, published_at, status
+		       declared_checksum, checksum_algo, staging_repo, staging_path, staged_at,
+		       staging_cleared_at, nexus_url, published_at, status
 		FROM artifact WHERE package_version_id = $1 ORDER BY id
 	`, packageVersionID)
 	if err != nil {
@@ -130,8 +130,8 @@ func scanArtifact(row scanner) (*domain.Artifact, error) {
 	var a domain.Artifact
 	if err := row.Scan(
 		&a.ID, &a.PackageVersionID, &a.Filename, &a.SourceURL, &a.SizeBytes, &a.SHA256,
-		&a.DeclaredChecksum, &a.ChecksumAlgo, &a.S3Bucket, &a.S3Key, &a.S3UploadedAt,
-		&a.S3DeletedAt, &a.NexusURL, &a.PublishedAt, &a.Status,
+		&a.DeclaredChecksum, &a.ChecksumAlgo, &a.StagingRepo, &a.StagingPath, &a.StagedAt,
+		&a.StagingClearedAt, &a.NexusURL, &a.PublishedAt, &a.Status,
 	); err != nil {
 		return nil, fmt.Errorf("чтение artifact: %w", err)
 	}
