@@ -7,6 +7,8 @@ import (
 
 	"moderation/internal/artifactstore"
 	"moderation/internal/config"
+	"moderation/internal/maintenance"
+	"moderation/internal/osv"
 	"moderation/internal/pipeline"
 	"moderation/internal/registry"
 	"moderation/internal/sandbox"
@@ -112,6 +114,28 @@ func newRegistry(cfg *config.Config, httpClient registry.Doer) *registry.Registr
 
 		HTTP: httpClient,
 	})
+}
+
+// osvConfig — откуда брать снапшот базы уязвимостей.
+//
+// Способ доставки выбирается настройкой OSV_DB_SOURCE и на всё остальное не
+// влияет: снапшот в любом случае раскладывается на диск воркера целиком,
+// версия фиксируется в базе, а решение по каждому пакету принимается по
+// локальным данным. Разбор вариантов — docs/osv-snapshot.md.
+//
+// Ошибку разбора здесь не поднимаем: значение уже проверено на старте
+// (config.Load), и до сюда доходит только допустимое.
+func osvConfig(cfg *config.Config) maintenance.OSVConfig {
+	kind, _ := osv.ParseSourceKind(cfg.OSVDBSource)
+	return maintenance.OSVConfig{
+		Kind:      kind,
+		Repo:      cfg.ArtifactRepoOSV,
+		Path:      cfg.OSVSnapshotPath,
+		URL:       cfg.OSVDBURL,
+		Token:     cfg.OSVDBToken,
+		File:      cfg.OSVDBFile,
+		LocalPath: cfg.OSVLocalDBPath,
+	}
 }
 
 // pipelineConfig — пороги и переключатели конвейера из конфигурации сервиса.

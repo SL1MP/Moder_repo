@@ -39,10 +39,54 @@ func (s snapshotFromStore) ReadSnapshot(ctx context.Context, repo, path string) 
 
 // OSVConfig — что нужно синхронизации.
 type OSVConfig struct {
+	// Kind — способ доставки снапшота: artifactory, http или file.
+	// Пустой означает artifactory — так это работало до появления выбора.
+	Kind osv.SourceKind
+	// Repo и Path — репозиторий артефактори и путь в нём (Kind=artifactory).
 	Repo string
 	Path string
+	// URL, Token — адрес файла и токен зеркала (Kind=http).
+	URL   string
+	Token string
+	// File — путь к zip-файлу снапшота на диске (Kind=file).
+	File string
 	// LocalPath — куда раскладывается снапшот.
 	LocalPath string
+}
+
+// source собирает источник снапшота по настройке.
+//
+// Разные источники отвечают на один и тот же вопрос — «откуда приехал файл», —
+// и дальше по коду не различаются: снапшот всё равно раскладывается на диск
+// целиком, версия фиксируется в базе, а проверка идёт по локальным данным.
+func (cfg OSVConfig) source(store artifactstore.Store) (osv.SnapshotSource, error) {
+	switch cfg.Kind {
+	case osv.SourceHTTP:
+		header := map[string]string{}
+		if cfg.Token != "" {
+			header["Authorization"] = "Bearer " + cfg.Token
+		}
+		return osv.HTTPSource{URL: cfg.URL, Header: header}, nil
+	case osv.SourceFile:
+		return osv.FileSource{Path: cfg.File}, nil
+	case "", osv.SourceArtifactory:
+		if store == nil {
+			return nil, errors.New("артефактори не настроено — снапшот OSV брать неоткуда")
+		}
+		return snapshotFromStore{store: store}, nil
+	}
+	return nil, fmt.Errorf("неизвестный источник снапшота OSV: %q", cfg.Kind)
+}
+
+// location — где снапшот искали, для сообщений.
+func (cfg OSVConfig) location() string {
+	switch cfg.Kind {
+	case osv.SourceHTTP:
+		return cfg.URL
+	case osv.SourceFile:
+		return cfg.File
+	}
+	return cfg.Repo + "/" + cfg.Path
 }
 
 // SyncResult — итог одной синхронизации.
@@ -63,12 +107,13 @@ type SyncResult struct {
 // пакет, и её же показывает экран «Настройка». Прежние версии помечаются
 // неактивными — активной может быть только одна.
 func (s *Service) SyncOSVSnapshot(ctx context.Context, cfg OSVConfig, force bool) (SyncResult, error) {
-	if s.Artifacts == nil {
-		return SyncResult{}, errors.New("артефактори не настроено — снапшот OSV брать неоткуда")
+	src, err := cfg.source(s.Artifacts)
+	if err != nil {
+		return SyncResult{}, err
 	}
 	index := osv.NewSnapshotIndex(cfg.LocalPath)
 
-	info, err := index.Sync(ctx, snapshotFromStore{store: s.Artifacts}, cfg.Repo, cfg.Path, force)
+	info, err := index.Sync(ctx, src, cfg.Repo, cfg.Path, force)
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -96,8 +141,8 @@ func (s *Service) SyncOSVSnapshot(ctx context.Context, cfg OSVConfig, force bool
 	}
 	s.audit(ctx, "osv_snapshot_synced", "vuln_index_version", fmt.Sprint(row.ID),
 		map[string]any{"version": info.Version, "records": info.RecordCount})
-	s.logger().Info("снапшот OSV загружен",
-		"версия", info.Version, "записей", info.RecordCount)
+	s.logger().Info("снапшот OSV загружен", "версия", info.Version,
+		"записей", info.RecordCount, "источник", string(cfg.Kind), "откуда", cfg.location())
 
 	return SyncResult{
 		Updated: true, Version: info.Version, Records: info.RecordCount,

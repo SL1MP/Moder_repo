@@ -79,10 +79,8 @@ func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, st *
 		cleanupInterval:    clampInterval(cfg.S3CleanupInterval),
 		osvInterval:        cfg.OSVSyncInterval,
 		orphanTTL:          cfg.S3OrphanTTL,
-		osv: maintenance.OSVConfig{
-			Repo: cfg.ArtifactRepoOSV, Path: cfg.OSVSnapshotPath, LocalPath: cfg.OSVLocalDBPath,
-		},
-		vulnMaxScore: cfg.VulnMaxScore,
+		osv:                osvConfig(cfg),
+		vulnMaxScore:       cfg.VulnMaxScore,
 	}
 }
 

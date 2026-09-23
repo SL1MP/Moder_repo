@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"moderation/internal/domain"
+	"moderation/internal/osv"
 )
 
 // Config — конфигурация сервиса. Список переменных растёт по мере переноса
@@ -171,9 +172,18 @@ type Config struct {
 
 	// Каталог с распакованным снапшотом базы OSV.
 	OSVLocalDBPath string
-	// Откуда берётся снапшот: репозиторий артефактори и путь внутри него.
+	// OSVDBSource — способ доставки снапшота: artifactory (по умолчанию),
+	// http или file. Разбор вариантов — docs/osv-snapshot.md.
+	OSVDBSource string
+	// Откуда берётся снапшот при OSV_DB_SOURCE=artifactory.
 	ArtifactRepoOSV string
 	OSVSnapshotPath string
+	// OSVDBURL — адрес файла при OSV_DB_SOURCE=http.
+	OSVDBURL string
+	// OSVDBToken — токен внутреннего зеркала, уходит заголовком Authorization.
+	OSVDBToken string
+	// OSVDBFile — путь к zip-файлу снапшота при OSV_DB_SOURCE=file.
+	OSVDBFile string
 	// OSVSyncInterval — как часто воркер проверяет, не выложили ли новый
 	// снапшот. Ноль и меньше — синхронизация выключена.
 	OSVSyncInterval time.Duration
@@ -308,6 +318,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		ArtifactDryRun:   boolOr(getenv("ARTIFACT_DRY_RUN"), false),
 
 		OSVLocalDBPath:  valueOr(getenv("OSV_LOCAL_DB_PATH"), "/var/lib/osv-db"),
+		OSVDBSource:     valueOr(getenv("OSV_DB_SOURCE"), "artifactory"),
+		OSVDBURL:        strings.TrimSpace(getenv("OSV_DB_URL")),
+		OSVDBToken:      strings.TrimSpace(getenv("OSV_DB_TOKEN")),
+		OSVDBFile:       strings.TrimSpace(getenv("OSV_DB_FILE")),
 		ArtifactRepoOSV: valueOr(getenv("ARTIFACT_REPO_OSV"), "osv-snapshots"),
 		OSVSnapshotPath: valueOr(getenv("OSV_SNAPSHOT_PATH"), "osv/latest/osv-all.zip"),
 		OSVSyncInterval: secondsOr(getenv("OSV_SYNC_INTERVAL_SECONDS"), 6*60*60),
@@ -373,6 +387,20 @@ func Load(getenv func(string) string) (*Config, error) {
 		errs = append(errs, fmt.Errorf(
 			"SAST_MIN_SEVERITY: недопустимое значение %q, ожидается info|low|medium|high|critical",
 			cfg.SASTMinSeverity))
+	}
+
+	// Источник снапшота OSV: опечатка в нём не должна молча превращаться в
+	// «читаем из артефактори» — там файла может не быть вовсе, и сервис
+	// месяцами работал бы с пустой базой, отправляя каждый пакет к DevSecOps.
+	switch kind, kindErr := osv.ParseSourceKind(cfg.OSVDBSource); {
+	case kindErr != nil:
+		errs = append(errs, fmt.Errorf("OSV_DB_SOURCE: %w", kindErr))
+	case kind == osv.SourceHTTP && strings.TrimSpace(cfg.OSVDBURL) == "":
+		errs = append(errs, errors.New(
+			"OSV_DB_URL: не задан при OSV_DB_SOURCE=http — снапшот брать неоткуда"))
+	case kind == osv.SourceFile && strings.TrimSpace(cfg.OSVDBFile) == "":
+		errs = append(errs, errors.New(
+			"OSV_DB_FILE: не задан при OSV_DB_SOURCE=file — снапшот брать неоткуда"))
 	}
 
 	// Песочница включена явно, но адрес не задан — шаг не сможет ничего

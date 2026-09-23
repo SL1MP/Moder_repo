@@ -65,15 +65,19 @@ func (s *SnapshotIndex) Sync(ctx context.Context, src SnapshotSource, repo, path
 		return nil, err
 	}
 	if remote == nil {
-		return nil, fmt.Errorf("%w: %s/%s", ErrSnapshotMissing, repo, path)
+		return nil, fmt.Errorf("%w: %s", ErrSnapshotMissing, snapshotLocation(repo, path))
 	}
-	remoteVersion := snapshotVersion(*remote)
 
 	current, err := s.CurrentVersion(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !force && current != nil && current.Version == remoteVersion {
+
+	// Версия снапшота, известная ДО скачивания. Пустая означает, что источник
+	// не сообщил о файле ничего: ни контрольной суммы, ни времени изменения.
+	// Так отвечает раздача, не поддерживающая HEAD.
+	remoteVersion := knownVersion(*remote)
+	if !force && remoteVersion != "" && current != nil && current.Version == remoteVersion {
 		return nil, nil
 	}
 
@@ -83,6 +87,17 @@ func (s *SnapshotIndex) Sync(ctx context.Context, src SnapshotSource, repo, path
 	}
 	digest := sha256.Sum256(payload)
 	checksum := hex.EncodeToString(digest[:])
+
+	if remoteVersion == "" {
+		// Версию берём из содержимого. Иначе она вычислялась бы из текущего
+		// времени и менялась при каждой синхронизации: снапшот перекладывался
+		// бы заново каждые шесть часов, и каждый раз запускалась бы
+		// перепроверка всех одобренных пакетов — по базе, которая не менялась.
+		remoteVersion = checksum[:16]
+		if !force && current != nil && current.Version == remoteVersion {
+			return nil, nil
+		}
+	}
 	// Сверяем, только если артефактори отдал именно sha256: в заголовке может
 	// оказаться ETag или sha1, и сравнивать их с sha256 бессмысленно.
 	if len(remote.Checksum) == 64 && !strings.EqualFold(remote.Checksum, checksum) {
@@ -142,15 +157,35 @@ func (s *SnapshotIndex) Sync(ctx context.Context, src SnapshotSource, repo, path
 // snapshotVersion — как называется версия снапшота. Хеш предпочтительнее даты:
 // одинаковый файл, перевыложенный дважды, не должен считаться новой версией и
 // запускать перепроверку всех одобренных пакетов.
-func snapshotVersion(remote RemoteSnapshot) string {
+// knownVersion — версия снапшота по метаданным источника, без скачивания.
+//
+// Пустая строка означает «источник о файле ничего не сказал»: вызывающий код
+// обязан скачать файл и взять версию из его содержимого. Возвращать здесь
+// текущее время нельзя — тогда версия менялась бы при каждой проверке, и
+// сервис бесконечно перекладывал бы один и тот же снапшот.
+func knownVersion(remote RemoteSnapshot) string {
 	if len(remote.Checksum) >= 16 {
 		return remote.Checksum[:16]
 	}
-	stamp := remote.LastModified
-	if stamp.IsZero() {
-		stamp = time.Now().UTC()
+	if !remote.LastModified.IsZero() {
+		return remote.LastModified.UTC().Format("20060102T150405Z")
 	}
-	return stamp.UTC().Format("20060102T150405Z")
+	return ""
+}
+
+// snapshotLocation — человеческое описание того, где снапшот искали. Для
+// артефактори это «репозиторий/путь», для остальных источников — адрес или
+// путь, который они получили настройкой.
+func snapshotLocation(repo, path string) string {
+	switch {
+	case repo != "" && path != "":
+		return repo + "/" + path
+	case path != "":
+		return path
+	case repo != "":
+		return repo
+	}
+	return "источник, заданный настройкой OSV_DB_SOURCE"
 }
 
 // extractSnapshot раскладывает архив в целевой каталог по схеме

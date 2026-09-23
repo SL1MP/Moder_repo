@@ -21,8 +21,8 @@ x-proxy-env: &proxy-env
   http_proxy: ${HTTP_PROXY:-}
   https_proxy: ${HTTPS_PROXY:-}
   # Внутренние адреса обязательно в обход прокси.
-  NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis,minio,nexus,keycloak,api,web,nginx}
-  no_proxy: ${NO_PROXY:-localhost,127.0.0.1,db,redis,minio,nexus,keycloak,api,web,nginx}
+  NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,redis,nexus,keycloak,api,web,nginx}
+  no_proxy: ${NO_PROXY:-localhost,127.0.0.1,db,redis,nexus,keycloak,api,web,nginx}
 
 x-backend: &backend
   # build: намеренно не здесь — все три сервиса (api/worker/beat) используют один и тот
@@ -182,8 +182,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      minio:
-        condition: service_started
 
   worker:
     <<: *backend
@@ -240,26 +238,6 @@ services:
       timeout: 3s
       retries: 20
 
-  minio:
-    # Тег обязателен: без него тянется latest, а он на разных зеркалах
-    # разъезжается — ловили сборку трёхлетней давности, в которой нет `mc`.
-    image: ${MINIO_IMAGE:-minio/minio:latest}
-    restart: unless-stopped
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?S3_ACCESS_KEY обязателен}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?S3_SECRET_KEY обязателен}
-    volumes:
-      - minio-data:/data
-    # Не `mc ready local`: клиента `mc` в образе minio/minio нет, healthcheck
-    # падал с "executable file not found" и контейнер вечно висел unhealthy.
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/ready || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
   keycloak:
     # Realm зашит в образ (см. keycloak/Dockerfile), а не монтируется с хоста:
     # bind-mount отдельного файла на Docker Desktop + WSL2 ломается с
@@ -312,7 +290,6 @@ services:
 volumes:
   pgdata:
   redis-data:
-  minio-data:
   nexus-data:
   osv-db:
   web-dist:
