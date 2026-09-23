@@ -56,11 +56,11 @@ make up
 make bootstrap            # справочники, проверка репозиториев артефактори, демо-данные
 make logs                 # логи api-go и worker-go
 
-docker compose run --rm api-go schema   # схема базы против кода: чего не хватает
+docker compose run --rm migrate-go schema   # схема базы против кода: чего не хватает
 ```
 
 Для входа логином/паролем (без Keycloak) учётки заводятся с паролем:
-`docker compose run --rm api-go bootstrap --demo --service-password '<пароль>'`.
+`docker compose run --rm migrate-go bootstrap --demo --service-password '<пароль>'`.
 
 После старта:
 

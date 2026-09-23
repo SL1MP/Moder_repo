@@ -68,7 +68,7 @@ docker compose run --rm migrate-go
 незаметно промахнуться:
 
 ```bash
-docker compose run --rm api-go schema
+docker compose run --rm migrate-go schema
 # Схема базы согласована с кодом: пробелов нет.
 ```
 
@@ -77,14 +77,14 @@ docker compose run --rm api-go schema
 
 ```bash
 docker compose run --rm migrate-go
-docker compose run --rm api-go migrate --status   # что применено, чего нет
+docker compose run --rm migrate-go migrate --status   # что применено, чего нет
 ```
 
 Дальше — справочники, проверка репозиториев артефактори и учётные записи:
 
 ```bash
 # демо-данные + учётки с паролем (только для локального стенда!)
-docker compose run --rm api-go bootstrap --demo --service-password 'локальный-пароль'
+docker compose run --rm migrate-go bootstrap --demo --service-password 'локальный-пароль'
 ```
 
 Учётки создаются четыре — по одной на роль:
@@ -157,7 +157,7 @@ devsecops) — там видны версия, дата и возраст баз
 
 ```bash
 docker compose ps                      # все контейнеры, включая worker-go
-docker compose run --rm api-go schema  # схема базы против кода
+docker compose run --rm migrate-go schema  # схема базы против кода
 docker compose logs -f api-go          # сторож очереди, сверка схемы, HTTP
 docker compose logs -f worker-go       # обработка пакетов конвейером
 docker compose logs -f nginx api web
@@ -254,18 +254,24 @@ docker compose run --rm api bootstrap --demo --service-password 'пароль'
 с `cancelled` есть — и старая миграция отказывается ложиться поверх более
 новых данных.
 
+Служебные команды при этом надо звать через `migrate-go`, а НЕ через `api-go`:
+`api-go` объявлен зависящим от успешного завершения миграций, поэтому пока
+они падают, он не запускается — и команда для починки оказывается
+заблокирована тем, что она чинит. `migrate-go` зависит только от базы, а образ
+у них общий, так что ему доступны все подкоманды.
+
 Лечится отметкой уже применённого:
 
 ```bash
 # 1. что схема знает на самом деле
-docker compose run --rm api-go schema
+docker compose run --rm migrate-go schema
 
 # 2. отметить накатанное применённым, НЕ выполняя
-docker compose run --rm api-go migrate --baseline 0012
+docker compose run --rm migrate-go migrate --baseline 0012
 
 # 3. накатить оставшееся и сверить
 docker compose run --rm migrate-go
-docker compose run --rm api-go schema
+docker compose run --rm migrate-go schema
 ```
 
 Версию для `--baseline` берите по последней миграции, которая на стенде уже
@@ -285,7 +291,7 @@ docker compose run --rm api-go schema
 Проверить разом, какие есть, а каких нет:
 
 ```bash
-docker compose run --rm api-go bootstrap --demo=false
+docker compose run --rm migrate-go bootstrap --demo=false
 ```
 
 Вывод перечисляет каждый репозиторий и его состояние — `есть`, `НЕ НАЙДЕН` или

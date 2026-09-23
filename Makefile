@@ -45,17 +45,17 @@ migrate: ## Применить миграции
 	$(COMPOSE) run --rm migrate-go
 
 migrate-status: ## Что применено, а что нет
-	$(COMPOSE) run --rm api-go migrate --status
+	$(COMPOSE) run --rm migrate-go migrate --status
 
 schema: ## Сверить схему базы с тем, что пишет код
-	$(COMPOSE) run --rm api-go schema
+	$(COMPOSE) run --rm migrate-go schema
 
 bootstrap: ## Справочники, проверка репозиториев артефактори, демо-данные
 	@# Nexus готов через 1-3 минуты после старта. Без ожидания проверка
 	@# репозиториев показывала бы их отсутствующими.
 	@$(MAKE) --no-print-directory wait-nexus
 	$(COMPOSE) run --rm migrate-go
-	$(COMPOSE) run --rm api-go bootstrap --demo
+	$(COMPOSE) run --rm migrate-go bootstrap --demo
 	@bash scripts/bootstrap_keycloak.sh || echo "Keycloak: realm импортируется контейнером при старте (профиль sso)"
 	@echo "bootstrap завершён"
 
@@ -76,7 +76,7 @@ wait-nexus: ## Дождаться готовности Nexus (используе
 	@COMPOSE="$(COMPOSE)" bash scripts/wait-nexus.sh
 
 import-list: ## Импорт package_list.txt: make import-list FILE=./package_list.txt MANAGER=pypi
-	$(COMPOSE) run --rm -v "$(abspath $(FILE)):/tmp/list.txt:ro" api-go \
+	$(COMPOSE) run --rm -v "$(abspath $(FILE)):/tmp/list.txt:ro" migrate-go \
 	  import-packages /tmp/list.txt --manager $(MANAGER) --origin "$(FILE)"
 
 sync-osv: ## Загрузить снапшот базы OSV
@@ -94,17 +94,17 @@ run-pending: ## Разобрать очередь синхронно, не до�
 service-account: ## Сервисная учётка для CI: make service-account USER=ci.gitlab ROLES=developer
 	@# Пароль — через MODERATION_SERVICE_PASSWORD или стандартный ввод: значение
 	@# флага видно в `ps` любому пользователю машины.
-	$(COMPOSE) run --rm -e MODERATION_SERVICE_PASSWORD api-go \
+	$(COMPOSE) run --rm -e MODERATION_SERVICE_PASSWORD migrate-go \
 	  service-account $(USER) --roles $(or $(ROLES),developer)
 
 api-smoke: ## Прогон REST API: make api-smoke SVC_USER=ci-bot SVC_PASSWORD=... [PKG=six==1.16.0]
 	./scripts/api-smoke.sh $(PKG)
 
 cli: ## Произвольная команда CLI: make cli ARGS="--help"
-	$(COMPOSE) run --rm api-go $(ARGS)
+	$(COMPOSE) run --rm migrate-go $(ARGS)
 
 shell: ## Shell внутри контейнера api-go
-	$(COMPOSE) run --rm --entrypoint sh api-go
+	$(COMPOSE) run --rm --entrypoint sh migrate-go
 
 test: ## Тесты go-версии (нужен MODERATION_TEST_POSTGRES_DSN — см. docs/testing.md)
 	cd backend-go && go test -p 1 ./...

@@ -145,7 +145,7 @@ https://<хост>/api/v1/request-items/108/reports/banner_scan.html
 
 ```bash
 # что накатить — скажет сама сверка схемы (код возврата 1, если есть пробелы)
-docker compose run --rm api-go schema
+docker compose run --rm migrate-go schema
 
 # накатывать можно и весь набор: миграции безопасно повторяемы
 # (IF NOT EXISTS, снятие ограничений по обоим именам — своему и alembic'овскому)
