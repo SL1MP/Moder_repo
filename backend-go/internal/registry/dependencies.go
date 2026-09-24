@@ -31,9 +31,9 @@ type Requirement struct {
 
 // DependencyResolver — плагин умеет рассказать о зависимостях версии.
 // Отдельный интерфейс, а не часть Plugin: не у всех менеджеров есть единый
-// переносимый граф (например, Docker и general), а для Maven, Terraform и
-// LuaRocks разрешение ещё не реализовано. Заглушка, молча возвращающая пустой
-// список, была бы хуже честного «этот менеджер так не умеет».
+// переносимый граф (например, Docker и general), а для Maven, PHP, Terraform
+// и LuaRocks разрешение ещё не реализовано. Заглушка, молча возвращающая
+// пустой список, была бы хуже честного «этот менеджер так не умеет».
 type DependencyResolver interface {
 	// Requirements — прямые зависимости версии, как их объявил сам пакет.
 	Requirements(ctx context.Context, ref Ref) ([]Requirement, error)
