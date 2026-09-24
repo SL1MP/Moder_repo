@@ -38,7 +38,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = tokenGetter()
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
-  const resp = await fetch(path.startsWith('/api') ? path : `${API}${path}`, { ...init, headers })
+  // API содержит быстро меняющиеся статусы конвейера. Даже ручное «обновить»
+  // не должно получить сохранённый браузером GET-ответ.
+  const resp = await fetch(path.startsWith('/api') ? path : `${API}${path}`, {
+    ...init,
+    headers,
+    cache: init.cache ?? 'no-store',
+  })
   if (resp.status === 204) return undefined as T
 
   const text = await resp.text()

@@ -114,6 +114,18 @@ func TestSemverSelectTakesHighestStable(t *testing.T) {
 	}
 }
 
+func TestConanRangesAndExactVersions(t *testing.T) {
+	c := Conan{}
+	got, err := c.Select("[>=1.2.11 <2]", []string{"1.2.11", "1.3.1", "2.0.0"})
+	if err != nil || got != "1.3.1" {
+		t.Fatalf("Conan Select(range) = %q, %v; ожидалось 1.3.1", got, err)
+	}
+	got, err = c.Select("cci.20210118", []string{"cci.20190215", "cci.20210118"})
+	if err != nil || got != "cci.20210118" {
+		t.Fatalf("Conan Select(exact) = %q, %v", got, err)
+	}
+}
+
 func TestPEP440Compare(t *testing.T) {
 	p := PEP440{}
 	cases := []struct {

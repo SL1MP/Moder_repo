@@ -309,6 +309,9 @@ func TestUnsupportedManagerIsNamed(t *testing.T) {
 	if !r.Supports("pypi") {
 		t.Error("pypi обязан поддерживаться")
 	}
+	if !r.Supports("conan") {
+		t.Error("conan обязан поддерживаться после статического разбора рецепта")
+	}
 	if r.Supports("maven") {
 		t.Error("нереализованный менеджер не может поддерживаться")
 	}

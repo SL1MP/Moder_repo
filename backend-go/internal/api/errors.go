@@ -195,6 +195,9 @@ func newRequestID() string {
 // логе (см. handoff, п. 8.4).
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// Статусы конвейера меняются асинхронно. Кэш браузера превращал кнопку
+	// «обновить» в повторный показ старой карточки.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)

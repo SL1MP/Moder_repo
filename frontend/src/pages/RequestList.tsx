@@ -47,8 +47,8 @@ export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'm
             </p>
           ) : null}
         </div>
-        <button className="ghost small" onClick={reload}>
-          обновить
+        <button className="ghost small" disabled={loading} onClick={reload}>
+          {loading ? 'обновляем…' : 'обновить'}
         </button>
       </div>
 

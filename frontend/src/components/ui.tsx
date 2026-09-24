@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { fetchFile } from '../lib/api'
 import type { DependencyTree, ParsedPackage, Step, Vulnerability } from '../lib/api'
@@ -394,7 +394,10 @@ export function useAsync<T>(loader: () => Promise<T>, deps: unknown[]): {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, tick])
 
-  return { data, error, loading, reload: () => setTick((t) => t + 1) }
+  // Стабильная ссылка нужна автообновлению карточки: иначе useEffect видел
+  // новую функцию после каждого ответа и пересоздавал таймер без причины.
+  const reload = useCallback(() => setTick((t) => t + 1), [])
+  return { data, error, loading, reload }
 }
 
 /**

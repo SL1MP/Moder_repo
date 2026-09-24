@@ -246,6 +246,52 @@ func TestConanPicksLatestRevision(t *testing.T) {
 	}
 }
 
+func TestConanReadsLicenseAndRequirementsFromRecipe(t *testing.T) {
+	const revision = "c8d8d667856c182d561a"
+	filesURL := "https://conan.test/v2/conans/boost/1.90.0/_/_/revisions/" + revision + "/files"
+	f := &fakeRegistry{responses: map[string]string{
+		"https://conan.test/v2/conans/boost/1.90.0/_/_/revisions": `{"revisions":[
+			{"revision":"` + revision + `","time":"2026-01-01T10:00:00Z"}]}`,
+		filesURL: `{"files":{"conan_export.tgz":{},"conanfile.py":{}}}`,
+		filesURL + "/conanfile.py": `
+			class BoostConan(ConanFile):
+			    license = "BSL-1.0"
+			    requires = ("zlib/[>=1.2.11 <2]",)
+			    def requirements(self):
+			        if self.options.with_bzip2:
+			            self.requires("bzip2/1.0.8")
+		`,
+		"https://conan.test/v2/conans/search?q=zlib%2F%2A": `{"results":["zlib/1.2.13","zlib/1.3.1","other/9.0"]}`,
+	}}
+	plugin := pluginWith(t, "conan", f)
+	ref, _ := registry.ParseEntry(plugin, "boost/1.90.0")
+	meta, err := plugin.FetchMetadata(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.LicenseSPDX != "BSL-1.0" {
+		t.Errorf("лицензия = %q, ожидалась BSL-1.0 из conanfile.py", meta.LicenseSPDX)
+	}
+	resolver, ok := plugin.(registry.DependencyResolver)
+	if !ok {
+		t.Fatal("Conan не реализует DependencyResolver")
+	}
+	requirements, err := resolver.Requirements(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requirements) != 2 || requirements[0].Name != "bzip2" || requirements[1].Name != "zlib" {
+		t.Fatalf("зависимости рецепта: %+v", requirements)
+	}
+	versions, err := resolver.Versions(context.Background(), "zlib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(versions, ",") != "1.2.13,1.3.1" {
+		t.Errorf("версии zlib = %v", versions)
+	}
+}
+
 // TestConanRejectsUserChannel — запись с user/channel отвергается с
 // объяснением, что именно лишнее. Просто «неверный формат» заставило бы
 // гадать.

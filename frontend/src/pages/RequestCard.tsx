@@ -105,8 +105,8 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
               {closing ? 'закрываю…' : 'закрыть заявку'}
             </button>
           ) : null}
-          <button className="ghost small" onClick={reload}>
-            обновить
+          <button className="ghost small" disabled={loading} onClick={reload}>
+            {loading ? 'обновляем…' : 'обновить'}
           </button>
         </div>
       </div>
