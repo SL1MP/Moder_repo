@@ -2,6 +2,7 @@ package registry_test
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -97,6 +98,47 @@ func TestMavenBrokenPOMStillYieldsArtifact(t *testing.T) {
 	}
 	if meta.LicenseSPDX != "" {
 		t.Errorf("из сломанного POM извлечена лицензия %q", meta.LicenseSPDX)
+	}
+}
+
+func TestMavenLicenseInheritedFromParent(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://maven.test/com/example/child/1.0.0/child-1.0.0.pom": `
+			<project><parent><groupId>com.example</groupId><artifactId>parent</artifactId>
+			<version>2.0.0</version></parent></project>`,
+		"https://maven.test/com/example/parent/2.0.0/parent-2.0.0.pom": `
+			<project><licenses>
+			  <license><name>MIT</name></license>
+			  <license><url>https://www.apache.org/licenses/LICENSE-2.0.txt</url></license>
+			</licenses></project>`,
+	}}
+	meta := metaFor(t, "maven", "com.example:child:1.0.0", f)
+	if meta.LicenseSPDX != "Apache-2.0 OR MIT" {
+		t.Errorf("лицензия = %q, parent POM или несколько лицензий не разобраны", meta.LicenseSPDX)
+	}
+}
+
+func TestMavenSkipsRateLimitedSource(t *testing.T) {
+	blocked := "https://central.test/com/example/lib/1.0.0/lib-1.0.0.pom"
+	f := &fakeRegistry{
+		responses: map[string]string{
+			blocked: `{}`,
+			"https://mirror.test/com/example/lib/1.0.0/lib-1.0.0.pom": `
+				<project><licenses><license><name>MIT</name></license></licenses></project>`,
+		},
+		statuses: map[string]int{blocked: http.StatusTooManyRequests},
+	}
+	r := registry.New(registry.Config{
+		MavenURL: "https://central.test,https://mirror.test", MavenSearchURL: "", HTTP: f,
+	})
+	p, _ := r.Get("maven")
+	ref, _ := registry.ParseEntry(p, "com.example:lib:1.0.0")
+	meta, err := p.FetchMetadata(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("второй Maven source не проверен после 429: %v", err)
+	}
+	if meta.LicenseSPDX != "MIT" || !strings.HasPrefix(meta.ArtifactURL, "https://mirror.test/") {
+		t.Errorf("метаданные взяты не с зеркала: %+v", meta)
 	}
 }
 

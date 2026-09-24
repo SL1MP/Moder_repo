@@ -2,6 +2,7 @@ package registry
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -67,6 +68,22 @@ var (
 	whitespaceRunRe = regexp.MustCompile(`\s+`)
 )
 
+var spdxURLAliases = []struct {
+	contains string
+	spdx     string
+}{
+	{"apache.org/licenses/license-2.0", "Apache-2.0"},
+	{"opensource.org/license/mit", "MIT"},
+	{"opensource.org/licenses/mit", "MIT"},
+	{"opensource.org/license/bsd-2-clause", "BSD-2-Clause"},
+	{"opensource.org/licenses/bsd-2-clause", "BSD-2-Clause"},
+	{"opensource.org/license/bsd-3-clause", "BSD-3-Clause"},
+	{"opensource.org/licenses/bsd-3-clause", "BSD-3-Clause"},
+	{"mozilla.org/mpl/2.0", "MPL-2.0"},
+	{"gnu.org/licenses/gpl-3.0", "GPL-3.0-only"},
+	{"gnu.org/licenses/gpl-2.0", "GPL-2.0-only"},
+}
+
 var classifierMap = map[string]string{
 	"mit license":                                   "MIT",
 	"apache software license":                       "Apache-2.0",
@@ -96,6 +113,11 @@ func NormalizeSPDX(value string) string {
 	if spdxUnknown[lowered] {
 		return ""
 	}
+	for _, alias := range spdxURLAliases {
+		if strings.Contains(lowered, alias.contains) {
+			return alias.spdx
+		}
+	}
 	if canonical, ok := spdxAliases[lowered]; ok {
 		return canonical
 	}
@@ -108,6 +130,31 @@ func NormalizeSPDX(value string) string {
 		return text
 	}
 	return ""
+}
+
+// normalizeLicenseCandidates объединяет несколько полей лицензии в
+// детерминированное SPDX-выражение. Реестры Maven и старые npm-пакеты могут
+// объявлять больше одной лицензии; терять все, кроме первой, нельзя.
+func normalizeLicenseCandidates(candidates []string) (raw, spdx string) {
+	rawSeen := make(map[string]bool)
+	spdxSeen := make(map[string]bool)
+	var rawValues, spdxValues []string
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if !rawSeen[candidate] {
+			rawSeen[candidate] = true
+			rawValues = append(rawValues, candidate)
+		}
+		if normalized := NormalizeSPDX(candidate); normalized != "" && !spdxSeen[normalized] {
+			spdxSeen[normalized] = true
+			spdxValues = append(spdxValues, normalized)
+		}
+	}
+	sort.Strings(spdxValues)
+	return strings.Join(rawValues, " OR "), strings.Join(spdxValues, " OR ")
 }
 
 func looksLikeExpression(text string) bool {
