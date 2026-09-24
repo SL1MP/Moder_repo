@@ -6,12 +6,20 @@ export class ApiError extends Error {
   code: string
   status: number
   details: unknown
+  retryAfter: number | null
 
-  constructor(status: number, code: string, message: string, details?: unknown) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    details?: unknown,
+    retryAfter: number | null = null,
+  ) {
     super(message)
     this.status = status
     this.code = code
     this.details = details
+    this.retryAfter = retryAfter
   }
 }
 
@@ -53,13 +61,22 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // ошибку тогда не найти.
     const base = err?.message ?? `Ошибка запроса (${resp.status})`
     const message = err?.request_id ? `${base} (request_id: ${err.request_id})` : base
+    const retryAfterHeader = resp.headers.get('Retry-After')
+    const retryAfter = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : Number.NaN
+    const retryAfterSeconds = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null
     if (resp.status === 401) {
       // Провал входа на самой форме не должен сбрасывать сессию: сессии ещё нет,
       // а onUnauthorized() увёл бы пользователя с формы, не показав причину.
       if (!path.startsWith('/auth/token')) onUnauthorized()
       throw new ApiError(401, err?.code ?? 'unauthorized', message, err?.details)
     }
-    throw new ApiError(resp.status, err?.code ?? 'http_error', message, err?.details)
+    throw new ApiError(
+      resp.status,
+      err?.code ?? 'http_error',
+      message,
+      err?.details,
+      retryAfterSeconds,
+    )
   }
   return payload as T
 }
