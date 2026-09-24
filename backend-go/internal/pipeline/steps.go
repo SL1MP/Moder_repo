@@ -151,9 +151,13 @@ func (QuarantineStep) Run(ctx context.Context, pc *Context) (StepOutcome, error)
 		// свежей версии.
 		meta, err := pc.Metadata(ctx)
 		if err != nil {
+			// Это именно ручной карантин, а не решение по результатам
+			// сканирования. ReleaseQuarantine принимает статус quarantined;
+			// прежний awaiting_security показывал кнопку снятия карантина,
+			// которая всегда отвечала 409.
 			return Warn(fmt.Sprintf(
 				"Дата публикации не получена из реестра (%v) — карантин проверить нельзя.", err)).
-				WithStatus("awaiting_security", "awaiting_security").
+				WithStatus("quarantined", "quarantined").
 				WithNextAction("Дождитесь решения DevSecOps: реестр не ответил, карантин вручную.").
 				WithNotify(EventAwaitsSecurity, "devsecops"), nil
 		}

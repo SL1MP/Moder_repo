@@ -177,6 +177,23 @@ func (s *Service) clearBlocker(ctx context.Context, item *domain.RequestItem, co
 	return false, nil
 }
 
+// hasOpenBlocker проверяет блокировку без изменения. Нужен для совместимости
+// с пакетами, созданными до исправления статуса ручного карантина: у них
+// request_item.status уже записан как awaiting_security, но открытым шагом
+// остаётся именно quarantine.
+func (s *Service) hasOpenBlocker(ctx context.Context, item *domain.RequestItem, code string) (bool, error) {
+	steps, err := s.Repo.ListStepsByItem(ctx, item.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, step := range steps {
+		if step.StepCode == code && pipeline.IsOpenResult(code, step.Result) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *Service) resume(ctx context.Context, item *domain.RequestItem, fromStep string) error {
 	if s.Resume == nil {
 		return fmt.Errorf("возобновление конвейера не настроено (Service.Resume)")

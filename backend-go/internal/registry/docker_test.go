@@ -27,6 +27,9 @@ type dockerRegistry struct {
 	// requireToken — отвечать 401 на запрос без токена, как Docker Hub.
 	requireToken bool
 	tokenIssued  int
+	// identityEncodingSeen подтверждает, что клиент запретил прозрачную
+	// распаковку gzip-слоёв стандартным HTTP transport Go.
+	identityEncodingSeen bool
 }
 
 func newDockerRegistry() *dockerRegistry {
@@ -77,6 +80,9 @@ func (d *dockerRegistry) Do(req *http.Request) (*http.Response, error) {
 		return jsonResponse(http.StatusOK, string(d.blobs[digest]), header), nil
 
 	case strings.Contains(url, "/blobs/"):
+		if req.Header.Get("Accept-Encoding") == "identity" {
+			d.identityEncodingSeen = true
+		}
 		digest := url[strings.LastIndex(url, "/blobs/")+len("/blobs/"):]
 		body, ok := d.blobs[digest]
 		if !ok {
@@ -111,8 +117,9 @@ func dockerPlugin(t *testing.T, d *dockerRegistry) registry.Plugin {
 	return p
 }
 
-// singleImage кладёт в реестр образ одной платформы и возвращает тег.
-func singleImage(d *dockerRegistry, tag, created, license string) {
+// singleImage кладёт в реестр образ одной платформы и возвращает digest его
+// манифеста.
+func singleImage(d *dockerRegistry, tag, created, license string) string {
 	config, _ := json.Marshal(map[string]any{
 		"created": created,
 		"config": map[string]any{
@@ -128,7 +135,32 @@ func singleImage(d *dockerRegistry, tag, created, license string) {
 		"config":        map[string]any{"digest": configDigest, "size": len(config)},
 		"layers":        []map[string]any{{"digest": layer, "size": 12}},
 	})
-	d.tag(tag, manifest)
+	return d.tag(tag, manifest)
+}
+
+// TestDockerPinnedIndexDigest — пользователь может указать immutable-ссылку
+// image:tag@index-digest. Тег остаётся человекочитаемым именем, но запрос к
+// реестру и проверка выполняются по digest.
+func TestDockerPinnedIndexDigest(t *testing.T) {
+	d := newDockerRegistry()
+	digest := singleImage(d, "14.23", "2024-01-15T10:00:00Z", "PostgreSQL")
+	plugin := dockerPlugin(t, d)
+
+	entry := "postgres:14.23@" + digest
+	ref, err := registry.ParseEntry(plugin, entry)
+	if err != nil {
+		t.Fatalf("разбор pinned-ссылки %q: %v", entry, err)
+	}
+	if ref.Name != "library/postgres" || ref.Version != "14.23@"+digest {
+		t.Fatalf("ссылка разобрана неверно: %+v", ref)
+	}
+	meta, err := plugin.FetchMetadata(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("FetchMetadata по digest: %v", err)
+	}
+	if meta.Checksum != digest {
+		t.Errorf("манифест = %q, ожидался закреплённый %q", meta.Checksum, digest)
+	}
 }
 
 // TestDockerMetadata — дата сборки и лицензия берутся из конфигурации образа,
@@ -236,6 +268,9 @@ func TestDockerDownloadBuildsOCILayout(t *testing.T) {
 	}
 	if blobs != 3 {
 		t.Errorf("блобов в архиве: %d, ожидалось 3 (манифест, конфигурация, слой)", blobs)
+	}
+	if !d.identityEncodingSeen {
+		t.Error("blob запрошен без Accept-Encoding: identity — gzip-слой может быть распакован до проверки digest")
 	}
 }
 

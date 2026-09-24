@@ -441,6 +441,34 @@ func TestQuarantineReleaseWrongStatus(t *testing.T) {
 	}
 }
 
+// TestQuarantineReleaseAcceptsLegacyManualStatus — до исправления ошибка
+// получения метаданных записывала awaiting_security, хотя открытым шагом был
+// quarantine. Уже созданные заявки должны разблокироваться после обновления,
+// а не требовать ручной правки БД.
+func TestQuarantineReleaseAcceptsLegacyManualStatus(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+
+	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{"quarantine": "warn"})
+	svc, rec := newService(r)
+
+	res, err := svc.ReleaseQuarantine(context.Background(), f.first, true, "ручная проверка")
+	if err != nil {
+		t.Fatalf("legacy-карантин не снят: %v", err)
+	}
+	if len(res.Siblings) != 1 || res.Siblings[0] != f.second.ID {
+		t.Fatalf("legacy siblings = %v", res.Siblings)
+	}
+	for _, id := range []int64{f.first.ID, f.second.ID} {
+		if got := stepResult(t, r, id, "quarantine"); got != "pass" {
+			t.Errorf("заявка %d, шаг quarantine = %q, ожидался pass", id, got)
+		}
+		if from, ok := rec.resumedFrom(id); !ok || from != "license" {
+			t.Errorf("заявка %d возобновлена с %q (ok=%v), ожидался license", id, from, ok)
+		}
+	}
+}
+
 // --------------------------------------------------------------------- границы
 
 // TestSiblingsOnlyWaitingOnes — решение не должно трогать чужие заявки,

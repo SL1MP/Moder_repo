@@ -12,6 +12,7 @@ import (
 	"moderation/internal/osv"
 	"moderation/internal/pipeline"
 	"moderation/internal/policy"
+	"moderation/internal/registry"
 	"moderation/internal/reports"
 	"moderation/internal/sandbox"
 	"moderation/internal/scanners"
@@ -118,6 +119,35 @@ func TestQuarantineHoldsFreshVersion(t *testing.T) {
 	// Карантин — непогашенная блокировка.
 	if !pipeline.IsOpenResult("quarantine", steps["quarantine"].Result) {
 		t.Error("карантин не считается непогашенной блокировкой")
+	}
+}
+
+// TestQuarantineMetadataFailureCanBeReleasedManually — если реестр не дал
+// дату публикации, интерфейс предлагает DevSecOps снять карантин вручную.
+// Для этого статус обязан быть quarantined: ReleaseQuarantine не принимает
+// awaiting_security, и прежнее значение делало кнопку гарантированно битой.
+func TestQuarantineMetadataFailureCanBeReleasedManually(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	e.registry = registry.New(registry.Config{
+		PyPIURL: "https://pypi.test",
+		HTTP:    &fakeRegistryHTTP{responses: map[string]string{}},
+	})
+	pkg, ver, item := setup(t, r, "metadata-unavailable", "1.0.0")
+
+	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ItemStatus != "quarantined" {
+		t.Fatalf("ItemStatus = %q, кнопка снятия карантина требует quarantined", res.ItemStatus)
+	}
+	steps := stepsByCode(t, r, item.ID)
+	if steps["quarantine"].Result != "warn" {
+		t.Errorf("quarantine = %q, ожидался warn", steps["quarantine"].Result)
 	}
 }
 
