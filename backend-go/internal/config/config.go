@@ -232,9 +232,10 @@ type Config struct {
 	RateLimitPerMinute int
 
 	// Лимиты.
-	MaxArtifactSizeBytes  int64
-	MaxUploadSizeBytes    int64
-	MaxPackagesPerRequest int
+	MaxArtifactSizeBytes       int64
+	MaxDockerArtifactSizeBytes int64
+	MaxUploadSizeBytes         int64
+	MaxPackagesPerRequest      int
 
 	// Раскрытие транзитивных зависимостей. Пределы здесь, а не в коде,
 	// потому что их приходится подбирать под свою экосистему: глубина 3 по
@@ -388,9 +389,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		// запрос.
 		RateLimitPerMinute: intOr(getenv("RATE_LIMIT_REQUESTS_PER_MINUTE"), 30),
 
-		MaxArtifactSizeBytes:  bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 500*1024*1024),
-		MaxUploadSizeBytes:    bytesOr(getenv("MAX_UPLOAD_SIZE_BYTES"), 5*1024*1024),
-		MaxPackagesPerRequest: intOr(getenv("MAX_PACKAGES_PER_REQUEST"), 200),
+		MaxArtifactSizeBytes:       bytesOr(getenv("MAX_ARTIFACT_SIZE_BYTES"), 500*1024*1024),
+		MaxDockerArtifactSizeBytes: bytesOr(getenv("MAX_DOCKER_ARTIFACT_SIZE_BYTES"), 2*1024*1024*1024),
+		MaxUploadSizeBytes:         bytesOr(getenv("MAX_UPLOAD_SIZE_BYTES"), 5*1024*1024),
+		MaxPackagesPerRequest:      intOr(getenv("MAX_PACKAGES_PER_REQUEST"), 200),
 
 		ResolveMaxDepth:        intOr(getenv("RESOLVE_MAX_DEPTH"), 3),
 		ResolveMaxPackages:     intOr(getenv("RESOLVE_MAX_PACKAGES"), 200),

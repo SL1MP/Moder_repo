@@ -44,6 +44,9 @@ func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	}
 
 	limit := pc.Config.MaxArtifactSizeBytes
+	if pc.Package.Manager == "docker" && pc.Config.MaxDockerArtifactSizeBytes > 0 {
+		limit = pc.Config.MaxDockerArtifactSizeBytes
+	}
 	if limit <= 0 {
 		limit = 512 * 1024 * 1024
 	}

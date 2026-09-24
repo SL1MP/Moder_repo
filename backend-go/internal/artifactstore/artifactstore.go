@@ -95,6 +95,13 @@ type Store interface {
 	DryRun() bool
 }
 
+// OCIPublisher публикует OCI layout как настоящий образ реестра: blobs,
+// platform manifests и корневой index. Обычный Store.Publish кладёт один
+// файл и для Docker-репозитория принципиально недостаточен.
+type OCIPublisher interface {
+	PublishOCI(ctx context.Context, t Target, layoutTarGz []byte) (string, error)
+}
+
 // AuthType — способ аутентификации в артефактори.
 type AuthType string
 

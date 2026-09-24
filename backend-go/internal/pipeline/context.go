@@ -24,6 +24,9 @@ type Config struct {
 
 	// MaxArtifactSizeBytes — предел размера скачиваемого артефакта.
 	MaxArtifactSizeBytes int64
+	// MaxDockerArtifactSizeBytes отдельный: multi-platform index включает
+	// слои всех архитектур и закономерно крупнее одиночного пакета.
+	MaxDockerArtifactSizeBytes int64
 
 	// VulnMaxScore — порог балла уязвимости (шкала 0..100), выше которого
 	// пакет отклоняется. OSVMaxStalenessDays — допустимый возраст снапшота.

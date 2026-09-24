@@ -237,6 +237,12 @@ func (p *Docker) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return Metadata{}, fmt.Errorf("манифест образа не разобран: %w", err)
 	}
+	_, requestedDigest, pinned := splitDockerVersion(ref.Version)
+	if pinned && !manifest.isIndex() {
+		return Metadata{}, fmt.Errorf(
+			"digest %s указывает на manifest одной платформы, а не на multi-platform index; "+
+				"укажите Index digest со страницы тега Docker Hub", requestedDigest)
+	}
 
 	meta := Metadata{
 		Name:    ref.Name,
@@ -264,7 +270,7 @@ func (p *Docker) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 		}
 	}
 	if configDigest != "" {
-		if body, err := p.blob(ctx, ref.Name, configDigest); err == nil {
+		if body, err := p.blob(ctx, ref.Name, configDigest, maxRegistryResponseBytes); err == nil {
 			var cfg dockerConfig
 			if json.Unmarshal(body, &cfg) == nil {
 				meta.PublishedAt = parseTime(cfg.Created)
@@ -304,6 +310,12 @@ func (p *Docker) Download(ctx context.Context, ref Ref, limit int64) ([]byte, st
 	if err := json.Unmarshal(rootRaw, &root); err != nil {
 		return nil, "", fmt.Errorf("манифест образа не разобран: %w", err)
 	}
+	_, requestedDigest, pinned := splitDockerVersion(ref.Version)
+	if pinned && !root.isIndex() {
+		return nil, "", fmt.Errorf(
+			"digest %s указывает на manifest одной платформы, а не на multi-platform index; "+
+				"укажите Index digest со страницы тега Docker Hub", requestedDigest)
+	}
 	mediaType := root.MediaType
 	if mediaType == "" {
 		mediaType = mediaOCIManifest
@@ -339,16 +351,32 @@ func (p *Docker) Download(ctx context.Context, ref Ref, limit int64) ([]byte, st
 			return nil, "", fmt.Errorf("манифест платформы не разобран: %w", err)
 		}
 		// Конфигурация и слои — то, из чего образ состоит.
-		blobs := []string{single.Config.Digest}
+		blobs := []struct {
+			digest string
+			size   int64
+		}{{digest: single.Config.Digest, size: single.Config.Size}}
 		for _, layer := range single.Layers {
-			blobs = append(blobs, layer.Digest)
+			blobs = append(blobs, struct {
+				digest string
+				size   int64
+			}{digest: layer.Digest, size: layer.Size})
 		}
-		for _, blobDigest := range blobs {
+		for _, descriptor := range blobs {
+			blobDigest := descriptor.digest
 			if blobDigest == "" || layout.has(blobDigest) {
 				// Слои у платформ пересекаются, и качать их повторно незачем.
 				continue
 			}
-			body, err := p.blob(ctx, ref.Name, blobDigest)
+			remaining := int64(0)
+			if limit > 0 {
+				remaining = limit - total
+				if descriptor.size > 0 && descriptor.size > remaining {
+					return nil, "", fmt.Errorf(
+						"образ %s:%s больше допустимого предела (%d байт): blob %s требует %d байт, доступно %d",
+						ref.DisplayName, ref.RawVersion, limit, blobDigest, descriptor.size, remaining)
+				}
+			}
+			body, err := p.blob(ctx, ref.Name, blobDigest, remaining)
 			if err != nil {
 				return nil, "", err
 			}
@@ -376,7 +404,7 @@ func (p *Docker) Download(ctx context.Context, ref Ref, limit int64) ([]byte, st
 // и надо класть в раскладку: пересериализация изменила бы digest) и сам digest.
 func (p *Docker) manifest(ctx context.Context, image, reference string) ([]byte, string, error) {
 	url := fmt.Sprintf("%s/v2/%s/manifests/%s", strings.TrimRight(p.BaseURL, "/"), image, reference)
-	body, header, err := p.get(ctx, url, manifestAccept, image)
+	body, header, err := p.get(ctx, url, manifestAccept, image, maxRegistryResponseBytes)
 	if err != nil {
 		return nil, "", err
 	}
@@ -390,9 +418,9 @@ func (p *Docker) manifest(ctx context.Context, image, reference string) ([]byte,
 	return body, digest, nil
 }
 
-func (p *Docker) blob(ctx context.Context, image, digest string) ([]byte, error) {
+func (p *Docker) blob(ctx context.Context, image, digest string, limit int64) ([]byte, error) {
 	url := fmt.Sprintf("%s/v2/%s/blobs/%s", strings.TrimRight(p.BaseURL, "/"), image, digest)
-	body, _, err := p.get(ctx, url, "*/*", image)
+	body, _, err := p.get(ctx, url, "*/*", image, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -414,8 +442,8 @@ func (p *Docker) blob(ctx context.Context, image, digest string) ([]byte, error)
 // Реестры контейнеров отвечают 401 с заголовком WWW-Authenticate даже на
 // публичные образы: токен анонимный, но обязательный. Без этой ветки Docker
 // Hub недоступен вовсе.
-func (p *Docker) get(ctx context.Context, url, accept, image string) ([]byte, http.Header, error) {
-	body, header, status, err := p.request(ctx, url, accept, "")
+func (p *Docker) get(ctx context.Context, url, accept, image string, limit int64) ([]byte, http.Header, error) {
+	body, header, status, err := p.request(ctx, url, accept, "", limit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -424,7 +452,7 @@ func (p *Docker) get(ctx context.Context, url, accept, image string) ([]byte, ht
 		if tokenErr != nil {
 			return nil, nil, tokenErr
 		}
-		body, header, status, err = p.request(ctx, url, accept, token)
+		body, header, status, err = p.request(ctx, url, accept, token, limit)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -443,7 +471,7 @@ func (p *Docker) get(ctx context.Context, url, accept, image string) ([]byte, ht
 	return body, header, nil
 }
 
-func (p *Docker) request(ctx context.Context, url, accept, token string) ([]byte, http.Header, int, error) {
+func (p *Docker) request(ctx context.Context, url, accept, token string, limit int64) ([]byte, http.Header, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("сборка запроса к реестру образов: %w", err)
@@ -462,9 +490,18 @@ func (p *Docker) request(ctx context.Context, url, accept, token string) ([]byte
 		return nil, nil, 0, fmt.Errorf("запрос к реестру образов (%s): %w", url, err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryResponseBytes))
+	reader := io.Reader(resp.Body)
+	if limit > 0 {
+		reader = io.LimitReader(resp.Body, limit+1)
+	}
+	body, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("чтение ответа реестра образов: %w", err)
+	}
+	if limit > 0 && int64(len(body)) > limit {
+		return nil, nil, 0, fmt.Errorf(
+			"ответ реестра образов больше допустимого предела (%d байт); получено как минимум %d",
+			limit, len(body))
 	}
 	return body, resp.Header, resp.StatusCode, nil
 }
@@ -533,7 +570,8 @@ func excerptOf(body []byte) string {
 }
 
 func (p *Docker) InstallCommand(ref Ref, baseURL, repo string) string {
-	host := strings.TrimPrefix(strings.TrimPrefix(strings.TrimRight(baseURL, "/"), "https://"), "http://")
+	baseURL = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/artifactory")
+	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
 	if _, digest, pinned := splitDockerVersion(ref.RawVersion); pinned {
 		return fmt.Sprintf("docker pull %s/%s/%s@%s", host, repo, ref.Name, digest)
 	}

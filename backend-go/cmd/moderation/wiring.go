@@ -169,10 +169,11 @@ func pipelineConfig(cfg *config.Config) pipeline.Config {
 		ArtifactBaseURL: cfg.ArtifactBaseURL,
 		ArtifactRepos:   cfg.ArtifactRepos,
 
-		QuarantineDays:       cfg.QuarantineDays,
-		VulnMaxScore:         cfg.VulnMaxScore,
-		OSVMaxStalenessDays:  cfg.OSVMaxStalenessDays,
-		MaxArtifactSizeBytes: cfg.MaxArtifactSizeBytes,
+		QuarantineDays:             cfg.QuarantineDays,
+		VulnMaxScore:               cfg.VulnMaxScore,
+		OSVMaxStalenessDays:        cfg.OSVMaxStalenessDays,
+		MaxArtifactSizeBytes:       cfg.MaxArtifactSizeBytes,
+		MaxDockerArtifactSizeBytes: cfg.MaxDockerArtifactSizeBytes,
 
 		SandboxEnabled: cfg.SandboxEnabled,
 

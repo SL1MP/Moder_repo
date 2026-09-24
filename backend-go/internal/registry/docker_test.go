@@ -143,7 +143,17 @@ func singleImage(d *dockerRegistry, tag, created, license string) string {
 // реестру и проверка выполняются по digest.
 func TestDockerPinnedIndexDigest(t *testing.T) {
 	d := newDockerRegistry()
-	digest := singleImage(d, "14.23", "2024-01-15T10:00:00Z", "PostgreSQL")
+	platformDigest := singleImage(d, "platform", "2024-01-15T10:00:00Z", "PostgreSQL")
+	index, _ := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.index.v1+json",
+		"manifests": []map[string]any{{
+			"mediaType": "application/vnd.oci.image.manifest.v1+json",
+			"digest":    platformDigest,
+			"platform":  map[string]string{"os": "linux", "architecture": "amd64"},
+		}},
+	})
+	digest := d.tag("14.23", index)
 	plugin := dockerPlugin(t, d)
 
 	entry := "postgres:14.23@" + digest
@@ -160,6 +170,20 @@ func TestDockerPinnedIndexDigest(t *testing.T) {
 	}
 	if meta.Checksum != digest {
 		t.Errorf("манифест = %q, ожидался закреплённый %q", meta.Checksum, digest)
+	}
+}
+
+func TestDockerRejectsPlatformManifestAsIndexDigest(t *testing.T) {
+	d := newDockerRegistry()
+	manifestDigest := singleImage(d, "14.23", "2024-01-15T10:00:00Z", "PostgreSQL")
+	plugin := dockerPlugin(t, d)
+	ref, err := registry.ParseEntry(plugin, "postgres:14.23@"+manifestDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = plugin.FetchMetadata(context.Background(), ref)
+	if err == nil || !strings.Contains(err.Error(), "manifest одной платформы") {
+		t.Fatalf("platform manifest digest принят как index digest: %v", err)
 	}
 }
 

@@ -20,7 +20,12 @@ func (g *Generic) fileURL(repo, path string) string {
 	return fmt.Sprintf("%s/%s/%s", g.cfg.BaseURL, repo, strings.TrimPrefix(path, "/"))
 }
 
-func (g *Generic) ArtifactURL(t Target) string { return g.fileURL(t.Repo, t.Path) }
+func (g *Generic) ArtifactURL(t Target) string {
+	if t.Manager == "docker" {
+		return g.ociReference(t)
+	}
+	return g.fileURL(t.Repo, t.Path)
+}
 
 func (g *Generic) StatFile(ctx context.Context, repo, path string) (*RemoteFile, error) {
 	return g.stat(ctx, g.fileURL(repo, path), path)
@@ -31,6 +36,9 @@ func (g *Generic) ReadFile(ctx context.Context, repo, path string) ([]byte, erro
 }
 
 func (g *Generic) Exists(ctx context.Context, t Target) (bool, error) {
+	if t.Manager == "docker" {
+		return g.ociExists(ctx, t)
+	}
 	file, err := g.StatFile(ctx, t.Repo, t.Path)
 	return file != nil, err
 }
@@ -75,6 +83,9 @@ func (g *Generic) Publish(ctx context.Context, t Target, data []byte) (string, e
 func (g *Generic) Delete(ctx context.Context, t Target) (bool, error) {
 	if g.cfg.DryRun {
 		return false, fmt.Errorf("удаление вызвано в режиме dry-run: это ошибка вызывающего кода")
+	}
+	if t.Manager == "docker" {
+		return g.deleteOCI(ctx, t)
 	}
 	resp, err := g.do(ctx, http.MethodDelete, g.ArtifactURL(t), nil, nil)
 	if err != nil {

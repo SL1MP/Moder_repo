@@ -221,6 +221,28 @@ func (m publishMode) title() string {
 func publishArtifact(
 	ctx context.Context, pc *Context, artifact *domain.Artifact, target artifactstore.Target,
 ) (string, publishMode, error) {
+	// Docker repository — не файловое хранилище. Перенос .oci.tar.gz в него
+	// оставил бы один архив, который docker pull не видит. Публикуем содержимое
+	// OCI layout нативно: blobs, manifests всех платформ и index под тегом.
+	if target.Manager == "docker" {
+		publisher, ok := pc.Deps.Artifacts.(artifactstore.OCIPublisher)
+		if !ok {
+			return "", "", fmt.Errorf(
+				"настроенный артефактори (%s) не поддерживает нативную OCI-публикацию; "+
+					"для Docker используйте JFrog Artifactory с ARTIFACT_STORE=generic",
+				pc.Deps.Artifacts.Kind())
+		}
+		payload, err := pc.Payload(ctx, artifact)
+		if err != nil {
+			return "", "", err
+		}
+		url, err := publisher.PublishOCI(ctx, target, payload)
+		if err != nil {
+			return "", "", err
+		}
+		return url, publishByUpload, nil
+	}
+
 	staging, ok := pc.Deps.Storage.(storage.Staging)
 	canMove := ok && artifact.StagingPath != nil && *artifact.StagingPath != "" &&
 		artifact.StagingClearedAt == nil

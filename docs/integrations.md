@@ -60,8 +60,15 @@ ARTIFACT_PATH_TEMPLATE_GO={repo}/{name}/@v/{filename}
 ARTIFACT_PATH_TEMPLATE_NUGET={repo}/{name}/{version}/{filename}
 ```
 
-Публикация — `PUT` по собранному из шаблона пути с заголовком `X-Checksum-Sha256`. Тот же адаптер
-читает произвольный файл (`read_file`/`stat_file`) — через него забирается снапшот OSV, поэтому
+Для Docker `ARTIFACT_REPO_DOCKER` должен указывать на локальный репозиторий
+типа Docker/OCI с API v2. Сервис публикует не файл `.oci.tar.gz`, а нативный
+граф OCI через `/artifactory/api/docker/{repo}/v2`: все blobs, manifests
+платформ и исходный multi-platform index под тегом. Поэтому digest тега во
+внутреннем Artifactory совпадает с Index digest из заявки.
+
+Для остальных менеджеров публикация — `PUT` по собранному из шаблона пути с
+заголовком `X-Checksum-Sha256`. Тот же адаптер читает произвольный файл
+(`read_file`/`stat_file`) — через него забирается снапшот OSV, поэтому
 `ARTIFACT_REPO_OSV` и `OSV_SNAPSHOT_PATH` работают одинаково для обеих реализаций.
 
 ### Добавление третьей реализации

@@ -50,6 +50,7 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"scan_max_files", cfg.ScanMaxFiles, 20000},
 		{"scan_max_unpacked_bytes", cfg.ScanMaxUnpackedBytes, int64(512 * 1024 * 1024)},
 		{"max_artifact_size_bytes", cfg.MaxArtifactSizeBytes, int64(500 * 1024 * 1024)},
+		{"max_docker_artifact_size_bytes", cfg.MaxDockerArtifactSizeBytes, int64(2 * 1024 * 1024 * 1024)},
 		{"max_upload_size_bytes", cfg.MaxUploadSizeBytes, int64(5 * 1024 * 1024)},
 		{"max_packages_per_request", cfg.MaxPackagesPerRequest, 200},
 		{"artifact_base_url", cfg.ArtifactBaseURL, "http://nexus:8081"},
