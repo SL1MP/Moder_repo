@@ -94,6 +94,9 @@ func TestGenericPublishesEveryPlatformAsNativeOCI(t *testing.T) {
 	uploadID := 0
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/library/postgres/") {
+			t.Errorf("официальный образ опубликован с внешним namespace library: %s", r.URL.Path)
+		}
 		switch {
 		case r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/blobs/"):
 			w.WriteHeader(http.StatusNotFound)
@@ -123,7 +126,7 @@ func TestGenericPublishesEveryPlatformAsNativeOCI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := Target{Repo: "docker-internal", Manager: "docker", Name: "library/postgres",
+	target := Target{Repo: "docker-internal", Manager: "docker", Name: "postgres",
 		DisplayName: "postgres", Version: "14.23@" + indexDigest}
 	published, err := store.(OCIPublisher).PublishOCI(context.Background(), target, layout)
 	if err != nil {
@@ -141,7 +144,7 @@ func TestGenericPublishesEveryPlatformAsNativeOCI(t *testing.T) {
 	if manifestTypes["14.23"] != mediaOCIIndex {
 		t.Errorf("Content-Type корня = %q, ожидался OCI index", manifestTypes["14.23"])
 	}
-	if strings.Contains(published, "/artifactory/") || !strings.Contains(published, "/docker-internal/library/postgres:14.23@") {
+	if strings.Contains(published, "/artifactory/") || !strings.Contains(published, "/docker-internal/postgres:14.23@") {
 		t.Errorf("ссылка docker pull сформирована неверно: %s", published)
 	}
 }

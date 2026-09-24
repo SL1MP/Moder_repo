@@ -8,6 +8,7 @@ import (
 
 	"moderation/internal/artifactstore"
 	"moderation/internal/domain"
+	"moderation/internal/registry"
 )
 
 // Отзыв уже одобренного пакета.
@@ -132,7 +133,7 @@ func (s *Service) unpublish(ctx context.Context, in RevokeInput, store artifacts
 		}
 		target := artifactstore.Target{
 			Repo: repoFromURL(*artifact.NexusURL), Manager: in.Manager,
-			Name: in.Name, DisplayName: in.DisplayName,
+			Name: registry.PublishedName(in.Manager, in.Name), DisplayName: in.DisplayName,
 			Version: in.Version.RawVersion, Filename: artifact.Filename,
 		}
 		ok, err := store.Delete(ctx, target)

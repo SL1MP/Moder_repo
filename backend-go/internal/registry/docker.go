@@ -572,14 +572,15 @@ func excerptOf(body []byte) string {
 func (p *Docker) InstallCommand(ref Ref, baseURL, repo string) string {
 	baseURL = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/artifactory")
 	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
-	if _, digest, pinned := splitDockerVersion(ref.RawVersion); pinned {
-		return fmt.Sprintf("docker pull %s/%s/%s@%s", host, repo, ref.Name, digest)
+	name := PublishedName(ref.Manager, ref.Name)
+	if tag, digest, pinned := splitDockerVersion(ref.RawVersion); pinned {
+		return fmt.Sprintf("docker pull %s/%s/%s:%s@%s", host, repo, name, tag, digest)
 	}
-	return fmt.Sprintf("docker pull %s/%s/%s:%s", host, repo, ref.Name, ref.RawVersion)
+	return fmt.Sprintf("docker pull %s/%s/%s:%s", host, repo, name, ref.RawVersion)
 }
 
 func (p *Docker) ArtifactPath(ref Ref, filename string) string {
-	return fmt.Sprintf("%s/%s/%s", ref.Name, ref.RawVersion, filename)
+	return fmt.Sprintf("%s/%s/%s", PublishedName(ref.Manager, ref.Name), ref.RawVersion, filename)
 }
 
 var _ Downloader = (*Docker)(nil)

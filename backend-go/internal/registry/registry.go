@@ -60,6 +60,21 @@ type Ref struct {
 // Entry — человеческая запись пакета, как её видно в заявке.
 func (r Ref) Entry() string { return r.DisplayName + "@" + r.RawVersion }
 
+// PublishedName — имя пакета внутри корпоративного репозитория.
+//
+// Docker Hub требует namespace library для официальных образов во внешнем
+// Registry API (`library/postgres`). В корпоративном JFrog этот технический
+// namespace не используется: тот же образ лежит как `docker/postgres`, чтобы
+// разработчик мог выполнить `docker pull <host>/docker/postgres:<tag>`.
+// Нормализованное имя в БД оставляем с library — оно по-прежнему нужно для
+// обращения к Docker Hub и не даёт завести postgres и library/postgres дважды.
+func PublishedName(manager, name string) string {
+	if manager == "docker" {
+		return strings.TrimPrefix(name, "library/")
+	}
+	return name
+}
+
 // Metadata — метаданные версии из реестра пакетного менеджера.
 type Metadata struct {
 	Name             string

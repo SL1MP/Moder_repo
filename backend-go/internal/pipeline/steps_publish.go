@@ -6,6 +6,7 @@ import (
 
 	"moderation/internal/artifactstore"
 	"moderation/internal/domain"
+	"moderation/internal/registry"
 	"moderation/internal/storage"
 )
 
@@ -69,8 +70,9 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	// зависит от типа артефактори (Nexus строит её сам по формату), а путь от
 	// плагина — это раскладка Artifactory.
 	target := artifactstore.Target{
-		Repo: repoName, Manager: ref.Manager, Name: ref.Name, DisplayName: ref.DisplayName,
-		Version: ref.RawVersion, Filename: artifact.Filename, Path: path,
+		Repo: repoName, Manager: ref.Manager, Name: registry.PublishedName(ref.Manager, ref.Name),
+		DisplayName: ref.DisplayName,
+		Version:     ref.RawVersion, Filename: artifact.Filename, Path: path,
 	}
 
 	if pc.Deps.Artifacts.DryRun() {

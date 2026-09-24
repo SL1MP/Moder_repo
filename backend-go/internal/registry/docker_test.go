@@ -187,6 +187,35 @@ func TestDockerRejectsPlatformManifestAsIndexDigest(t *testing.T) {
 	}
 }
 
+func TestDockerCorporatePublicationReference(t *testing.T) {
+	plugin := dockerPlugin(t, newDockerRegistry())
+	digest := "sha256:" + strings.Repeat("a", 64)
+	ref, err := registry.ParseEntry(plugin, "postgres:14.23@"+digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Для внешнего Docker Hub имя нормализовано как library/postgres, но во
+	// внутреннем JFrog корпоративный путь — docker/postgres/14.23.
+	if got := registry.PublishedName(ref.Manager, ref.Name); got != "postgres" {
+		t.Fatalf("PublishedName = %q, ожидался postgres", got)
+	}
+	want := "docker pull repo.ptsecurity.ru:443/docker/postgres:14.23@" + digest
+	if got := plugin.InstallCommand(ref, "https://repo.ptsecurity.ru:443/artifactory", "docker"); got != want {
+		t.Fatalf("InstallCommand = %q, ожидалась %q", got, want)
+	}
+	if got := plugin.ArtifactPath(ref, "image.oci.tar.gz"); !strings.HasPrefix(got, "postgres/") {
+		t.Fatalf("ArtifactPath = %q, namespace library попал во внутренний путь", got)
+	}
+
+	if got := registry.PublishedName("docker", "bitnami/postgresql"); got != "bitnami/postgresql" {
+		t.Fatalf("namespace стороннего издателя потерян: %q", got)
+	}
+	if got := registry.PublishedName("pypi", "library/example"); got != "library/example" {
+		t.Fatalf("имя не-Docker пакета изменено: %q", got)
+	}
+}
+
 // TestDockerMetadata — дата сборки и лицензия берутся из конфигурации образа,
 // а digest манифеста фиксирует содержимое: тег можно переставить, digest — нет.
 func TestDockerMetadata(t *testing.T) {
