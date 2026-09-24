@@ -22,7 +22,9 @@ var (
 // переписать привычную строку в другой формат — верный способ получить
 // опечатку.
 type Maven struct {
-	// BaseURL — репозиторий артефактов (Maven Central или внутреннее зеркало).
+	// BaseURL — репозитории артефактов через запятую (Maven Central,
+	// Google Maven или внутренние зеркала). Maven не имеет единого реестра:
+	// например, AndroidX публикуется в Google Maven и отсутствует в Central.
 	BaseURL string
 	// SearchURL — поисковый API Sonatype: только он отдаёт дату публикации.
 	// Пустой — дата не запрашивается, карантин пропускается с пометкой.
@@ -134,28 +136,39 @@ func (p *Maven) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 		return Metadata{}, invalidFormat(p.EntryFormat(),
 			"«%s» не похоже на координату maven", ref.Name)
 	}
-	base := fmt.Sprintf("%s/%s/%s/%s", strings.TrimRight(p.BaseURL, "/"),
-		groupPath(group), artifact, ref.Version)
 	filename := fmt.Sprintf("%s-%s.jar", artifact, ref.Version)
+
+	// POM обязателен: по нему проверяется само существование версии и
+	// берётся лицензия. Его отсутствие — это «такой версии нет», а не
+	// «лицензия не указана». Перебираем репозитории только при 404: сетевую
+	// ошибку нельзя маскировать сообщением «пакета нет».
+	var base string
+	var pomBody []byte
+	for _, registryURL := range mavenBaseURLs(p.BaseURL) {
+		candidate := fmt.Sprintf("%s/%s/%s/%s", registryURL,
+			groupPath(group), artifact, ref.Version)
+		body, err := getBytes(ctx, p.HTTP,
+			fmt.Sprintf("%s/%s-%s.pom", candidate, artifact, ref.Version),
+			"application/xml")
+		if err == ErrNotFound {
+			continue
+		}
+		if err != nil {
+			return Metadata{}, err
+		}
+		base, pomBody = candidate, body
+		break
+	}
+	if base == "" {
+		return Metadata{}, fmt.Errorf("%w: пакет %s:%s отсутствует в реестре maven (проверены все адреса)",
+			ErrNotFound, ref.DisplayName, ref.RawVersion)
+	}
 
 	meta := Metadata{
 		Name:             ref.Name,
 		Version:          ref.Version,
 		ArtifactURL:      base + "/" + filename,
 		ArtifactFilename: filename,
-	}
-
-	// POM обязателен: по нему проверяется само существование версии и
-	// берётся лицензия. Его отсутствие — это «такой версии нет», а не
-	// «лицензия не указана».
-	pomBody, err := getBytes(ctx, p.HTTP, fmt.Sprintf("%s/%s-%s.pom", base, artifact, ref.Version),
-		"application/xml")
-	if err != nil {
-		if err == ErrNotFound {
-			return Metadata{}, fmt.Errorf("%w: пакет %s:%s отсутствует в реестре maven",
-				ErrNotFound, ref.DisplayName, ref.RawVersion)
-		}
-		return Metadata{}, err
 	}
 	var pom mavenPOM
 	if err := xml.Unmarshal(pomBody, &pom); err == nil && len(pom.Licenses.License) > 0 {
@@ -178,6 +191,19 @@ func (p *Maven) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 
 	meta.PublishedAt = p.publishedAt(ctx, group, artifact, ref.Version)
 	return meta, nil
+}
+
+// mavenBaseURLs разбирает список репозиториев. Запятая выбрана потому, что
+// URL Maven не содержит её, а значение остаётся совместимым с прежней
+// настройкой из одного адреса.
+func mavenBaseURLs(value string) []string {
+	var urls []string
+	for _, raw := range strings.Split(value, ",") {
+		if url := strings.TrimRight(strings.TrimSpace(raw), "/"); url != "" {
+			urls = append(urls, url)
+		}
+	}
+	return urls
 }
 
 // publishedAt — дата публикации из поискового API. nil, если узнать не

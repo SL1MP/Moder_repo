@@ -79,11 +79,14 @@ func TestPluginContractIsComplete(t *testing.T) {
 // что попросили.
 func TestEntryRoundTrip(t *testing.T) {
 	cases := map[string]struct{ entry, name, version string }{
-		"pypi":      {"requests==2.31.0", "requests", "2.31.0"},
-		"npm":       {"lodash@4.17.21", "lodash", "4.17.21"},
-		"nuget":     {"Newtonsoft.Json@13.0.3", "newtonsoft.json", "13.0.3"},
-		"maven":     {"com.google.guava:guava:33.0.0-jre", "com.google.guava:guava", "33.0.0-jre"},
-		"docker":    {"alpine:3.19", "library/alpine", "3.19"},
+		"pypi":  {"requests==2.31.0", "requests", "2.31.0"},
+		"npm":   {"lodash@4.17.21", "lodash", "4.17.21"},
+		"nuget": {"Newtonsoft.Json@13.0.3", "newtonsoft.json", "13.0.3"},
+		"maven": {"com.google.guava:guava:33.0.0-jre", "com.google.guava:guava", "33.0.0-jre"},
+		"docker": {
+			"postgres:14.23@sha256:" + strings.Repeat("a", 64),
+			"library/postgres", "14.23@sha256:" + strings.Repeat("a", 64),
+		},
 		"conan":     {"zlib/1.3.1", "zlib", "1.3.1"},
 		"luarocks":  {"luasocket@3.1.0-1", "luasocket", "3.1.0-1"},
 		"terraform": {"hashicorp/aws@5.31.0", "hashicorp/aws", "5.31.0"},

@@ -14,8 +14,9 @@ import (
 
 var (
 	// Имя образа: [хост/]путь, сегменты — строчные буквы, цифры и разделители.
-	dockerNameRe = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$`)
-	dockerTagRe  = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
+	dockerNameRe   = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$`)
+	dockerTagRe    = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
+	dockerDigestRe = regexp.MustCompile(`^sha256:[a-fA-F0-9]{64}$`)
 )
 
 // Типы манифестов OCI и Docker. Перечислены оба набора: реестры отдают то
@@ -35,7 +36,8 @@ var manifestAccept = strings.Join([]string{
 	mediaOCIIndex, mediaDockerManifestList, mediaOCIManifest, mediaDockerManifest,
 }, ", ")
 
-// Docker — плагин образов контейнеров. Формат записи: image:tag.
+// Docker — плагин образов контейнеров. Рекомендуемый формат записи:
+// image:tag@sha256:index-digest; прежний image:tag остаётся совместимым.
 //
 // Артефактом служит образ, выгруженный в OCI-раскладке и упакованный в tar.gz:
 // манифест, конфигурация и все слои. Так он и проверяется дальше по конвейеру —
@@ -62,7 +64,7 @@ type Docker struct {
 func (*Docker) Code() string  { return "docker" }
 func (*Docker) Title() string { return "Docker (образы)" }
 
-func (*Docker) EntryFormat() string { return "image:tag" }
+func (*Docker) EntryFormat() string { return "image:tag@sha256:<64 hex>" }
 
 // OSVEcosystem — образ целиком ни к какой экосистеме OSV не относится: в нём
 // пакеты нескольких экосистем сразу. Пустая строка честнее выдуманного имени.
@@ -85,7 +87,13 @@ func (p *Docker) NormalizeName(name string) string {
 	return name
 }
 
-func (*Docker) NormalizeVersion(version string) string { return strings.TrimSpace(version) }
+func (*Docker) NormalizeVersion(version string) string {
+	tag, digest, pinned := splitDockerVersion(version)
+	if !pinned {
+		return strings.TrimSpace(tag)
+	}
+	return strings.TrimSpace(tag) + "@" + strings.ToLower(strings.TrimSpace(digest))
+}
 
 func (*Docker) DisplayName(name string) string { return strings.TrimSpace(name) }
 
@@ -95,16 +103,25 @@ func (*Docker) DependencyFiles() []string {
 
 func (p *Docker) SplitEntry(entry string) (string, string, error) {
 	text := strings.TrimSpace(entry)
-	idx := strings.LastIndex(text, ":")
+	imageAndTag, digest, pinned := strings.Cut(text, "@")
+	if pinned && strings.Contains(digest, "@") {
+		return "", "", invalidFormat(p.EntryFormat(),
+			"«%s» содержит больше одного разделителя @", text)
+	}
+	idx := strings.LastIndex(imageAndTag, ":")
 	// Двоеточие есть и в адресе реестра с портом (registry:5000/app). Тег —
 	// это то, что после последнего двоеточия и без слешей.
-	if idx < 0 || strings.Contains(text[idx+1:], "/") {
+	if idx < 0 || strings.Contains(imageAndTag[idx+1:], "/") {
 		return "", "", invalidFormat(p.EntryFormat(),
 			"«%s» не соответствует формату docker. Ожидается: image:tag "+
-				"(например, alpine:3.19). Тег обязателен: «latest» по умолчанию "+
+				"или image:tag@sha256:digest. Тег обязателен: «latest» по умолчанию "+
 				"указывает на разное содержимое в разное время", text)
 	}
-	return strings.TrimSpace(text[:idx]), strings.TrimSpace(text[idx+1:]), nil
+	version := strings.TrimSpace(imageAndTag[idx+1:])
+	if pinned {
+		version += "@" + strings.TrimSpace(digest)
+	}
+	return strings.TrimSpace(imageAndTag[:idx]), version, nil
 }
 
 func (p *Docker) ValidateName(name string) error {
@@ -124,18 +141,45 @@ func (p *Docker) ValidateName(name string) error {
 }
 
 func (p *Docker) ValidateVersion(version string) error {
-	if !dockerTagRe.MatchString(version) {
+	tag, digest, pinned := splitDockerVersion(version)
+	if !dockerTagRe.MatchString(tag) {
 		return invalidFormat(p.EntryFormat(),
-			"Тег «%s» недопустим (буквы, цифры, «.», «-», «_», до 128 символов)", version)
+			"Тег «%s» недопустим (буквы, цифры, «.», «-», «_», до 128 символов)", tag)
 	}
 	// latest — подвижная ссылка: сегодня и завтра это разные образы, и
 	// решение, принятое по одному, относилось бы к другому.
-	if strings.EqualFold(version, "latest") {
+	if strings.EqualFold(tag, "latest") {
 		return invalidFormat(p.EntryFormat(),
 			"Тег «latest» указывает на разное содержимое в разное время, и решение по нему "+
 				"завтра будет относиться к другому образу. Укажите конкретный тег")
 	}
+	if pinned && !dockerDigestRe.MatchString(digest) {
+		return invalidFormat(p.EntryFormat(),
+			"Index digest «%s» недопустим: ожидается sha256 и 64 шестнадцатеричных символа", digest)
+	}
 	return nil
+}
+
+// splitDockerVersion разделяет пользовательскую версию tag@index-digest.
+// Тег сохраняется для отображения, digest используется для скачивания:
+// таким образом тег может быть передвинут в реестре, но модерироваться будут
+// ровно указанные пользователем байты.
+func splitDockerVersion(version string) (tag, digest string, pinned bool) {
+	tag, digest, pinned = strings.Cut(strings.TrimSpace(version), "@")
+	return strings.TrimSpace(tag), strings.TrimSpace(digest), pinned
+}
+
+func dockerPullReference(version string) string {
+	_, digest, pinned := splitDockerVersion(version)
+	if pinned {
+		return digest
+	}
+	return strings.TrimSpace(version)
+}
+
+func dockerDisplayTag(version string) string {
+	tag, _, _ := splitDockerVersion(version)
+	return tag
 }
 
 // dockerManifest — и одиночный манифест, и список: поля не пересекаются,
@@ -180,9 +224,14 @@ type dockerConfig struct {
 }
 
 func (p *Docker) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
-	raw, digest, err := p.manifest(ctx, ref.Name, ref.Version)
+	pullRef := dockerPullReference(ref.Version)
+	raw, digest, err := p.manifest(ctx, ref.Name, pullRef)
 	if err != nil {
 		return Metadata{}, err
+	}
+	if strings.HasPrefix(pullRef, "sha256:") && !strings.EqualFold(digest, pullRef) {
+		return Metadata{}, fmt.Errorf(
+			"реестр вернул манифест %s вместо запрошенного index digest %s", digest, pullRef)
 	}
 	var manifest dockerManifest
 	if err := json.Unmarshal(raw, &manifest); err != nil {
@@ -242,9 +291,14 @@ func (p *Docker) Download(ctx context.Context, ref Ref, limit int64) ([]byte, st
 		safeFilename(ref.Name), safeFilename(ref.RawVersion))
 
 	layout := newOCILayout()
-	rootRaw, rootDigest, err := p.manifest(ctx, ref.Name, ref.Version)
+	pullRef := dockerPullReference(ref.Version)
+	rootRaw, rootDigest, err := p.manifest(ctx, ref.Name, pullRef)
 	if err != nil {
 		return nil, "", err
+	}
+	if strings.HasPrefix(pullRef, "sha256:") && !strings.EqualFold(rootDigest, pullRef) {
+		return nil, "", fmt.Errorf(
+			"реестр вернул манифест %s вместо запрошенного index digest %s", rootDigest, pullRef)
 	}
 	var root dockerManifest
 	if err := json.Unmarshal(rootRaw, &root); err != nil {
@@ -258,7 +312,7 @@ func (p *Docker) Download(ctx context.Context, ref Ref, limit int64) ([]byte, st
 		}
 	}
 	layout.addBlob(rootDigest, rootRaw)
-	layout.addRoot(mediaType, rootDigest, int64(len(rootRaw)), ref.RawVersion)
+	layout.addRoot(mediaType, rootDigest, int64(len(rootRaw)), dockerDisplayTag(ref.RawVersion))
 
 	// Список манифестов — скачиваем ВСЕ платформы: см. комментарий к типу.
 	children := []string{}
@@ -395,6 +449,11 @@ func (p *Docker) request(ctx context.Context, url, accept, token string) ([]byte
 		return nil, nil, 0, fmt.Errorf("сборка запроса к реестру образов: %w", err)
 	}
 	req.Header.Set("Accept", accept)
+	// Слои образов сами часто являются gzip-потоком. Стандартный transport Go
+	// может прозрачно распаковать ответ с Content-Encoding: gzip, после чего
+	// sha256 уже не совпадает с digest сжатого blob из манифеста. Явно просим
+	// исходные байты; именно их затем проверяем и кладём в OCI layout.
+	req.Header.Set("Accept-Encoding", "identity")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -475,6 +534,9 @@ func excerptOf(body []byte) string {
 
 func (p *Docker) InstallCommand(ref Ref, baseURL, repo string) string {
 	host := strings.TrimPrefix(strings.TrimPrefix(strings.TrimRight(baseURL, "/"), "https://"), "http://")
+	if _, digest, pinned := splitDockerVersion(ref.RawVersion); pinned {
+		return fmt.Sprintf("docker pull %s/%s/%s@%s", host, repo, ref.Name, digest)
+	}
 	return fmt.Sprintf("docker pull %s/%s/%s:%s", host, repo, ref.Name, ref.RawVersion)
 }
 

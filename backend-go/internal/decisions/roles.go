@@ -16,7 +16,15 @@ import (
 //
 // Карантин снят с ВЕРСИИ пакета — значит, и со всех, кто её заказал.
 func (s *Service) ReleaseQuarantine(ctx context.Context, item *domain.RequestItem, early bool, comment string) (*Result, error) {
-	if item.Status != "quarantined" {
+	legacyManualQuarantine := false
+	if item.Status == "awaiting_security" {
+		var err error
+		legacyManualQuarantine, err = s.hasOpenBlocker(ctx, item, "quarantine")
+		if err != nil {
+			return nil, err
+		}
+	}
+	if item.Status != "quarantined" && !legacyManualQuarantine {
 		return nil, fmt.Errorf("%w: пакет не находится в карантине (текущий статус: %s)",
 			ErrConflict, item.Status)
 	}
@@ -41,6 +49,12 @@ func (s *Service) ReleaseQuarantine(ctx context.Context, item *domain.RequestIte
 	if err != nil {
 		return nil, err
 	}
+	legacySiblings, legacyNotifications, err := s.releaseLegacyQuarantineSiblings(ctx, item, note)
+	if err != nil {
+		return nil, err
+	}
+	siblings = append(siblings, legacySiblings...)
+	notifications = append(notifications, legacyNotifications...)
 	result.Siblings = siblings
 	result.Notifications = append(result.Notifications, notifications...)
 
@@ -56,6 +70,42 @@ func (s *Service) ReleaseQuarantine(ctx context.Context, item *domain.RequestIte
 		return nil, err
 	}
 	return result, nil
+}
+
+// releaseLegacyQuarantineSiblings доводит снятие до заявок, записанных старой
+// версией сервиса как awaiting_security. Одного статуса недостаточно: так же
+// помечаются настоящие блокировки сканеров, поэтому обязательно проверяем,
+// что открытым остался именно шаг quarantine.
+func (s *Service) releaseLegacyQuarantineSiblings(
+	ctx context.Context, item *domain.RequestItem, note string,
+) ([]int64, []Notification, error) {
+	siblings, err := s.siblingsAwaiting(ctx, item, "awaiting_security")
+	if err != nil {
+		return nil, nil, err
+	}
+	var ids []int64
+	var notifications []Notification
+	for i := range siblings {
+		sibling := &siblings[i]
+		open, err := s.hasOpenBlocker(ctx, sibling, "quarantine")
+		if err != nil {
+			return nil, nil, err
+		}
+		if !open {
+			continue
+		}
+		if _, err := s.clearBlocker(ctx, sibling, "quarantine", note); err != nil {
+			return nil, nil, err
+		}
+		notifications = append(notifications, Notification{
+			RequestItemID: sibling.ID, Event: pipeline.EventDecisionMade, Message: note,
+		})
+		if err := s.resume(ctx, sibling, "license"); err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, sibling.ID)
+	}
+	return ids, notifications, nil
 }
 
 // --------------------------------------------------------------------------- DevSecOps

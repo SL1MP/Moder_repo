@@ -203,12 +203,12 @@ func New(cfg Config) *Registry {
 	// внутренние зеркала; пустое значение здесь означало бы плагин, который
 	// собирает запросы к «/v2/...» без хоста и падает на первом же пакете.
 	defaults := map[*string]string{
-		&cfg.MavenURL:       "https://repo1.maven.org/maven2",
+		&cfg.MavenURL:       "https://repo1.maven.org/maven2,https://dl.google.com/dl/android/maven2",
 		&cfg.MavenSearchURL: "https://search.maven.org",
 		&cfg.DockerURL:      "https://registry-1.docker.io",
 		&cfg.DockerAuthURL:  "https://auth.docker.io/token",
 		&cfg.DockerService:  "registry.docker.io",
-		&cfg.ConanURL:       "https://center.conan.io",
+		&cfg.ConanURL:       "https://center2.conan.io",
 		&cfg.LuaRocksURL:    "https://luarocks.org",
 		&cfg.TerraformURL:   "https://registry.terraform.io",
 		&cfg.PackagistURL:   "https://repo.packagist.org",

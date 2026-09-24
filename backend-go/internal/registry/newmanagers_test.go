@@ -100,6 +100,35 @@ func TestMavenBrokenPOMStillYieldsArtifact(t *testing.T) {
 	}
 }
 
+// TestMavenFallsBackToGoogleRepository — AndroidX и другие Android-библиотеки
+// не публикуются в Maven Central. 404 первого репозитория должен приводить к
+// проверке следующего, а не к ложному «версия отсутствует».
+func TestMavenFallsBackToGoogleRepository(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://google-maven.test/androidx/annotation/annotation/1.9.1/annotation-1.9.1.pom": `
+			<project><licenses><license><name>Apache License, Version 2.0</name></license></licenses></project>`,
+	}}
+	r := registry.New(registry.Config{
+		MavenURL:       "https://central.test, https://google-maven.test",
+		MavenSearchURL: "https://mavensearch.test", HTTP: f,
+	})
+	plugin, err := r.Get("maven")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := registry.ParseEntry(plugin, "androidx.annotation:annotation:1.9.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := plugin.FetchMetadata(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("AndroidX не найден во втором репозитории: %v", err)
+	}
+	if !strings.HasPrefix(meta.ArtifactURL, "https://google-maven.test/") {
+		t.Errorf("артефакт взят не из Google Maven: %s", meta.ArtifactURL)
+	}
+}
+
 // TestPHPMetadata — Packagist отдаёт дистрибутив, дату и лицензию одним
 // ответом; поле shasum содержит sha1, а не sha256, несмотря на имя.
 func TestPHPMetadata(t *testing.T) {
