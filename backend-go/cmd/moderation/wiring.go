@@ -124,8 +124,7 @@ func newRegistry(cfg *config.Config, httpClient registry.Doer) *registry.Registr
 
 	return registry.New(registry.Config{
 		PyPIURL: cfg.RegistryPyPIURL, NpmURL: cfg.RegistryNpmURL,
-		GoProxy: cfg.RegistryGoProxy, GoLicenseURL: cfg.RegistryGoLicenseURL,
-		NuGetURL: cfg.RegistryNuGetURL,
+		GoProxy: cfg.RegistryGoProxy, NuGetURL: cfg.RegistryNuGetURL,
 
 		MavenURL: cfg.RegistryMavenURL, MavenSearchURL: cfg.RegistryMavenSearchURL,
 		DockerURL: cfg.RegistryDockerURL, DockerAuthURL: cfg.RegistryDockerAuthURL,

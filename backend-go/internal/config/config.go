@@ -102,11 +102,10 @@ type Config struct {
 	// зеркала: сервис ходит за метаданными и артефактами только по этим
 	// адресам, и подменить их значит перевести весь конвейер на другой
 	// источник, не трогая код.
-	RegistryPyPIURL      string
-	RegistryNpmURL       string
-	RegistryGoProxy      string
-	RegistryGoLicenseURL string
-	RegistryNuGetURL     string
+	RegistryPyPIURL  string
+	RegistryNpmURL   string
+	RegistryGoProxy  string
+	RegistryNuGetURL string
 
 	RegistryMavenURL       string
 	RegistryMavenSearchURL string
@@ -294,15 +293,13 @@ func Load(getenv func(string) string) (*Config, error) {
 		ArtifactBaseURL: valueOr(getenv("ARTIFACT_BASE_URL"), "http://nexus:8081"),
 		ArtifactRepos:   artifactRepos(getenv),
 
-		RegistryPyPIURL:      valueOr(getenv("REGISTRY_PYPI_URL"), "https://pypi.org"),
-		RegistryNpmURL:       valueOr(getenv("REGISTRY_NPM_URL"), "https://registry.npmjs.org"),
-		RegistryGoProxy:      valueOr(getenv("REGISTRY_GO_PROXY"), "https://proxy.golang.org"),
-		RegistryGoLicenseURL: valueOr(getenv("REGISTRY_GO_LICENSE_URL"), "https://pkg.go.dev"),
-		RegistryNuGetURL:     valueOr(getenv("REGISTRY_NUGET_URL"), "https://api.nuget.org"),
+		RegistryPyPIURL:  valueOr(getenv("REGISTRY_PYPI_URL"), "https://pypi.org"),
+		RegistryNpmURL:   valueOr(getenv("REGISTRY_NPM_URL"), "https://registry.npmjs.org"),
+		RegistryGoProxy:  valueOr(getenv("REGISTRY_GO_PROXY"), "https://proxy.golang.org"),
+		RegistryNuGetURL: valueOr(getenv("REGISTRY_NUGET_URL"), "https://api.nuget.org"),
 
 		RegistryMavenURL: valueOr(getenv("REGISTRY_MAVEN_URL"),
-			"https://repo.maven.apache.org/maven2,https://repo1.maven.org/maven2,"+
-				"https://dl.google.com/dl/android/maven2,https://repo.clojars.org,https://plugins.gradle.org/m2"),
+			"https://repo1.maven.org/maven2,https://dl.google.com/dl/android/maven2"),
 		RegistryMavenSearchURL: valueOr(getenv("REGISTRY_MAVEN_SEARCH_URL"), "https://search.maven.org"),
 		RegistryDockerURL:      valueOr(getenv("REGISTRY_DOCKER_URL"), "https://registry-1.docker.io"),
 		RegistryDockerAuthURL:  valueOr(getenv("REGISTRY_DOCKER_AUTH_URL"), "https://auth.docker.io/token"),

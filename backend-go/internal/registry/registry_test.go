@@ -14,33 +14,22 @@ import (
 // fakeRegistry — фейковый реестр: адрес -> тело ответа. Отсутствующий адрес
 // даёт 404, что позволяет проверять и путь «версии нет».
 type fakeRegistry struct {
-	responses   map[string]string
-	requested   []string
-	statuses    map[string]int
-	headers     map[string]http.Header
-	seenHeaders []http.Header
+	responses map[string]string
+	requested []string
 }
 
 func (f *fakeRegistry) Do(req *http.Request) (*http.Response, error) {
 	url := req.URL.String()
 	f.requested = append(f.requested, url)
-	f.seenHeaders = append(f.seenHeaders, req.Header.Clone())
 	body, ok := f.responses[url]
 	status := http.StatusOK
 	if !ok {
 		status, body = http.StatusNotFound, `{"message":"not found"}`
 	}
-	if configured, exists := f.statuses[url]; exists {
-		status = configured
-	}
-	header := http.Header{}
-	if configured, exists := f.headers[url]; exists {
-		header = configured.Clone()
-	}
 	return &http.Response{
 		StatusCode: status,
 		Body:       io.NopCloser(strings.NewReader(body)),
-		Header:     header,
+		Header:     http.Header{},
 	}, nil
 }
 
@@ -291,27 +280,6 @@ func TestNpmLicenseAsObject(t *testing.T) {
 	}
 }
 
-func TestNpmDeprecatedLicensesArray(t *testing.T) {
-	f := &fakeRegistry{responses: map[string]string{
-		"https://npm.test/dual": `{
-		  "time": {"1.0.0": "2015-01-01T00:00:00.000Z"},
-		  "versions": {"1.0.0": {
-		    "licenses": [{"type": "MIT"}, {"type": "Apache-2.0"}],
-		    "dist": {"tarball": "https://t/dual-1.0.0.tgz"}
-		  }}
-		}`,
-	}}
-	p := pluginFor(t, "npm", f)
-	ref, _ := registry.ParseEntry(p, "dual@1.0.0")
-	meta, err := p.FetchMetadata(context.Background(), ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.LicenseSPDX != "Apache-2.0 OR MIT" {
-		t.Errorf("LicenseSPDX = %q, ожидались обе лицензии", meta.LicenseSPDX)
-	}
-}
-
 // TestNpmMissingVersionIsNotFound — пакет есть, версии нет: чаще всего опечатка
 // в версии, и сообщение обязано это различать.
 func TestNpmMissingVersionIsNotFound(t *testing.T) {
@@ -384,41 +352,6 @@ func TestGoMissingZiphashIsNotFatal(t *testing.T) {
 	}
 	if meta.Checksum != "" {
 		t.Errorf("Checksum = %q, ожидалась пустая", meta.Checksum)
-	}
-}
-
-func TestGoLicenseFromPkgGoDev(t *testing.T) {
-	f := &fakeRegistry{responses: map[string]string{
-		"https://goproxy.test/github.com/x/y/@v/v1.0.0.info": `{"Version":"v1.0.0","Time":"2023-01-01T00:00:00Z"}`,
-		"https://pkg.test/github.com/x/y@v1.0.0?tab=licenses": `<html>
-		  <div id="#lic-0">MIT, Apache-2.0</div>
-		</html>`,
-	}}
-	r := registry.New(registry.Config{
-		GoProxy: "https://goproxy.test", GoLicenseURL: "https://pkg.test", HTTP: f,
-	})
-	p, _ := r.Get("go")
-	ref, _ := registry.ParseEntry(p, "github.com/x/y@v1.0.0")
-	meta, err := p.FetchMetadata(context.Background(), ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.LicenseSPDX != "Apache-2.0 OR MIT" {
-		t.Errorf("LicenseSPDX = %q, лицензии pkg.go.dev не разобраны", meta.LicenseSPDX)
-	}
-}
-
-func TestRegistryRequestsHaveUserAgent(t *testing.T) {
-	f := &fakeRegistry{responses: map[string]string{
-		"https://pypi.test/pypi/pkg/1.0.0/json": `{"info":{},"urls":[]}`,
-	}}
-	p := pluginFor(t, "pypi", f)
-	ref, _ := registry.ParseEntry(p, "pkg==1.0.0")
-	if _, err := p.FetchMetadata(context.Background(), ref); err != nil {
-		t.Fatal(err)
-	}
-	if len(f.seenHeaders) == 0 || f.seenHeaders[0].Get("User-Agent") != "pt-license-fetcher/1.0" {
-		t.Errorf("User-Agent = %q", f.seenHeaders[0].Get("User-Agent"))
 	}
 }
 
@@ -514,12 +447,11 @@ func TestNormalizeSPDX(t *testing.T) {
 		"MIT":                         "MIT",
 		"mit license":                 "MIT",
 		"Apache License, Version 2.0": "Apache-2.0",
-		"https://www.apache.org/licenses/LICENSE-2.0.txt": "Apache-2.0",
-		"BSD":               "BSD-3-Clause",
-		"MIT OR Apache-2.0": "MIT OR Apache-2.0", // составное оставляем как есть
-		"":                  "",
-		"UNKNOWN":           "",
-		"see license":       "",
+		"BSD":                         "BSD-3-Clause",
+		"MIT OR Apache-2.0":           "MIT OR Apache-2.0", // составное оставляем как есть
+		"":                            "",
+		"UNKNOWN":                     "",
+		"see license":                 "",
 		strings.Repeat("текст лицензии ", 30): "", // текст вместо идентификатора
 	}
 	for input, want := range cases {

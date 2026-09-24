@@ -79,12 +79,10 @@ type npmResponse struct {
 	Versions map[string]npmVersion `json:"versions"`
 	Time     map[string]string     `json:"time"`
 	License  json.RawMessage       `json:"license"`
-	Licenses json.RawMessage       `json:"licenses"`
 }
 
 type npmVersion struct {
 	License    json.RawMessage `json:"license"`
-	Licenses   json.RawMessage `json:"licenses"`
 	Deprecated string          `json:"deprecated"`
 	Dist       struct {
 		Tarball      string `json:"tarball"`
@@ -129,47 +127,31 @@ func (p *Npm) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 	}
 	meta.Checksum, meta.ChecksumAlgo = npmChecksum(version.Dist.Integrity, version.Dist.Shasum)
 
-	candidates := npmLicenseCandidates(version.License)
-	candidates = append(candidates, npmLicenseCandidates(version.Licenses)...)
-	if len(candidates) == 0 {
-		candidates = append(candidates, npmLicenseCandidates(payload.License)...)
-		candidates = append(candidates, npmLicenseCandidates(payload.Licenses)...)
+	raw := npmLicense(version.License)
+	if raw == "" {
+		raw = npmLicense(payload.License)
 	}
-	meta.LicenseRaw, meta.LicenseSPDX = normalizeLicenseCandidates(candidates)
+	meta.LicenseRaw = raw
+	meta.LicenseSPDX = NormalizeSPDX(raw)
 	return meta, nil
 }
 
-// npmLicenseCandidates разбирает все исторические формы npm: строку,
-// объект {"type":"MIT"} и deprecated-массив licenses.
-func npmLicenseCandidates(raw json.RawMessage) []string {
+// npmLicense — поле license бывает строкой и объектом {"type": "MIT"}.
+func npmLicense(raw json.RawMessage) string {
 	if len(raw) == 0 {
-		return nil
+		return ""
 	}
 	var asString string
 	if err := json.Unmarshal(raw, &asString); err == nil {
-		if value := strings.TrimSpace(asString); value != "" {
-			return []string{value}
-		}
-		return nil
+		return strings.TrimSpace(asString)
 	}
 	var asObject struct {
 		Type string `json:"type"`
 	}
 	if err := json.Unmarshal(raw, &asObject); err == nil {
-		if value := strings.TrimSpace(asObject.Type); value != "" {
-			return []string{value}
-		}
-		return nil
+		return strings.TrimSpace(asObject.Type)
 	}
-	var asArray []json.RawMessage
-	if err := json.Unmarshal(raw, &asArray); err != nil {
-		return nil
-	}
-	var candidates []string
-	for _, item := range asArray {
-		candidates = append(candidates, npmLicenseCandidates(item)...)
-	}
-	return candidates
+	return ""
 }
 
 // npmChecksum — `integrity` (sha512 в base64) предпочтительнее устаревшего

@@ -23,7 +23,6 @@ type flakyResponse struct {
 	status int
 	err    error
 	body   string
-	header http.Header
 }
 
 func (f *flakyDoer) Do(*http.Request) (*http.Response, error) {
@@ -43,7 +42,7 @@ func (f *flakyDoer) Do(*http.Request) (*http.Response, error) {
 	return &http.Response{
 		StatusCode: r.status,
 		Body:       io.NopCloser(strings.NewReader(body)),
-		Header:     r.header,
+		Header:     http.Header{},
 	}, nil
 }
 
@@ -90,45 +89,6 @@ func TestRetryRecoversFromTransientFailure(t *testing.T) {
 	}
 	if flaky.calls != 2 {
 		t.Errorf("обращений: %d, ожидалось 2", flaky.calls)
-	}
-}
-
-func TestRetryAfterIsHonored(t *testing.T) {
-	now := time.Now()
-	flaky := &flakyDoer{responses: []flakyResponse{
-		{status: http.StatusTooManyRequests, header: http.Header{"Retry-After": []string{"2"}}},
-		{status: http.StatusOK},
-	}}
-	d := registry.NewResilientDoer(flaky, registry.DefaultRetryPolicy(), registry.DefaultBreakerPolicy())
-	var waited time.Duration
-	d.SetClockForTest(func() time.Time { return now }, func(_ context.Context, delay time.Duration) error {
-		waited = delay
-		return nil
-	})
-	resp, err := d.Do(request(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if waited != 2*time.Second || flaky.calls != 2 {
-		t.Errorf("ожидание = %s, обращений = %d", waited, flaky.calls)
-	}
-}
-
-func TestLongRetryAfterIsNotRetried(t *testing.T) {
-	now := time.Now()
-	flaky := &flakyDoer{responses: []flakyResponse{{
-		status: http.StatusTooManyRequests,
-		header: http.Header{"Retry-After": []string{"1800"}},
-	}}}
-	d := newResilient(flaky, registry.DefaultRetryPolicy(), registry.DefaultBreakerPolicy(), &now)
-	resp, err := d.Do(request(t))
-	if err != nil {
-		t.Fatalf("429 должен вернуться вызывающему без 30-минутного ожидания: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests || flaky.calls != 1 {
-		t.Errorf("код = %d, обращений = %d", resp.StatusCode, flaky.calls)
 	}
 }
 

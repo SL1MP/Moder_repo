@@ -3,7 +3,6 @@ package registry
 import (
 	"context"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -113,11 +112,6 @@ func groupPath(group string) string { return strings.ReplaceAll(group, ".", "/")
 
 // mavenPOM — то, что нам нужно из pom.xml: лицензии.
 type mavenPOM struct {
-	Parent struct {
-		GroupID    string `xml:"groupId"`
-		ArtifactID string `xml:"artifactId"`
-		Version    string `xml:"version"`
-	} `xml:"parent"`
 	Licenses struct {
 		License []struct {
 			Name string `xml:"name"`
@@ -144,16 +138,30 @@ func (p *Maven) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 	}
 	filename := fmt.Sprintf("%s-%s.jar", artifact, ref.Version)
 
-	// POM обязателен: по нему проверяется существование версии и берётся
-	// лицензия. Один заблокированный CDN не должен мешать проверить следующее
-	// зеркало; если все источники ответили 404, это именно ErrNotFound.
-	pomBody, base, err := p.fetchPOM(ctx, group, artifact, ref.Version)
-	if errors.Is(err, ErrNotFound) {
+	// POM обязателен: по нему проверяется само существование версии и
+	// берётся лицензия. Его отсутствие — это «такой версии нет», а не
+	// «лицензия не указана». Перебираем репозитории только при 404: сетевую
+	// ошибку нельзя маскировать сообщением «пакета нет».
+	var base string
+	var pomBody []byte
+	for _, registryURL := range mavenBaseURLs(p.BaseURL) {
+		candidate := fmt.Sprintf("%s/%s/%s/%s", registryURL,
+			groupPath(group), artifact, ref.Version)
+		body, err := getBytes(ctx, p.HTTP,
+			fmt.Sprintf("%s/%s-%s.pom", candidate, artifact, ref.Version),
+			"application/xml")
+		if err == ErrNotFound {
+			continue
+		}
+		if err != nil {
+			return Metadata{}, err
+		}
+		base, pomBody = candidate, body
+		break
+	}
+	if base == "" {
 		return Metadata{}, fmt.Errorf("%w: пакет %s:%s отсутствует в реестре maven (проверены все адреса)",
 			ErrNotFound, ref.DisplayName, ref.RawVersion)
-	}
-	if err != nil {
-		return Metadata{}, err
 	}
 
 	meta := Metadata{
@@ -163,9 +171,12 @@ func (p *Maven) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 		ArtifactFilename: filename,
 	}
 	var pom mavenPOM
-	if err := xml.Unmarshal(pomBody, &pom); err == nil {
-		meta.LicenseRaw, meta.LicenseSPDX = p.resolvePOMLicenses(ctx, pom,
-			map[string]bool{mavenKey(group, artifact, ref.Version): true}, 0)
+	if err := xml.Unmarshal(pomBody, &pom); err == nil && len(pom.Licenses.License) > 0 {
+		meta.LicenseRaw = pom.Licenses.License[0].Name
+		if meta.LicenseRaw == "" {
+			meta.LicenseRaw = pom.Licenses.License[0].URL
+		}
+		meta.LicenseSPDX = NormalizeSPDX(meta.LicenseRaw)
 	}
 	// Ошибку разбора POM не поднимаем: лицензия — не условие существования
 	// пакета, и сломанный POM отправит пакет к юристу, а не завалит заявку.
@@ -180,92 +191,6 @@ func (p *Maven) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 
 	meta.PublishedAt = p.publishedAt(ctx, group, artifact, ref.Version)
 	return meta, nil
-}
-
-const mavenMaxParentDepth = 6
-
-func mavenKey(group, artifact, version string) string {
-	return group + ":" + artifact + ":" + version
-}
-
-// fetchPOM пробует все настроенные репозитории. 404 означает отсутствие в
-// конкретном source, а 429/5xx/сетевая ошибка — временную недоступность этого
-// source; в обоих случаях следующий источник всё ещё может ответить.
-func (p *Maven) fetchPOM(ctx context.Context, group, artifact, version string) ([]byte, string, error) {
-	var lastErr error
-	var attempts []string
-	for _, registryURL := range mavenBaseURLs(p.BaseURL) {
-		base := fmt.Sprintf("%s/%s/%s/%s", registryURL, groupPath(group), artifact, version)
-		url := fmt.Sprintf("%s/%s-%s.pom", base, artifact, version)
-		body, err := getBytes(ctx, p.HTTP, url, "application/xml")
-		if err == nil {
-			return body, base, nil
-		}
-		if errors.Is(err, ErrNotFound) {
-			attempts = append(attempts, registryURL+"=404")
-			continue
-		}
-		lastErr = err
-		attempts = append(attempts, registryURL+"="+err.Error())
-	}
-	if lastErr != nil {
-		return nil, "", fmt.Errorf("Maven POM %s недоступен во всех источниках (%s): %w",
-			mavenKey(group, artifact, version), strings.Join(attempts, "; "), lastErr)
-	}
-	return nil, "", ErrNotFound
-}
-
-func mavenLicenseCandidates(pom mavenPOM) []string {
-	var candidates []string
-	for _, license := range pom.Licenses.License {
-		if name := strings.TrimSpace(license.Name); name != "" {
-			candidates = append(candidates, name)
-		}
-		if url := strings.TrimSpace(license.URL); url != "" {
-			candidates = append(candidates, url)
-		}
-	}
-	return candidates
-}
-
-// resolvePOMLicenses поднимается по parent POM, если дочерний POM не объявил
-// распознаваемую лицензию. Так устроены многие Spring, Hibernate и Gradle
-// артефакты. Ошибка parent не валит существующий пакет — его разберёт юрист.
-func (p *Maven) resolvePOMLicenses(ctx context.Context, pom mavenPOM,
-	visited map[string]bool, depth int) (raw, spdx string) {
-	candidates := mavenLicenseCandidates(pom)
-	raw, spdx = normalizeLicenseCandidates(candidates)
-	if spdx != "" || depth >= mavenMaxParentDepth {
-		return raw, spdx
-	}
-	group := strings.TrimSpace(pom.Parent.GroupID)
-	artifact := strings.TrimSpace(pom.Parent.ArtifactID)
-	version := strings.TrimSpace(pom.Parent.Version)
-	if group == "" || artifact == "" || version == "" ||
-		strings.Contains(group+artifact+version, "${") {
-		return raw, spdx
-	}
-	key := mavenKey(group, artifact, version)
-	if visited[key] {
-		return raw, spdx
-	}
-	visited[key] = true
-	body, _, err := p.fetchPOM(ctx, group, artifact, version)
-	if err != nil {
-		return raw, spdx
-	}
-	var parent mavenPOM
-	if xml.Unmarshal(body, &parent) != nil {
-		return raw, spdx
-	}
-	parentRaw, parentSPDX := p.resolvePOMLicenses(ctx, parent, visited, depth+1)
-	if parentSPDX != "" {
-		return parentRaw, parentSPDX
-	}
-	if raw == "" {
-		raw = parentRaw
-	}
-	return raw, ""
 }
 
 // mavenBaseURLs разбирает список репозиториев. Запятая выбрана потому, что

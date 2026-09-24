@@ -8,8 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -49,10 +47,6 @@ type RetryPolicy struct {
 	BaseDelay time.Duration
 	// MaxDelay — потолок паузы.
 	MaxDelay time.Duration
-	// MaxRetryAfter — максимальная пауза из Retry-After, которую сервис готов
-	// ждать. Большие значения означают длительный бан: повтор во время него
-	// способен продлить блокировку, поэтому такой ответ сразу отдаётся плагину.
-	MaxRetryAfter time.Duration
 }
 
 // DefaultRetryPolicy — значения, с которыми сервис работает по умолчанию.
@@ -60,10 +54,7 @@ type RetryPolicy struct {
 // Три попытки, а не больше: реестр, не ответивший трижды за полторы секунды,
 // не ответит и на четвёртый раз, а очередь ждёт.
 func DefaultRetryPolicy() RetryPolicy {
-	return RetryPolicy{
-		Attempts: 3, BaseDelay: 300 * time.Millisecond, MaxDelay: 3 * time.Second,
-		MaxRetryAfter: 60 * time.Second,
-	}
+	return RetryPolicy{Attempts: 3, BaseDelay: 300 * time.Millisecond, MaxDelay: 3 * time.Second}
 }
 
 // BreakerPolicy — когда размыкать предохранитель и когда пробовать снова.
@@ -150,19 +141,6 @@ func (d *ResilientDoer) Do(req *http.Request) (*http.Response, error) {
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		resp, err := d.Next.Do(req)
-		if err == nil && resp.StatusCode == http.StatusTooManyRequests {
-			if retryAfter, ok := parseRetryAfter(resp.Header.Get("Retry-After"), d.clock()); ok {
-				maxRetryAfter := d.Retry.MaxRetryAfter
-				if maxRetryAfter <= 0 {
-					maxRetryAfter = 60 * time.Second
-				}
-				if retryAfter > maxRetryAfter {
-					d.failed(service)
-					metrics.ObserveExternal(service, "rate_limited")
-					return resp, nil
-				}
-			}
-		}
 		switch {
 		case err == nil && !retryableStatus(resp.StatusCode):
 			// Ответ получен и он окончательный — в том числе 404: «версии
@@ -189,13 +167,7 @@ func (d *ResilientDoer) Do(req *http.Request) (*http.Response, error) {
 		if attempt == attempts {
 			break
 		}
-		delay := d.delay(attempt)
-		if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
-			if retryAfter, ok := parseRetryAfter(resp.Header.Get("Retry-After"), d.clock()); ok {
-				delay = retryAfter
-			}
-		}
-		if err := d.wait(req.Context(), delay); err != nil {
+		if err := d.wait(req.Context(), d.delay(attempt)); err != nil {
 			return nil, err
 		}
 		// Повтор — это новый запрос: тело у GET пустое, но контекст мог
@@ -208,24 +180,6 @@ func (d *ResilientDoer) Do(req *http.Request) (*http.Response, error) {
 	d.failed(service)
 	metrics.ObserveExternal(service, "failed")
 	return nil, fmt.Errorf("реестр %s не ответил за %d попыток: %w", service, attempts, lastErr)
-}
-
-func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0, false
-	}
-	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
-		return time.Duration(seconds) * time.Second, true
-	}
-	when, err := http.ParseTime(value)
-	if err != nil {
-		return 0, false
-	}
-	if delay := when.Sub(now); delay > 0 {
-		return delay, true
-	}
-	return 0, true
 }
 
 // delay — пауза перед попыткой attempt+1, с разбросом.
