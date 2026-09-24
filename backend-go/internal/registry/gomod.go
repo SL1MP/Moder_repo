@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 )
@@ -11,12 +12,15 @@ var (
 	goModuleRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~\-]*(\.[A-Za-z0-9._~\-]+)*(/[A-Za-z0-9._~\-]+)*$`)
 	goVersionRe = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[0-9A-Za-z.\-]+)?(\+incompatible)?$`)
 	goUpperRe   = regexp.MustCompile(`[A-Z]`)
+	goLicenseRe = regexp.MustCompile(`(?is)<div[^>]*id=["']#?lic-\d+["'][^>]*>(.*?)</div>`)
+	goHTMLTagRe = regexp.MustCompile(`(?s)<[^>]+>`)
 )
 
 // Go — плагин менеджера go. Формат записи: module@vX.Y.Z.
 type Go struct {
-	BaseURL string
-	HTTP    Doer
+	BaseURL    string
+	LicenseURL string
+	HTTP       Doer
 }
 
 func (*Go) Code() string         { return "go" }
@@ -113,7 +117,16 @@ func (p *Go) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 		PublishedAt:      parseTime(info.Time),
 		ArtifactURL:      fmt.Sprintf("%s/%s/@v/%s.zip", p.BaseURL, module, version),
 		ArtifactFilename: ref.Version + ".zip",
-		// Go module proxy не отдаёт лицензию — её определяет юрист (шаг 3).
+	}
+	// Go proxy не хранит сведения о лицензии. pkg.go.dev публикует их для
+	// конкретной версии; ошибка этого дополнительного источника не должна
+	// превращать существующий модуль в ошибку заявки.
+	licenseURL := fmt.Sprintf("%s/%s@%s?tab=licenses",
+		strings.TrimRight(p.LicenseURL, "/"), ref.DisplayName, ref.Version)
+	if p.LicenseURL != "" {
+		if body, err := getBytes(ctx, p.HTTP, licenseURL, "text/html"); err == nil {
+			meta.LicenseRaw, meta.LicenseSPDX = goLicenses(body)
+		}
 	}
 
 	// Хеш модуля берём отдельным запросом; его отсутствие не повод валить
@@ -124,6 +137,19 @@ func (p *Go) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 		}
 	}
 	return meta, nil
+}
+
+func goLicenses(body []byte) (raw, spdx string) {
+	var candidates []string
+	for _, match := range goLicenseRe.FindAllSubmatch(body, -1) {
+		text := html.UnescapeString(goHTMLTagRe.ReplaceAllString(string(match[1]), ""))
+		for _, candidate := range strings.Split(text, ",") {
+			if candidate = strings.TrimSpace(candidate); candidate != "" {
+				candidates = append(candidates, candidate)
+			}
+		}
+	}
+	return normalizeLicenseCandidates(candidates)
 }
 
 func (p *Go) InstallCommand(ref Ref, baseURL, repo string) string {

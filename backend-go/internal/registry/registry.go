@@ -160,10 +160,11 @@ type Registry struct {
 // Config — адреса реестров. Пустое значение заменяется публичным адресом по
 // умолчанию; в бою сюда подставляются внутренние зеркала.
 type Config struct {
-	PyPIURL  string
-	NpmURL   string
-	GoProxy  string
-	NuGetURL string
+	PyPIURL      string
+	NpmURL       string
+	GoProxy      string
+	GoLicenseURL string
+	NuGetURL     string
 
 	MavenURL       string
 	MavenSearchURL string
@@ -196,6 +197,9 @@ func New(cfg Config) *Registry {
 	if cfg.GoProxy == "" {
 		cfg.GoProxy = "https://proxy.golang.org"
 	}
+	if cfg.GoLicenseURL == "" {
+		cfg.GoLicenseURL = "https://pkg.go.dev"
+	}
 	if cfg.NuGetURL == "" {
 		cfg.NuGetURL = "https://api.nuget.org"
 	}
@@ -203,7 +207,8 @@ func New(cfg Config) *Registry {
 	// внутренние зеркала; пустое значение здесь означало бы плагин, который
 	// собирает запросы к «/v2/...» без хоста и падает на первом же пакете.
 	defaults := map[*string]string{
-		&cfg.MavenURL:       "https://repo1.maven.org/maven2,https://dl.google.com/dl/android/maven2",
+		&cfg.MavenURL: "https://repo.maven.apache.org/maven2,https://repo1.maven.org/maven2," +
+			"https://dl.google.com/dl/android/maven2,https://repo.clojars.org,https://plugins.gradle.org/m2",
 		&cfg.MavenSearchURL: "https://search.maven.org",
 		&cfg.DockerURL:      "https://registry-1.docker.io",
 		&cfg.DockerAuthURL:  "https://auth.docker.io/token",
@@ -225,7 +230,10 @@ func New(cfg Config) *Registry {
 	plugins := []Plugin{
 		&PyPI{BaseURL: strings.TrimRight(cfg.PyPIURL, "/"), HTTP: cfg.HTTP},
 		&Npm{BaseURL: strings.TrimRight(cfg.NpmURL, "/"), HTTP: cfg.HTTP},
-		&Go{BaseURL: strings.TrimRight(cfg.GoProxy, "/"), HTTP: cfg.HTTP},
+		&Go{
+			BaseURL:    strings.TrimRight(cfg.GoProxy, "/"),
+			LicenseURL: strings.TrimRight(cfg.GoLicenseURL, "/"), HTTP: cfg.HTTP,
+		},
 		&NuGet{BaseURL: strings.TrimRight(cfg.NuGetURL, "/"), HTTP: cfg.HTTP},
 
 		&Conan{BaseURL: strings.TrimRight(cfg.ConanURL, "/"), HTTP: cfg.HTTP},

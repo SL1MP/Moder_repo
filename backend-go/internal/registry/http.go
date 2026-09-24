@@ -15,6 +15,22 @@ type Doer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// registryUserAgent отличает сервис от дефолтного Go-http-client. Некоторые
+// публичные реестры (в первую очередь Maven Central) применяют к безымянным
+// клиентам более жёсткий rate limit.
+const registryUserAgent = "pt-license-fetcher/1.0"
+
+// HTTPStatusError сохраняет код ответа, чтобы плагин с несколькими зеркалами
+// мог перейти к следующему источнику, не разбирая текст ошибки.
+type HTTPStatusError struct {
+	StatusCode int
+	URL        string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("реестр ответил %d (%s)", e.StatusCode, e.URL)
+}
+
 // maxRegistryResponseBytes — ответ реестра метаданных, крупнее которого мы не
 // читаем. Метаданные npm по популярному пакету со всей историей версий легко
 // переваливают за десяток мегабайт, и без ограничения один запрос способен
@@ -52,6 +68,7 @@ func getBytes(ctx context.Context, h Doer, url, accept string) ([]byte, error) {
 	if accept != "" {
 		req.Header.Set("Accept", accept)
 	}
+	req.Header.Set("User-Agent", registryUserAgent)
 	resp, err := doer(h).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("запрос к реестру (%s): %w", url, err)
@@ -62,7 +79,7 @@ func getBytes(ctx context.Context, h Doer, url, accept string) ([]byte, error) {
 		return nil, ErrNotFound
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("реестр ответил %d (%s)", resp.StatusCode, url)
+		return nil, &HTTPStatusError{StatusCode: resp.StatusCode, URL: url}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryResponseBytes))
 	if err != nil {
