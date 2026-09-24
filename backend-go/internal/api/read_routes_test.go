@@ -167,6 +167,22 @@ func decodeArray(t *testing.T, rec *httptest.ResponseRecorder) []any {
 
 // ---------------------------------------------------------------- /managers
 
+func TestManagersDependencyFilesAreNeverNull(t *testing.T) {
+	h := &api.PackagesHandler{Registry: registry.New(registry.Config{})}
+	rec := httptest.NewRecorder()
+	h.Managers(rec, httptest.NewRequest(http.MethodGet, "/api/v1/managers", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	for _, raw := range decodeArray(t, rec) {
+		manager := raw.(map[string]any)
+		if _, ok := manager["dependency_files"].([]any); !ok {
+			t.Errorf("менеджер %v: dependency_files = %#v, ожидался JSON-массив",
+				manager["code"], manager["dependency_files"])
+		}
+	}
+}
+
 func TestManagersList(t *testing.T) {
 	f := newReadFixture(t)
 	rec := f.as(t, f.author, []string{"developer"}, "/api/v1/managers")
@@ -184,9 +200,17 @@ func TestManagersList(t *testing.T) {
 	// domain.ManagerCodes, а не со своим списком рядом: две копии одного
 	// порядка разъезжаются при первом же новом менеджере.
 	for i, code := range domain.ManagerCodes {
-		got := items[i].(map[string]any)["code"]
+		manager := items[i].(map[string]any)
+		got := manager["code"]
 		if got != code {
 			t.Fatalf("менеджер %d: %v, ожидался %s", i, got, code)
+		}
+		// В JSON это всегда массив, в том числе для git/files, у которых
+		// список пуст. null здесь роняет страницу выбора менеджера: фронтенд
+		// вызывает .join() для показа подсказки.
+		if _, ok := manager["dependency_files"].([]any); !ok {
+			t.Errorf("менеджер %s: dependency_files = %#v, ожидался JSON-массив",
+				code, manager["dependency_files"])
 		}
 	}
 	first := items[0].(map[string]any)

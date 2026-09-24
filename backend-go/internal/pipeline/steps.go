@@ -195,6 +195,19 @@ type LicenseStep struct{}
 func (LicenseStep) Code() string { return "license" }
 
 func (LicenseStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
+	// Лицензия Docker-образа не является лицензией одного пакетного
+	// артефакта: образ собирает ПО и базовые слои с разными лицензиями.
+	// Этот конвейер не строит SBOM и не умеет принять по ним юридическое
+	// решение, поэтому проверка здесь неприменима и не должна отправлять
+	// Docker-заявки в очередь юристов.
+	if pc.Package.Manager == "docker" {
+		return StepOutcome{
+			Result:  "skipped",
+			Message: "Проверка лицензии не применяется к Docker-образам.",
+			Details: map[string]any{"applicable": false},
+		}, nil
+	}
+
 	spdx := ""
 	if pc.Version.LicenseSPDX != nil {
 		spdx = *pc.Version.LicenseSPDX

@@ -62,8 +62,8 @@ export default function AddPackages({ me, config }: { me: Me; config: AuthConfig
           {current ? (
             <div className="small dim" style={{ marginTop: 14 }}>
               формат записи: <code>{current.entry_format}</code> · файлы:{' '}
-              <code>{current.dependency_files.join(', ')}</code> · экосистема OSV:{' '}
-              <code>{current.osv_ecosystem}</code>
+              <code>{(current.dependency_files ?? []).join(', ') || 'не применимо'}</code> · экосистема
+              OSV: <code>{current.osv_ecosystem || 'не применимо'}</code>
             </div>
           ) : null}
         </div>

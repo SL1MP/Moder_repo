@@ -196,6 +196,23 @@ func TestLicenseDoesNotStopPipeline(t *testing.T) {
 	}
 }
 
+func TestLicenseIsNotApplicableToDocker(t *testing.T) {
+	// Проверяем шаг отдельно: Docker должен пройти его без реестра лицензий,
+	// метаданных и обращения к внешним зависимостям.
+	outcome, err := (pipeline.LicenseStep{}).Run(context.Background(), &pipeline.Context{
+		Package: &domain.Package{Manager: "docker"},
+	})
+	if err != nil {
+		t.Fatalf("LicenseStep.Run: %v", err)
+	}
+	if outcome.Result != "skipped" || outcome.Stop || outcome.Defer {
+		t.Fatalf("результат = %+v, ожидался неблокирующий skipped", outcome)
+	}
+	if applicable, ok := outcome.Details["applicable"].(bool); !ok || applicable {
+		t.Fatalf("details.applicable = %#v, ожидался false", outcome.Details["applicable"])
+	}
+}
+
 // --------------------------------------------------------------------- золотой путь
 
 func TestGoldenPathPublishes(t *testing.T) {

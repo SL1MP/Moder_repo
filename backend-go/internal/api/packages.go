@@ -77,10 +77,13 @@ func (h *PackagesHandler) Managers(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(plugins))
 	for _, p := range plugins {
 		out = append(out, map[string]any{
-			"code":             p.Code(),
-			"title":            p.Title(),
-			"entry_format":     p.EntryFormat(),
-			"dependency_files": p.DependencyFiles(),
+			"code":         p.Code(),
+			"title":        p.Title(),
+			"entry_format": p.EntryFormat(),
+			// У git/files нет файлов зависимостей. Нулевой slice нельзя
+			// сериализовать как null: интерфейс обращается с полем как со
+			// списком, а контракт /managers обещает именно массив.
+			"dependency_files": listOrEmpty(p.DependencyFiles()),
 			"osv_ecosystem":    p.OSVEcosystem(),
 		})
 	}

@@ -23,7 +23,7 @@ package pipeline
 // StepOutcome — результат одного шага конвейера.
 type StepOutcome struct {
 	// Result — то, что пишется в pipeline_step.result:
-	// pass | info | warn | fail.
+	// pass | info | warn | fail | skipped.
 	Result  string
 	Message string
 	Details map[string]any
