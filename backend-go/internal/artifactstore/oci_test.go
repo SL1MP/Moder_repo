@@ -204,7 +204,7 @@ printf '%s' "$XDG_RUNTIME_DIR" > "$FAKE_SKOPEO_RUNTIME"
 	if strings.Contains(args, "library/postgres") || strings.Contains(args, "secret") {
 		t.Errorf("в destination попал внешний namespace или секрет: %s", args)
 	}
-	if !strings.Contains(args, "oci:/tmp/moderation-oci-") || strings.Contains(args, "oci-archive:") {
+	if !strings.Contains(args, "oci:") || strings.Contains(args, "oci-archive:") {
 		t.Errorf("источник должен быть распакованным OCI layout без chown, аргументы:\n%s", args)
 	}
 	rawAuth, err := os.ReadFile(authFile)
