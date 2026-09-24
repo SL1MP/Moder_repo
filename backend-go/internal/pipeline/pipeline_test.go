@@ -196,20 +196,27 @@ func TestLicenseDoesNotStopPipeline(t *testing.T) {
 	}
 }
 
-func TestLicenseIsNotApplicableToDocker(t *testing.T) {
-	// Проверяем шаг отдельно: Docker должен пройти его без реестра лицензий,
+func TestLicenseIsNotApplicableToExcludedManagers(t *testing.T) {
+	// Каждый исключённый менеджер должен пройти шаг без реестра лицензий,
 	// метаданных и обращения к внешним зависимостям.
-	outcome, err := (pipeline.LicenseStep{}).Run(context.Background(), &pipeline.Context{
-		Package: &domain.Package{Manager: "docker"},
-	})
-	if err != nil {
-		t.Fatalf("LicenseStep.Run: %v", err)
-	}
-	if outcome.Result != "skipped" || outcome.Stop || outcome.Defer {
-		t.Fatalf("результат = %+v, ожидался неблокирующий skipped", outcome)
-	}
-	if applicable, ok := outcome.Details["applicable"].(bool); !ok || applicable {
-		t.Fatalf("details.applicable = %#v, ожидался false", outcome.Details["applicable"])
+	for _, manager := range []string{"docker", "files", "git", "luarocks", "terraform"} {
+		t.Run(manager, func(t *testing.T) {
+			outcome, err := (pipeline.LicenseStep{}).Run(context.Background(), &pipeline.Context{
+				Package: &domain.Package{Manager: manager},
+			})
+			if err != nil {
+				t.Fatalf("LicenseStep.Run: %v", err)
+			}
+			if outcome.Result != "skipped" || outcome.Stop || outcome.Defer {
+				t.Fatalf("результат = %+v, ожидался неблокирующий skipped", outcome)
+			}
+			if applicable, ok := outcome.Details["applicable"].(bool); !ok || applicable {
+				t.Fatalf("details.applicable = %#v, ожидался false", outcome.Details["applicable"])
+			}
+			if outcome.Details["manager"] != manager {
+				t.Fatalf("details.manager = %#v, ожидался %q", outcome.Details["manager"], manager)
+			}
+		})
 	}
 }
 

@@ -195,16 +195,16 @@ type LicenseStep struct{}
 func (LicenseStep) Code() string { return "license" }
 
 func (LicenseStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
-	// Лицензия Docker-образа не является лицензией одного пакетного
-	// артефакта: образ собирает ПО и базовые слои с разными лицензиями.
-	// Этот конвейер не строит SBOM и не умеет принять по ним юридическое
-	// решение, поэтому проверка здесь неприменима и не должна отправлять
-	// Docker-заявки в очередь юристов.
-	if pc.Package.Manager == "docker" {
+	// Для этих типов модерации проверка лицензий политикой сервиса отключена.
+	// В частности, у Docker одна метка образа не описывает лицензии всех
+	// входящих в него пакетов, а у файлов и git нет реестра с единым контрактом
+	// метаданных. Не отправляем такие заявки в очередь юристов автоматически.
+	switch pc.Package.Manager {
+	case "docker", "files", "git", "luarocks", "terraform":
 		return StepOutcome{
 			Result:  "skipped",
-			Message: "Проверка лицензии не применяется к Docker-образам.",
-			Details: map[string]any{"applicable": false},
+			Message: fmt.Sprintf("Проверка лицензии отключена для менеджера %s.", pc.Package.Manager),
+			Details: map[string]any{"applicable": false, "manager": pc.Package.Manager},
 		}, nil
 	}
 
