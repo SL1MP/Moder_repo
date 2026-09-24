@@ -30,6 +30,27 @@ func (VulnScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 			WithNextAction("Перезапустите проверку заявки."), nil
 	}
 
+	plugin, err := pc.Plugin()
+	if err != nil {
+		return StepOutcome{}, err
+	}
+	if plugin.OSVEcosystem() == "" {
+		// Заказчик публикует проверенные OSV-снапшоты только для PyPI и npm.
+		// Остальные экосистемы нельзя отправлять на ручное согласование из-за
+		// отсутствующей заведомо ненужной базы: для них шаг неприменим.
+		if err := pc.Deps.Repo.SetArtifactStatus(ctx, artifact.ID, "scanned"); err != nil {
+			return StepOutcome{}, err
+		}
+		zero := 0.0
+		if err := pc.Deps.Repo.SetVersionVulnSummary(ctx, pc.Version.ID, zero, nil); err != nil {
+			return StepOutcome{}, err
+		}
+		pc.Version.MaxVulnScore = &zero
+		pc.Version.VulnIndexVersionID = nil
+		return Pass("Проверка OSV применяется только к пакетам PyPI и npm — шаг пропущен.").
+			WithDetails(map[string]any{"reason": "not_applicable", "manager": pc.Package.Manager}), nil
+	}
+
 	info, err := pc.Deps.Index.CurrentVersion(ctx)
 	if err != nil {
 		return StepOutcome{}, fmt.Errorf("чтение версии снапшота OSV: %w", err)

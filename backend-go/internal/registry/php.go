@@ -27,7 +27,7 @@ type PHP struct {
 func (*PHP) Code() string         { return "php" }
 func (*PHP) Title() string        { return "Composer (PHP)" }
 func (*PHP) EntryFormat() string  { return "vendor/package:version" }
-func (*PHP) OSVEcosystem() string { return "Packagist" }
+func (*PHP) OSVEcosystem() string { return "" }
 
 // NormalizeName — Packagist имена регистронезависимы и канонично пишутся
 // строчными.

@@ -1,6 +1,7 @@
 package artifactstore
 
 import (
+	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -141,8 +143,16 @@ func (n *Nexus) runSkopeo(ctx context.Context, t Target, args ...string) ([]byte
 		return nil, err
 	}
 	defer cleanup()
+	runtimeDir, err := os.MkdirTemp("", "moderation-skopeo-runtime-*")
+	if err != nil {
+		return nil, fmt.Errorf("временный runtime-каталог skopeo: %w", err)
+	}
+	defer os.RemoveAll(runtimeDir)
 	cmd := exec.CommandContext(ctx, n.cfg.SkopeoBinary, args...)
-	cmd.Env = os.Environ()
+	// Без XDG_RUNTIME_DIR skopeo обращается к /run/containers/<uid>. Контейнер
+	// работает без root, поэтому даже без команды login этот скрытый fallback
+	// не должен зависеть от прав на системный каталог.
+	cmd.Env = append(os.Environ(), "XDG_RUNTIME_DIR="+runtimeDir)
 	if authFile != "" {
 		cmd.Env = append(cmd.Env, "REGISTRY_AUTH_FILE="+authFile)
 	}
@@ -157,7 +167,15 @@ func (n *Nexus) runSkopeo(ctx context.Context, t Target, args ...string) ([]byte
 	return out, nil
 }
 
-func writeOCIArchive(payload []byte) (string, func(), error) {
+// writeOCILayoutDirectory распаковывает проверенный OCI layout средствами Go.
+//
+// Нельзя передавать архив напрямую в skopeo через oci-archive:. При чтении
+// tar skopeo пытается восстановить uid/gid из заголовков и вызывает chown.
+// Контейнер backend работает от непривилегированного пользователя moderation,
+// поэтому публикация обрывается до обращения к Nexus с operation not
+// permitted. Созданные здесь файлы сразу принадлежат текущему пользователю, а
+// transport oci: читает готовый каталог и chown не выполняет.
+func writeOCILayoutDirectory(payload []byte) (string, func(), error) {
 	gz, err := gzip.NewReader(bytes.NewReader(payload))
 	if err != nil {
 		return "", func() {}, fmt.Errorf("OCI layout не является tar.gz: %w", err)
@@ -168,22 +186,67 @@ func writeOCIArchive(payload []byte) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("временный каталог OCI: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
-	name := filepath.Join(dir, "image.oci.tar")
-	f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
-	if err != nil {
-		cleanup()
-		return "", func() {}, err
+
+	tr := tar.NewReader(gz)
+	count := 0
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			cleanup()
+			return "", func() {}, fmt.Errorf("распаковка OCI layout для skopeo: %w", err)
+		}
+		count++
+		if count > maxOCILayoutFiles {
+			cleanup()
+			return "", func() {}, fmt.Errorf("OCI layout содержит больше %d файлов", maxOCILayoutFiles)
+		}
+		name := path.Clean(header.Name)
+		if name == "." || path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
+			cleanup()
+			return "", func() {}, fmt.Errorf("OCI layout содержит недопустимый путь %q", header.Name)
+		}
+		target := filepath.Join(dir, filepath.FromSlash(name))
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				cleanup()
+				return "", func() {}, err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				cleanup()
+				return "", func() {}, err
+			}
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+			if err != nil {
+				cleanup()
+				return "", func() {}, err
+			}
+			_, copyErr := io.Copy(f, tr)
+			closeErr := f.Close()
+			if copyErr != nil || closeErr != nil {
+				cleanup()
+				if copyErr != nil {
+					return "", func() {}, fmt.Errorf("запись %s из OCI layout: %w", name, copyErr)
+				}
+				return "", func() {}, closeErr
+			}
+		default:
+			cleanup()
+			return "", func() {}, fmt.Errorf(
+				"OCI layout содержит неподдерживаемый элемент %q типа %d", header.Name, header.Typeflag)
+		}
 	}
-	if _, err := io.Copy(f, gz); err != nil {
-		f.Close()
-		cleanup()
-		return "", func() {}, fmt.Errorf("распаковка OCI archive для skopeo: %w", err)
+	for _, required := range []string{"oci-layout", "index.json"} {
+		if info, err := os.Stat(filepath.Join(dir, required)); err != nil || !info.Mode().IsRegular() {
+			cleanup()
+			return "", func() {}, fmt.Errorf("OCI layout не содержит %s", required)
+		}
 	}
-	if err := f.Close(); err != nil {
-		cleanup()
-		return "", func() {}, err
-	}
-	return name, cleanup, nil
+	return dir, cleanup, nil
 }
 
 // PublishOCI переносит в hosted Docker repository Nexus исходный index и все
@@ -202,7 +265,7 @@ func (n *Nexus) PublishOCI(ctx context.Context, t Target, layoutTarGz []byte) (s
 		return "", fmt.Errorf("OCI layout содержит index %s вместо указанного в заявке %s",
 			layout.root.Digest, requestedDigest)
 	}
-	source, cleanup, err := writeOCIArchive(layoutTarGz)
+	source, cleanup, err := writeOCILayoutDirectory(layoutTarGz)
 	if err != nil {
 		return "", err
 	}
@@ -215,7 +278,8 @@ func (n *Nexus) PublishOCI(ctx context.Context, t Target, layoutTarGz []byte) (s
 	if insecure {
 		args = append(args, "--dest-tls-verify=false")
 	}
-	args = append(args, "oci-archive:"+source, destination)
+	tag, _ := dockerTagAndDigest(t.Version)
+	args = append(args, "oci:"+source+":"+tag, destination)
 	if _, err := n.runSkopeo(ctx, t, args...); err != nil {
 		return "", fmt.Errorf("публикация multi-platform образа в Nexus: %w", err)
 	}

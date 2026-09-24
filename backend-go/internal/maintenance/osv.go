@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"moderation/internal/artifactstore"
@@ -46,6 +47,10 @@ type OSVConfig struct {
 	// Repo и Path — репозиторий артефактори и путь в нём (Kind=artifactory).
 	Repo string
 	Path string
+	// Snapshots — несколько архивов одного составного индекса. Для
+	// artifactory это отдельные выгрузки PyPI и npm. Если список пуст,
+	// сохраняется совместимость с одиночным Path/URL/File.
+	Snapshots []osv.SnapshotSpec
 	// URL, Token — адрес файла и токен зеркала (Kind=http).
 	URL   string
 	Token string
@@ -87,6 +92,13 @@ func (cfg OSVConfig) location() string {
 	case osv.SourceFile:
 		return cfg.File
 	}
+	if len(cfg.Snapshots) > 0 {
+		paths := make([]string, 0, len(cfg.Snapshots))
+		for _, snapshot := range cfg.Snapshots {
+			paths = append(paths, cfg.Repo+"/"+snapshot.Path)
+		}
+		return strings.Join(paths, ", ")
+	}
 	return cfg.Repo + "/" + cfg.Path
 }
 
@@ -114,7 +126,12 @@ func (s *Service) SyncOSVSnapshot(ctx context.Context, cfg OSVConfig, force bool
 	}
 	index := osv.NewSnapshotIndex(cfg.LocalPath)
 
-	info, err := index.Sync(ctx, src, cfg.Repo, cfg.Path, force)
+	var info *osv.IndexVersion
+	if len(cfg.Snapshots) > 0 {
+		info, err = index.SyncMany(ctx, src, cfg.Repo, cfg.Snapshots, force)
+	} else {
+		info, err = index.Sync(ctx, src, cfg.Repo, cfg.Path, force)
+	}
 	if err != nil {
 		return SyncResult{}, err
 	}

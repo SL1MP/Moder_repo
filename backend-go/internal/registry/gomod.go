@@ -26,7 +26,10 @@ type Go struct {
 func (*Go) Code() string         { return "go" }
 func (*Go) Title() string        { return "Go modules" }
 func (*Go) EntryFormat() string  { return "module@vX.Y.Z" }
-func (*Go) OSVEcosystem() string { return "Go" }
+// OSV в этом сервисе включён только для PyPI и npm: для них администратор
+// публикует отдельные проверенные снапшоты. Остальные менеджеры проходят шаг
+// как неприменимый, а не блокируются из-за отсутствующей базы.
+func (*Go) OSVEcosystem() string { return "" }
 
 // NormalizeName — в базе имя хранится в нижнем регистре ради уникальности
 // сравнения; настоящий путь модуля (с регистром) живёт в DisplayName и именно

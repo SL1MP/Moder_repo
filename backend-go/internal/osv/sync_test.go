@@ -29,6 +29,28 @@ type fakeSource struct {
 	reads    int
 }
 
+type multiSource struct {
+	items map[string]*fakeSource
+}
+
+func (m *multiSource) StatSnapshot(
+	ctx context.Context, repo, path string,
+) (*osv.RemoteSnapshot, error) {
+	item := m.items[path]
+	if item == nil {
+		return nil, nil
+	}
+	return item.StatSnapshot(ctx, repo, path)
+}
+
+func (m *multiSource) ReadSnapshot(ctx context.Context, repo, path string) ([]byte, error) {
+	item := m.items[path]
+	if item == nil {
+		return nil, fmt.Errorf("нет архива %s", path)
+	}
+	return item.ReadSnapshot(ctx, repo, path)
+}
+
 func (f *fakeSource) StatSnapshot(context.Context, string, string) (*osv.RemoteSnapshot, error) {
 	if f.missing {
 		return nil, nil
@@ -121,6 +143,76 @@ func TestSyncDownloadsAndUnpacks(t *testing.T) {
 	}
 	if len(findings) != 1 || findings[0].ExternalID != "GHSA-1" {
 		t.Fatalf("находки по свежему снапшоту: %+v", findings)
+	}
+}
+
+func TestSyncManyCombinesPyPIAndNpmAtomically(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "osv-db")
+	index := osv.NewSnapshotIndex(root)
+	source := &multiSource{items: map[string]*fakeSource{
+		"osv/latest/osv-pypi.zip": newSource(t, map[string]string{
+			"GHSA-PYPI.json": advisory("GHSA-PYPI", "PyPI", "requests", "0", "2.32.0"),
+		}),
+		"osv/latest/osv-npm.zip": newSource(t, map[string]string{
+			"GHSA-NPM.json": advisory("GHSA-NPM", "npm", "lodash", "0", "4.17.22"),
+		}),
+	}}
+	specs := []osv.SnapshotSpec{
+		{Ecosystem: "PyPI", Path: "osv/latest/osv-pypi.zip"},
+		{Ecosystem: "npm", Path: "osv/latest/osv-npm.zip"},
+	}
+
+	info, err := index.SyncMany(context.Background(), source, "osv-snapshots", specs, false)
+	if err != nil {
+		t.Fatalf("SyncMany: %v", err)
+	}
+	if info == nil || info.RecordCount != 2 {
+		t.Fatalf("составной индекс: %+v", info)
+	}
+	for _, tc := range []struct {
+		manager, name, version, advisory string
+	}{
+		{"pypi", "requests", "2.31.0", "GHSA-PYPI"},
+		{"npm", "lodash", "4.17.21", "GHSA-NPM"},
+	} {
+		findings, err := index.Query(context.Background(), tc.manager, tc.name, tc.version)
+		if err != nil || len(findings) != 1 || findings[0].ExternalID != tc.advisory {
+			t.Errorf("%s: находки=%+v, ошибка=%v", tc.manager, findings, err)
+		}
+	}
+
+	again, err := index.SyncMany(context.Background(), source, "osv-snapshots", specs, false)
+	if err != nil || again != nil {
+		t.Fatalf("повторная синхронизация: info=%+v, error=%v", again, err)
+	}
+	if source.items[specs[0].Path].reads != 1 || source.items[specs[1].Path].reads != 1 {
+		t.Errorf("неизменившиеся архивы скачаны повторно")
+	}
+}
+
+func TestSyncManyKeepsPreviousIndexWhenOneArchiveMissing(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "osv-db")
+	index := osv.NewSnapshotIndex(root)
+	full := &multiSource{items: map[string]*fakeSource{
+		"pypi.zip": newSource(t, map[string]string{
+			"one.json": advisory("PYPI-1", "PyPI", "requests", "0", "2.32.0"),
+		}),
+		"npm.zip": newSource(t, map[string]string{
+			"two.json": advisory("NPM-1", "npm", "lodash", "0", "4.17.22"),
+		}),
+	}}
+	specs := []osv.SnapshotSpec{{Ecosystem: "PyPI", Path: "pypi.zip"}, {Ecosystem: "npm", Path: "npm.zip"}}
+	if _, err := index.SyncMany(context.Background(), full, "r", specs, false); err != nil {
+		t.Fatalf("первая синхронизация: %v", err)
+	}
+
+	missing := &multiSource{items: map[string]*fakeSource{"pypi.zip": full.items["pypi.zip"]}}
+	if _, err := index.SyncMany(context.Background(), missing, "r", specs, true); err == nil {
+		t.Fatal("отсутствующий npm-архив должен быть ошибкой")
+	}
+	findings, err := index.Query(context.Background(), "npm", "lodash", "4.17.21")
+	if err != nil || len(findings) != 1 {
+		t.Fatalf("прежний составной индекс потерян: findings=%+v, error=%v", findings, err)
 	}
 }
 

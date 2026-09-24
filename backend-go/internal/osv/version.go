@@ -15,7 +15,7 @@ import (
 
 // Ecosystems — имена экосистем в терминах OSV.
 var Ecosystems = map[string]string{
-	"pypi": "PyPI", "npm": "npm", "go": "Go", "nuget": "NuGet",
+	"pypi": "PyPI", "npm": "npm",
 }
 
 // ManagerByEcosystem — обратное отображение, по нижнему регистру.

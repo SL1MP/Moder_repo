@@ -22,7 +22,7 @@ type NuGet struct {
 func (*NuGet) Code() string         { return "nuget" }
 func (*NuGet) Title() string        { return "NuGet (.NET)" }
 func (*NuGet) EntryFormat() string  { return "Id@version" }
-func (*NuGet) OSVEcosystem() string { return "NuGet" }
+func (*NuGet) OSVEcosystem() string { return "" }
 
 func (*NuGet) NormalizeName(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))

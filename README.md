@@ -298,7 +298,7 @@ curl -sS -X POST http://localhost:8080/api/v1/requests \
 | Артефактори | `ARTIFACT_STORE`, `ARTIFACT_BASE_URL`, `ARTIFACT_REPO_*` | куда публикуем; один инстанс на все менеджеры |
 | Временная зона | `ARTIFACT_REPO_STAGING`, `ARTIFACT_REPO_REPORTS` | где пакет лежит, пока идут проверки, и где живут отчёты |
 | Песочница | `SANDBOX_URL`, `SANDBOX_TOKEN`, `SANDBOX_PRIORITY` | динамическая проверка архива, шаг `sandbox_scan` |
-| Уязвимости | `OSV_SOURCE`, `OSV_SNAPSHOT_PATH`, `OSV_SYNC_CRON`, `OSV_MAX_STALENESS_DAYS` | локальный снапшот OSV, без сети к osv.dev |
+| Уязвимости | `OSV_DB_SOURCE`, `OSV_PYPI_SNAPSHOT_PATH`, `OSV_NPM_SNAPSHOT_PATH`, `OSV_SYNC_INTERVAL_SECONDS`, `OSV_MAX_STALENESS_DAYS` | локальные снапшоты PyPI/npm, без сети к osv.dev |
 | Доступ | `OIDC_*`, `ROLE_MAPPING_*`, `LOCAL_AUTH_ENABLED` | SSO и маппинг групп каталога в роли |
 | GitLab | `GITLAB_*`, `FERNET_KEY` | чтение файлов зависимостей, шифрование токенов |
 | Лимиты | `MAX_UPLOAD_SIZE_BYTES`, `MAX_PACKAGES_PER_REQUEST`, `RATE_LIMIT_REQUESTS_PER_MINUTE` | защита от перегрузки |

@@ -499,10 +499,17 @@ func TestInstallCommands(t *testing.T) {
 
 func TestOSVEcosystems(t *testing.T) {
 	f := &fakeRegistry{responses: map[string]string{}}
-	want := map[string]string{"pypi": "PyPI", "npm": "npm", "go": "Go", "nuget": "NuGet"}
+	want := map[string]string{"pypi": "PyPI", "npm": "npm"}
 	for manager, ecosystem := range want {
 		if got := pluginFor(t, manager, f).OSVEcosystem(); got != ecosystem {
 			t.Errorf("%s: OSVEcosystem = %q, ожидалось %q", manager, got, ecosystem)
+		}
+	}
+	for _, manager := range []string{
+		"go", "nuget", "maven", "docker", "conan", "luarocks", "terraform", "php", "git", "files",
+	} {
+		if got := pluginFor(t, manager, f).OSVEcosystem(); got != "" {
+			t.Errorf("%s: OSV должен быть отключён, получена экосистема %q", manager, got)
 		}
 	}
 }

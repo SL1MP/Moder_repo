@@ -85,8 +85,12 @@ func (c *Config) Catalog() []Setting {
 
 		{Env: "OSV_DB_SOURCE", Section: "Уязвимости",
 			Description: "Откуда берётся снапшот: artifactory | http | file", Value: c.OSVDBSource},
+		{Env: "OSV_PYPI_SNAPSHOT_PATH", Section: "Уязвимости",
+			Description: "Архив OSV для PyPI внутри ARTIFACT_REPO_OSV", Value: c.OSVPyPISnapshotPath},
+		{Env: "OSV_NPM_SNAPSHOT_PATH", Section: "Уязвимости",
+			Description: "Архив OSV для npm внутри ARTIFACT_REPO_OSV", Value: c.OSVNpmSnapshotPath},
 		{Env: "OSV_SNAPSHOT_PATH", Section: "Уязвимости",
-			Description: "Путь к снапшоту внутри ARTIFACT_REPO_OSV", Value: c.OSVSnapshotPath},
+			Description: "Одиночный архив для источников http/file (legacy)", Value: c.OSVSnapshotPath},
 		{Env: "OSV_DB_URL", Section: "Уязвимости",
 			Description: "Адрес снапшота при OSV_DB_SOURCE=http", Value: c.OSVDBURL},
 		{Env: "OSV_DB_FILE", Section: "Уязвимости",

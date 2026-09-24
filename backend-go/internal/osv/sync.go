@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -34,6 +35,14 @@ type RemoteSnapshot struct {
 type SnapshotSource interface {
 	StatSnapshot(ctx context.Context, repo, path string) (*RemoteSnapshot, error)
 	ReadSnapshot(ctx context.Context, repo, path string) ([]byte, error)
+}
+
+// SnapshotSpec — один архив в составном снапшоте. Ecosystem задаёт каталог,
+// в который он распаковывается. Это не даёт одинаковым именам advisory из
+// разных выгрузок перезаписать друг друга.
+type SnapshotSpec struct {
+	Ecosystem string
+	Path      string
 }
 
 // ErrSnapshotMissing — в артефактори нет файла снапшота. Отдельная ошибка:
@@ -152,6 +161,148 @@ func (s *SnapshotIndex) Sync(ctx context.Context, src SnapshotSource, repo, path
 	s.cache = map[string][]Record{}
 	s.mu.Unlock()
 	return info, nil
+}
+
+// SyncMany атомарно собирает один локальный индекс из нескольких архивов.
+// Сейчас сервис использует два: PyPI и npm. Новый каталог становится
+// активным только после успешной проверки и распаковки ОБОИХ архивов, поэтому
+// отсутствие или повреждение одного не превращается в ложное «уязвимостей
+// нет» для соответствующей экосистемы.
+func (s *SnapshotIndex) SyncMany(
+	ctx context.Context, src SnapshotSource, repo string, specs []SnapshotSpec, force bool,
+) (*IndexVersion, error) {
+	if len(specs) == 0 {
+		return nil, errors.New("не заданы архивы составного снапшота OSV")
+	}
+
+	remotes := make([]RemoteSnapshot, len(specs))
+	for i, spec := range specs {
+		if strings.TrimSpace(spec.Path) == "" || strings.TrimSpace(spec.Ecosystem) == "" {
+			return nil, fmt.Errorf("архив OSV #%d: ecosystem и path обязательны", i+1)
+		}
+		if filepath.Base(spec.Ecosystem) != spec.Ecosystem || spec.Ecosystem == "." {
+			return nil, fmt.Errorf("недопустимое имя экосистемы OSV %q", spec.Ecosystem)
+		}
+		remote, err := src.StatSnapshot(ctx, repo, spec.Path)
+		if err != nil {
+			return nil, err
+		}
+		if remote == nil {
+			return nil, fmt.Errorf("%w: %s", ErrSnapshotMissing, snapshotLocation(repo, spec.Path))
+		}
+		remotes[i] = *remote
+	}
+
+	current, err := s.CurrentVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	remoteVersion := knownSetVersion(specs, remotes)
+	if !force && remoteVersion != "" && current != nil && current.Version == remoteVersion {
+		return nil, nil
+	}
+
+	staging := fmt.Sprintf("%s.new-%d", s.Root, os.Getpid())
+	if err := os.RemoveAll(staging); err != nil {
+		return nil, fmt.Errorf("очистка каталога загрузки: %w", err)
+	}
+	if err := os.MkdirAll(staging, 0o755); err != nil {
+		return nil, fmt.Errorf("создание каталога загрузки: %w", err)
+	}
+	failed := true
+	defer func() {
+		if failed {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+
+	aggregate := sha256.New()
+	count := 0
+	paths := make([]string, 0, len(specs))
+	var published time.Time
+	for i, spec := range specs {
+		payload, err := src.ReadSnapshot(ctx, repo, spec.Path)
+		if err != nil {
+			return nil, err
+		}
+		digest := sha256.Sum256(payload)
+		checksum := hex.EncodeToString(digest[:])
+		if len(remotes[i].Checksum) == 64 && !strings.EqualFold(remotes[i].Checksum, checksum) {
+			return nil, fmt.Errorf(
+				"контрольная сумма снапшота OSV %s не совпала: артефактори заявил %s, скачано %s",
+				spec.Path, remotes[i].Checksum, checksum)
+		}
+		writeSetPart(aggregate, spec, checksum)
+		extracted, err := extractSnapshot(payload, filepath.Join(staging, spec.Ecosystem))
+		if err != nil {
+			return nil, fmt.Errorf("архив %s: %w", spec.Path, err)
+		}
+		count += extracted
+		paths = append(paths, spec.Path)
+		modified := remotes[i].LastModified
+		if !modified.IsZero() && (published.IsZero() || modified.Before(published)) {
+			// Для свежести составного индекса важен самый старый архив: новый npm
+			// не должен маскировать давно не обновлявшийся PyPI.
+			published = modified
+		}
+	}
+
+	aggregateChecksum := hex.EncodeToString(aggregate.Sum(nil))
+	version := aggregateChecksum[:16]
+	if remoteVersion != "" {
+		version = remoteVersion
+	}
+	if !force && current != nil && current.Version == version {
+		return nil, nil
+	}
+	if published.IsZero() {
+		published = time.Now().UTC()
+	}
+	info := &IndexVersion{
+		Version: version, Source: s.Source(), Checksum: aggregateChecksum,
+		PublishedAt: &published, RemotePath: strings.Join(paths, ","),
+		RecordCount: count, LocalPath: s.Root,
+	}
+	meta, err := json.Marshal(snapshotMeta{
+		Version: info.Version, Checksum: info.Checksum,
+		PublishedAt: published.UTC().Format(time.RFC3339),
+		RemotePath: info.RemotePath, RecordCount: info.RecordCount,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("метаданные составного снапшота не собраны: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "snapshot.json"), meta, 0o644); err != nil {
+		return nil, fmt.Errorf("запись метаданных составного снапшота: %w", err)
+	}
+	if err := swapDir(s.Root, staging); err != nil {
+		return nil, err
+	}
+	failed = false
+	s.mu.Lock()
+	s.cache = map[string][]Record{}
+	s.mu.Unlock()
+	return info, nil
+}
+
+func knownSetVersion(specs []SnapshotSpec, remotes []RemoteSnapshot) string {
+	h := sha256.New()
+	for i, spec := range specs {
+		partVersion := knownVersion(remotes[i])
+		if partVersion == "" {
+			return ""
+		}
+		writeSetPart(h, spec, partVersion)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+func writeSetPart(w io.Writer, spec SnapshotSpec, checksum string) {
+	_, _ = io.WriteString(w, spec.Ecosystem)
+	_, _ = io.WriteString(w, "\x00")
+	_, _ = io.WriteString(w, spec.Path)
+	_, _ = io.WriteString(w, "\x00")
+	_, _ = io.WriteString(w, checksum)
+	_, _ = io.WriteString(w, "\x00")
 }
 
 // snapshotVersion — как называется версия снапшота. Хеш предпочтительнее даты:

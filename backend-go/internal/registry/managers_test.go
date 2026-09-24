@@ -247,8 +247,7 @@ func TestDownloaderManagers(t *testing.T) {
 // Пустая строка говорит шагу правду: эту экосистему база не покрывает.
 func TestOSVEcosystemIsEmptyWhereBaseHasNone(t *testing.T) {
 	covered := map[string]string{
-		"pypi": "PyPI", "npm": "npm", "go": "Go", "nuget": "NuGet",
-		"maven": "Maven", "php": "Packagist",
+		"pypi": "PyPI", "npm": "npm",
 	}
 	for _, plugin := range newAll(nil).Plugins() {
 		got := plugin.OSVEcosystem()

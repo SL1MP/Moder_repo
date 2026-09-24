@@ -191,7 +191,7 @@
 | Владелец Nexus/Artifactory | `.env` (`ARTIFACT_*`) | создаёт/обслуживает hosted-репозитории; `make bootstrap` создаёт их автоматически при первом старте |
 | Владелец Keycloak/IdP | Keycloak admin console | realm, группы, маппинг на `ROLE_MAPPING_*` |
 | Владелец GitLab-интеграции | GitLab admin/group settings | OAuth-приложение, scope `read_api`/`read_repository` |
-| Владелец снапшота OSV | внешний процесс публикации в `ARTIFACT_REPO_OSV` | публикует `osv-all.zip` по расписанию, сервис только читает |
+| Владелец снапшота OSV | внешний процесс публикации в `ARTIFACT_REPO_OSV` | публикует `osv-pypi.zip` и `osv-npm.zip` по расписанию, сервис только читает |
 | Владелец корпоративного прокси | `.env` (`HTTP_PROXY`/`NO_PROXY`) | обслуживает сам прокси вне сервиса |
 | SRE / оператор | Prometheus/Grafana, `make queue-doctor` | наблюдает `/metrics`, диагностирует зависшую очередь |
 | Мигрирующая команда | `moderctl import-package-list` (одноразово) | разовый импорт уже одобренных пакетов, дальше — обычный флоу разработчика |

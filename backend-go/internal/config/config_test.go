@@ -86,6 +86,8 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"artifact_auth_type", cfg.ArtifactAuthType, "basic"},
 		{"artifact_dry_run", cfg.ArtifactDryRun, false},
 		{"osv_local_db_path", cfg.OSVLocalDBPath, "/var/lib/osv-db"},
+		{"osv_pypi_snapshot_path", cfg.OSVPyPISnapshotPath, "osv/latest/osv-pypi.zip"},
+		{"osv_npm_snapshot_path", cfg.OSVNpmSnapshotPath, "osv/latest/osv-npm.zip"},
 		{"registry_pypi_url", cfg.RegistryPyPIURL, "https://pypi.org"},
 		{"registry_npm_url", cfg.RegistryNpmURL, "https://registry.npmjs.org"},
 		{"registry_go_proxy", cfg.RegistryGoProxy, "https://proxy.golang.org"},

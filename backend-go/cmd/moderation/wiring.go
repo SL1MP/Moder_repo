@@ -152,7 +152,7 @@ func newRegistry(cfg *config.Config, httpClient registry.Doer) *registry.Registr
 // (config.Load), и до сюда доходит только допустимое.
 func osvConfig(cfg *config.Config) maintenance.OSVConfig {
 	kind, _ := osv.ParseSourceKind(cfg.OSVDBSource)
-	return maintenance.OSVConfig{
+	result := maintenance.OSVConfig{
 		Kind:      kind,
 		Repo:      cfg.ArtifactRepoOSV,
 		Path:      cfg.OSVSnapshotPath,
@@ -161,6 +161,13 @@ func osvConfig(cfg *config.Config) maintenance.OSVConfig {
 		File:      cfg.OSVDBFile,
 		LocalPath: cfg.OSVLocalDBPath,
 	}
+	if kind == osv.SourceArtifactory {
+		result.Snapshots = []osv.SnapshotSpec{
+			{Ecosystem: "PyPI", Path: cfg.OSVPyPISnapshotPath},
+			{Ecosystem: "npm", Path: cfg.OSVNpmSnapshotPath},
+		}
+	}
+	return result
 }
 
 // pipelineConfig — пороги и переключатели конвейера из конфигурации сервиса.

@@ -36,6 +36,8 @@ ARTIFACT_REPO_DOCKER=docker-internal
 ARTIFACT_DOCKER_REGISTRY_URL=http://nexus:8081/docker-internal
 ARTIFACT_DOCKER_PUBLIC_URL=https://nexus.internal.example.com/docker-internal
 ARTIFACT_REPO_OSV=osv-snapshots
+OSV_PYPI_SNAPSHOT_PATH=osv/latest/osv-pypi.zip
+OSV_NPM_SNAPSHOT_PATH=osv/latest/osv-npm.zip
 ```
 
 Для Docker создайте hosted repository формата Docker. В Nexus 3.83+ включите
@@ -45,7 +47,9 @@ path-based routing: тогда worker публикует в
 Если используется отдельный connector port, оба Docker URL задаются без
 `/docker-internal`, но с соответствующим внутренним/внешним портом.
 
-Публикацию выполняет `skopeo copy --all --preserve-digests`: в Nexus попадают
+Публикацию выполняет `skopeo copy --all --preserve-digests`: перед запуском
+архив staging безопасно распаковывается приложением в OCI layout, чтобы
+непривилегированному пользователю контейнера не требовался `chown`. В Nexus попадают
 исходный multi-platform index, manifests всех платформ, configs и layers.
 `.oci.tar.gz` остаётся только временным транспортным форматом staging и после
 успешной публикации удаляется; разработчик его не скачивает.
@@ -85,7 +89,8 @@ ARTIFACT_PATH_TEMPLATE_NUGET={repo}/{name}/{version}/{filename}
 Для остальных менеджеров публикация — `PUT` по собранному из шаблона пути с
 заголовком `X-Checksum-Sha256`. Тот же адаптер читает произвольный файл
 (`read_file`/`stat_file`) — через него забирается снапшот OSV, поэтому
-`ARTIFACT_REPO_OSV` и `OSV_SNAPSHOT_PATH` работают одинаково для обеих реализаций.
+`ARTIFACT_REPO_OSV`, `OSV_PYPI_SNAPSHOT_PATH` и
+`OSV_NPM_SNAPSHOT_PATH` работают одинаково для обеих реализаций.
 
 ### Добавление третьей реализации
 

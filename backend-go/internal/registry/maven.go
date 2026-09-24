@@ -36,7 +36,7 @@ type Maven struct {
 func (*Maven) Code() string         { return "maven" }
 func (*Maven) Title() string        { return "Maven (Java)" }
 func (*Maven) EntryFormat() string  { return "groupId:artifactId:version" }
-func (*Maven) OSVEcosystem() string { return "Maven" }
+func (*Maven) OSVEcosystem() string { return "" }
 
 // NormalizeName — регистр значим: Maven различает com.Foo и com.foo, и
 // приведение к нижнему регистру склеило бы разные пакеты в один.

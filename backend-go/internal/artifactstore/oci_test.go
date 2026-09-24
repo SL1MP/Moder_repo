@@ -156,15 +156,18 @@ func TestNexusPublishesEveryPlatformWithSkopeoAll(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
 	authFile := filepath.Join(dir, "auth.json")
+	runtimeFile := filepath.Join(dir, "runtime")
 	script := filepath.Join(dir, "skopeo")
 	if err := os.WriteFile(script, []byte(`#!/bin/sh
 printf '%s\n' "$@" > "$FAKE_SKOPEO_ARGS"
 if [ -n "$REGISTRY_AUTH_FILE" ]; then cp "$REGISTRY_AUTH_FILE" "$FAKE_SKOPEO_AUTH"; fi
+printf '%s' "$XDG_RUNTIME_DIR" > "$FAKE_SKOPEO_RUNTIME"
 `), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FAKE_SKOPEO_ARGS", argsFile)
 	t.Setenv("FAKE_SKOPEO_AUTH", authFile)
+	t.Setenv("FAKE_SKOPEO_RUNTIME", runtimeFile)
 
 	store, err := New(Config{
 		Kind: KindNexus, BaseURL: "http://nexus:8081",
@@ -201,11 +204,39 @@ if [ -n "$REGISTRY_AUTH_FILE" ]; then cp "$REGISTRY_AUTH_FILE" "$FAKE_SKOPEO_AUT
 	if strings.Contains(args, "library/postgres") || strings.Contains(args, "secret") {
 		t.Errorf("в destination попал внешний namespace или секрет: %s", args)
 	}
+	if !strings.Contains(args, "oci:/tmp/moderation-oci-") || strings.Contains(args, "oci-archive:") {
+		t.Errorf("источник должен быть распакованным OCI layout без chown, аргументы:\n%s", args)
+	}
 	rawAuth, err := os.ReadFile(authFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(rawAuth), "secret") || !strings.Contains(string(rawAuth), "nexus:8081") {
 		t.Errorf("auth-файл сформирован небезопасно или для неверного registry: %s", rawAuth)
+	}
+	runtimeDir, err := os.ReadFile(runtimeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(runtimeDir), "moderation-skopeo-runtime-") {
+		t.Errorf("skopeo не получил доступный XDG_RUNTIME_DIR: %q", runtimeDir)
+	}
+}
+
+func TestWriteOCILayoutDirectoryDoesNotRestoreTarOwnership(t *testing.T) {
+	payload, _ := testOCILayout(t) // заголовки tar имеют uid/gid=0
+	dir, cleanup, err := writeOCILayoutDirectory(payload)
+	if err != nil {
+		t.Fatalf("writeOCILayoutDirectory: %v", err)
+	}
+	defer cleanup()
+	for _, name := range []string{"oci-layout", "index.json"} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("%s не распакован: %v", name, err)
+		}
+		if !info.Mode().IsRegular() {
+			t.Errorf("%s имеет тип %s, ожидался обычный файл", name, info.Mode())
+		}
 	}
 }

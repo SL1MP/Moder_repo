@@ -199,6 +199,9 @@ type Config struct {
 	// Откуда берётся снапшот при OSV_DB_SOURCE=artifactory.
 	ArtifactRepoOSV string
 	OSVSnapshotPath string
+	// Раздельные архивы для единственных поддерживаемых OSV-экосистем.
+	OSVPyPISnapshotPath string
+	OSVNpmSnapshotPath  string
 	// OSVDBURL — адрес файла при OSV_DB_SOURCE=http.
 	OSVDBURL string
 	// OSVDBToken — токен внутреннего зеркала, уходит заголовком Authorization.
@@ -366,6 +369,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		OSVDBFile:       strings.TrimSpace(getenv("OSV_DB_FILE")),
 		ArtifactRepoOSV: valueOr(getenv("ARTIFACT_REPO_OSV"), "osv-snapshots"),
 		OSVSnapshotPath: valueOr(getenv("OSV_SNAPSHOT_PATH"), "osv/latest/osv-all.zip"),
+		OSVPyPISnapshotPath: valueOr(getenv("OSV_PYPI_SNAPSHOT_PATH"),
+			"osv/latest/osv-pypi.zip"),
+		OSVNpmSnapshotPath: valueOr(getenv("OSV_NPM_SNAPSHOT_PATH"),
+			"osv/latest/osv-npm.zip"),
 		OSVSyncInterval: secondsOr(getenv("OSV_SYNC_INTERVAL_SECONDS"), 6*60*60),
 
 		PipelineStuckAfter:       secondsOr(getenv("PIPELINE_STUCK_AFTER_SECONDS"), 120),
