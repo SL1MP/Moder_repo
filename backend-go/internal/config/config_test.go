@@ -86,6 +86,7 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"registry_pypi_url", cfg.RegistryPyPIURL, "https://pypi.org"},
 		{"registry_npm_url", cfg.RegistryNpmURL, "https://registry.npmjs.org"},
 		{"registry_go_proxy", cfg.RegistryGoProxy, "https://proxy.golang.org"},
+		{"registry_go_license_url", cfg.RegistryGoLicenseURL, "https://pkg.go.dev"},
 		{"registry_nuget_url", cfg.RegistryNuGetURL, "https://api.nuget.org"},
 	}
 	for _, c := range cases {
