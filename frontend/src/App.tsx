@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
 import { Alert, Loader } from './components/ui'
-import { api, configureApi, type AuthConfig, type Me } from './lib/api'
+import { api, ApiError, configureApi, type AuthConfig, type Me } from './lib/api'
 import {
   clearSession,
   completeLogin,
@@ -28,6 +28,7 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(() => loadSession())
   const [me, setMe] = useState<Me | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [authRetry, setAuthRetry] = useState(0)
   const [counters, setCounters] = useState<Record<string, number>>({})
   const location = useLocation()
 
@@ -50,11 +51,32 @@ export default function App() {
       setMe(null)
       return
     }
-    api
-      .me()
-      .then(setMe)
-      .catch((exc: Error) => setError(exc.message))
-  }, [session])
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+
+    api.me().then(
+      (profile) => {
+        if (cancelled) return
+        setMe(profile)
+        setError(null)
+      },
+      (exc: Error) => {
+        if (cancelled) return
+        setError(exc.message)
+        // 429 не означает, что сессия пропала. Остаёмся на экране проверки
+        // сессии и повторяем запрос в срок, указанный сервером, вместо показа
+        // формы входа и провоцирования новых SSO-переходов.
+        if (exc instanceof ApiError && exc.status === 429 && exc.retryAfter) {
+          retryTimer = setTimeout(() => setAuthRetry((value) => value + 1), exc.retryAfter * 1000)
+        }
+      },
+    )
+
+    return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+    }
+  }, [session, authRetry])
 
   // Продление токена до истечения срока.
   useEffect(() => {
@@ -83,6 +105,19 @@ export default function App() {
 
   if (!config) {
     return <div className="content">{error ? <Alert kind="error">{error}</Alert> : <Loader />}</div>
+  }
+
+  if (session && !me) {
+    return (
+      <div className="content login">
+        <h1>{config.app_name}</h1>
+        {error ? <Alert kind="error">{error}</Alert> : null}
+        <div className="card">
+          <Loader text={error ? 'Ожидаем повторной проверки сессии…' : 'Проверяем сессию…'} />
+          {error ? <button onClick={() => setAuthRetry((value) => value + 1)}>Повторить сейчас</button> : null}
+        </div>
+      </div>
+    )
   }
 
   if (!session || !me) {
