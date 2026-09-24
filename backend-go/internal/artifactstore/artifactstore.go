@@ -126,6 +126,17 @@ type Config struct {
 	Token    string
 	Username string
 	Password string
+	// DockerRegistryURL — полный префикс Docker Registry, в который Nexus
+	// принимает push. Для path-based routing это, например,
+	// http://nexus:8081/docker-internal; для отдельного connector port —
+	// http://nexus:5000. Пустое значение выводится из BaseURL и Target.Repo.
+	DockerRegistryURL string
+	// DockerPublicURL — тот же префикс с точки зрения разработчика. Он может
+	// отличаться от внутреннего адреса, по которому worker публикует образ.
+	DockerPublicURL string
+	// SkopeoBinary переопределяется в тестах. В рабочем образе используется
+	// установленный /usr/bin/skopeo.
+	SkopeoBinary string
 	// DryRun — весь конвейер выполняется по-настоящему (реальное скачивание,
 	// реальные сканеры), но в целевой артефактори реальные байты не пишутся.
 	// Проверяется только достижимость и авторизация.
@@ -139,6 +150,11 @@ func New(cfg Config) (Store, error) {
 		return nil, fmt.Errorf("ARTIFACT_BASE_URL не задан")
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
+	cfg.DockerRegistryURL = strings.TrimRight(strings.TrimSpace(cfg.DockerRegistryURL), "/")
+	cfg.DockerPublicURL = strings.TrimRight(strings.TrimSpace(cfg.DockerPublicURL), "/")
+	if strings.TrimSpace(cfg.SkopeoBinary) == "" {
+		cfg.SkopeoBinary = "skopeo"
+	}
 	if cfg.AuthType == "" {
 		cfg.AuthType = AuthToken
 	}

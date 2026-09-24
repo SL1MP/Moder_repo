@@ -37,7 +37,7 @@ ARG INSTALL_SEMGREP=true
 # (там yara-python, cgo-биндинг) здесь используется тот же бинарь, что и для
 # semgrep: два внешних сканера запускаются единообразно.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl yara python3 python3-pip \
+ && apt-get install -y --no-install-recommends ca-certificates curl skopeo yara python3 python3-pip \
  && rm -rf /var/lib/apt/lists/*
 
 # semgrep — шаг SAST. Ставится отдельно и НЕ фатально: без него шаг честно
@@ -48,8 +48,8 @@ RUN if [ "$INSTALL_SEMGREP" = "true" ]; then \
       || echo "semgrep не установлен: шаг SAST будет требовать решения DevSecOps"; \
     fi
 
-# Непривилегированный пользователь: сервис ничего не пишет на диск, кроме
-# временных каталогов распаковки.
+# Непривилегированный пользователь: сервис пишет только во временные каталоги
+# распаковки/сканирования и временный OCI archive для skopeo.
 RUN useradd -u 10001 -m moderation
 USER moderation
 

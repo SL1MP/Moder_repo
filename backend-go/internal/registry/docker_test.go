@@ -204,6 +204,10 @@ func TestDockerCorporatePublicationReference(t *testing.T) {
 	if got := plugin.InstallCommand(ref, "https://repo.ptsecurity.ru:443/artifactory", "docker"); got != want {
 		t.Fatalf("InstallCommand = %q, ожидалась %q", got, want)
 	}
+	wantNexus := "docker pull nexus.ptsecurity.ru/docker-internal/postgres:14.23@" + digest
+	if got := plugin.InstallCommand(ref, "https://nexus.ptsecurity.ru/docker-internal", ""); got != wantNexus {
+		t.Fatalf("InstallCommand для Nexus = %q, ожидалась %q", got, wantNexus)
+	}
 	if got := plugin.ArtifactPath(ref, "image.oci.tar.gz"); !strings.HasPrefix(got, "postgres/") {
 		t.Fatalf("ArtifactPath = %q, namespace library попал во внутренний путь", got)
 	}

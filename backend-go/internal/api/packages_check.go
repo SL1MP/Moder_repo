@@ -149,8 +149,9 @@ func (h *PackagesHandler) checkOne(
 	case found.Status == "approved":
 		payload["state"] = "approved"
 		payload["message"] = "Одобрен — можно ставить из внутреннего репозитория."
+		installBaseURL, installRepo := h.Cfg.ArtifactInstallLocation(ref.Manager)
 		payload["install_command"] = plugin.InstallCommand(
-			ref, h.Cfg.ArtifactBaseURL, h.Cfg.ArtifactRepo(ref.Manager))
+			ref, installBaseURL, installRepo)
 
 	case domain.Contains(domain.PendingVersionStatuses, found.Status):
 		// Заявка уже есть — подсказываем её номер, чтобы не заводили вторую.

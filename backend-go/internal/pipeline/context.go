@@ -54,8 +54,9 @@ type Config struct {
 
 	// ArtifactBaseURL и ArtifactRepos — адрес артефактори и репозиторий на
 	// каждый менеджер (ключ — код менеджера).
-	ArtifactBaseURL string
-	ArtifactRepos   map[string]string
+	ArtifactBaseURL         string
+	ArtifactDockerPublicURL string
+	ArtifactRepos           map[string]string
 }
 
 // ArtifactRepo — целевой репозиторий артефактори для менеджера.
@@ -64,6 +65,13 @@ func (c Config) ArtifactRepo(manager string) string {
 		return repoName
 	}
 	return manager + "-internal"
+}
+
+func (c Config) ArtifactInstallLocation(manager string) (baseURL, repo string) {
+	if manager == "docker" && c.ArtifactDockerPublicURL != "" {
+		return c.ArtifactDockerPublicURL, ""
+	}
+	return c.ArtifactBaseURL, c.ArtifactRepo(manager)
 }
 
 // Deps — внешние зависимости конвейера. Все интерфейсы: конвейер не знает, что

@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -146,5 +148,64 @@ func TestGenericPublishesEveryPlatformAsNativeOCI(t *testing.T) {
 	}
 	if strings.Contains(published, "/artifactory/") || !strings.Contains(published, "/docker-internal/postgres:14.23@") {
 		t.Errorf("ссылка docker pull сформирована неверно: %s", published)
+	}
+}
+
+func TestNexusPublishesEveryPlatformWithSkopeoAll(t *testing.T) {
+	layout, indexDigest := testOCILayout(t)
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	authFile := filepath.Join(dir, "auth.json")
+	script := filepath.Join(dir, "skopeo")
+	if err := os.WriteFile(script, []byte(`#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_SKOPEO_ARGS"
+if [ -n "$REGISTRY_AUTH_FILE" ]; then cp "$REGISTRY_AUTH_FILE" "$FAKE_SKOPEO_AUTH"; fi
+`), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_SKOPEO_ARGS", argsFile)
+	t.Setenv("FAKE_SKOPEO_AUTH", authFile)
+
+	store, err := New(Config{
+		Kind: KindNexus, BaseURL: "http://nexus:8081",
+		DockerRegistryURL: "http://nexus:8081/docker-internal",
+		DockerPublicURL:   "https://packages.example/docker-internal",
+		Username:          "moderation", Password: "secret", SkopeoBinary: script,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := Target{Repo: "docker-internal", Manager: "docker", Name: "postgres",
+		DisplayName: "postgres", Version: "14.23@" + indexDigest}
+	published, err := store.(OCIPublisher).PublishOCI(context.Background(), target, layout)
+	if err != nil {
+		t.Fatalf("PublishOCI: %v", err)
+	}
+	want := "https://packages.example/docker-internal/postgres:14.23@" + indexDigest
+	if published != want {
+		t.Fatalf("published = %q, ожидался %q", published, want)
+	}
+	rawArgs, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(rawArgs)
+	for _, required := range []string{
+		"copy\n", "--all\n", "--preserve-digests\n", "--dest-tls-verify=false\n",
+		"docker://nexus:8081/docker-internal/postgres:14.23\n",
+	} {
+		if !strings.Contains(args, required) {
+			t.Errorf("в аргументах skopeo нет %q:\n%s", required, args)
+		}
+	}
+	if strings.Contains(args, "library/postgres") || strings.Contains(args, "secret") {
+		t.Errorf("в destination попал внешний namespace или секрет: %s", args)
+	}
+	rawAuth, err := os.ReadFile(authFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rawAuth), "secret") || !strings.Contains(string(rawAuth), "nexus:8081") {
+		t.Errorf("auth-файл сформирован небезопасно или для неверного registry: %s", rawAuth)
 	}
 }

@@ -41,7 +41,12 @@ func (n *Nexus) assetPath(t Target) string {
 	return fmt.Sprintf("%s/%s/%s", t.Name, t.Version, t.Filename)
 }
 
-func (n *Nexus) ArtifactURL(t Target) string { return n.fileURL(t.Repo, n.assetPath(t)) }
+func (n *Nexus) ArtifactURL(t Target) string {
+	if t.Manager == "docker" {
+		return n.nexusOCIReference(t)
+	}
+	return n.fileURL(t.Repo, n.assetPath(t))
+}
 
 func (n *Nexus) StatFile(ctx context.Context, repo, path string) (*RemoteFile, error) {
 	return n.stat(ctx, n.fileURL(repo, path), path)
@@ -52,6 +57,9 @@ func (n *Nexus) ReadFile(ctx context.Context, repo, path string) ([]byte, error)
 }
 
 func (n *Nexus) Exists(ctx context.Context, t Target) (bool, error) {
+	if t.Manager == "docker" {
+		return n.nexusOCIExists(ctx, t)
+	}
 	file, err := n.StatFile(ctx, t.Repo, n.assetPath(t))
 	return file != nil, err
 }
@@ -157,6 +165,9 @@ type nexusSearch struct {
 func (n *Nexus) Delete(ctx context.Context, t Target) (bool, error) {
 	if n.cfg.DryRun {
 		return false, fmt.Errorf("удаление вызвано в режиме dry-run: это ошибка вызывающего кода")
+	}
+	if t.Manager == "docker" {
+		return n.deleteOCI(ctx, t)
 	}
 	search := fmt.Sprintf("%s/service/rest/v1/search?repository=%s&name=%s&version=%s",
 		n.cfg.BaseURL, url.QueryEscape(t.Repo), url.QueryEscape(t.Name), url.QueryEscape(t.Version))

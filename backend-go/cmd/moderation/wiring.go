@@ -27,8 +27,10 @@ import (
 // учётным данным.
 func newArtifactStore(cfg *config.Config, httpClient *http.Client) (artifactstore.Store, error) {
 	return artifactstore.New(artifactstore.Config{
-		Kind:    cfg.ArtifactStore,
-		BaseURL: cfg.ArtifactBaseURL,
+		Kind:              cfg.ArtifactStore,
+		BaseURL:           cfg.ArtifactBaseURL,
+		DockerRegistryURL: cfg.ArtifactDockerRegistryURL,
+		DockerPublicURL:   cfg.ArtifactDockerPublicURL,
 		// Password: тот же токен — так же, как это делалось во всех четырёх
 		// прежних копиях. Artifactory принимает токен и как пароль basic-auth.
 		AuthType: artifactstore.AuthType(cfg.ArtifactAuthType),
@@ -166,8 +168,9 @@ func osvConfig(cfg *config.Config) maintenance.OSVConfig {
 // разный вердикт по одному пакету в зависимости от того, кто его проверил.
 func pipelineConfig(cfg *config.Config) pipeline.Config {
 	return pipeline.Config{
-		ArtifactBaseURL: cfg.ArtifactBaseURL,
-		ArtifactRepos:   cfg.ArtifactRepos,
+		ArtifactBaseURL:         cfg.ArtifactBaseURL,
+		ArtifactDockerPublicURL: cfg.ArtifactDockerPublicURL,
+		ArtifactRepos:           cfg.ArtifactRepos,
 
 		QuarantineDays:             cfg.QuarantineDays,
 		VulnMaxScore:               cfg.VulnMaxScore,

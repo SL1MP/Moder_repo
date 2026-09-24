@@ -90,6 +90,11 @@ type Config struct {
 	// установки одобренного пакета — её показывает карточка пакета и карточка
 	// заявки.
 	ArtifactBaseURL string
+	// ArtifactDockerRegistryURL — внутренний префикс Docker Registry Nexus,
+	// куда worker делает push. ArtifactDockerPublicURL — тот же repository с
+	// точки зрения разработчика; используется в готовой команде docker pull.
+	ArtifactDockerRegistryURL string
+	ArtifactDockerPublicURL   string
 	// ArtifactRepos — репозиторий на каждый менеджер, ключ — код менеджера.
 	// Читается из ARTIFACT_REPO_{МЕНЕДЖЕР}, по умолчанию «{менеджер}-internal».
 	//
@@ -292,8 +297,10 @@ func Load(getenv func(string) string) (*Config, error) {
 		VulnMaxScore:        floatOr(getenv("VULN_MAX_SCORE"), 80),
 		OSVMaxStalenessDays: intOr(getenv("OSV_MAX_STALENESS_DAYS"), 3),
 
-		ArtifactBaseURL: valueOr(getenv("ARTIFACT_BASE_URL"), "http://nexus:8081"),
-		ArtifactRepos:   artifactRepos(getenv),
+		ArtifactBaseURL:           valueOr(getenv("ARTIFACT_BASE_URL"), "http://nexus:8081"),
+		ArtifactDockerRegistryURL: strings.TrimRight(strings.TrimSpace(getenv("ARTIFACT_DOCKER_REGISTRY_URL")), "/"),
+		ArtifactDockerPublicURL:   strings.TrimRight(strings.TrimSpace(getenv("ARTIFACT_DOCKER_PUBLIC_URL")), "/"),
+		ArtifactRepos:             artifactRepos(getenv),
 
 		RegistryPyPIURL:      valueOr(getenv("REGISTRY_PYPI_URL"), "https://pypi.org"),
 		RegistryNpmURL:       valueOr(getenv("REGISTRY_NPM_URL"), "https://registry.npmjs.org"),
@@ -583,6 +590,16 @@ func artifactRepos(getenv func(string) string) map[string]string {
 // строка — менеджер неизвестен.
 func (c *Config) ArtifactRepo(manager string) string {
 	return c.ArtifactRepos[manager]
+}
+
+// ArtifactInstallLocation возвращает аргументы Plugin.InstallCommand. Для
+// Docker явно заданный public URL уже содержит имя Nexus repository (или
+// connector port), поэтому второй раз добавлять ARTIFACT_REPO_DOCKER нельзя.
+func (c *Config) ArtifactInstallLocation(manager string) (baseURL, repo string) {
+	if manager == "docker" && c.ArtifactDockerPublicURL != "" {
+		return c.ArtifactDockerPublicURL, ""
+	}
+	return c.ArtifactBaseURL, c.ArtifactRepo(manager)
 }
 
 // RoleForGroup — роль сервиса по группе каталога. Пустая строка — группа не

@@ -573,10 +573,14 @@ func (p *Docker) InstallCommand(ref Ref, baseURL, repo string) string {
 	baseURL = strings.TrimSuffix(strings.TrimRight(baseURL, "/"), "/artifactory")
 	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
 	name := PublishedName(ref.Manager, ref.Name)
-	if tag, digest, pinned := splitDockerVersion(ref.RawVersion); pinned {
-		return fmt.Sprintf("docker pull %s/%s/%s:%s@%s", host, repo, name, tag, digest)
+	prefix := strings.TrimRight(host, "/")
+	if strings.Trim(repo, "/") != "" {
+		prefix += "/" + strings.Trim(repo, "/")
 	}
-	return fmt.Sprintf("docker pull %s/%s/%s:%s", host, repo, name, ref.RawVersion)
+	if tag, digest, pinned := splitDockerVersion(ref.RawVersion); pinned {
+		return fmt.Sprintf("docker pull %s/%s:%s@%s", prefix, name, tag, digest)
+	}
+	return fmt.Sprintf("docker pull %s/%s:%s", prefix, name, ref.RawVersion)
 }
 
 func (p *Docker) ArtifactPath(ref Ref, filename string) string {

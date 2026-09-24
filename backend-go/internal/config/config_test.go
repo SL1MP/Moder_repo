@@ -54,6 +54,8 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"max_upload_size_bytes", cfg.MaxUploadSizeBytes, int64(5 * 1024 * 1024)},
 		{"max_packages_per_request", cfg.MaxPackagesPerRequest, 200},
 		{"artifact_base_url", cfg.ArtifactBaseURL, "http://nexus:8081"},
+		{"artifact_docker_registry_url", cfg.ArtifactDockerRegistryURL, ""},
+		{"artifact_docker_public_url", cfg.ArtifactDockerPublicURL, ""},
 		{"artifact_repo_pypi", cfg.ArtifactRepo("pypi"), "pypi-internal"},
 		{"artifact_repo_npm", cfg.ArtifactRepo("npm"), "npm-internal"},
 		{"artifact_repo_go", cfg.ArtifactRepo("go"), "go-internal"},
@@ -95,6 +97,31 @@ func TestDefaultsMatchPython(t *testing.T) {
 			t.Errorf("%s = %v, у python-версии %v — один .env дал бы разный вердикт",
 				c.name, c.got, c.want)
 		}
+	}
+}
+
+func TestDockerInstallLocationUsesPublicRegistryPrefix(t *testing.T) {
+	cfg, err := Load(func(key string) string {
+		switch key {
+		case "DATABASE_URL":
+			return "postgres://localhost/x"
+		case "ARTIFACT_BASE_URL":
+			return "http://nexus:8081"
+		case "ARTIFACT_DOCKER_PUBLIC_URL":
+			return "https://packages.example/docker-internal/"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, repo := cfg.ArtifactInstallLocation("docker")
+	if base != "https://packages.example/docker-internal" || repo != "" {
+		t.Fatalf("Docker install location = (%q, %q)", base, repo)
+	}
+	base, repo = cfg.ArtifactInstallLocation("pypi")
+	if base != "http://nexus:8081" || repo != "pypi-internal" {
+		t.Fatalf("PyPI install location = (%q, %q)", base, repo)
 	}
 }
 

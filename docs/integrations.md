@@ -18,9 +18,10 @@
 ### Sonatype Nexus (значение по умолчанию в коде — не то, что использует production)
 
 Один инстанс на все менеджеры: hosted-репозиторий на каждый (`ARTIFACT_REPO_PYPI`,
-`ARTIFACT_REPO_NPM`, `ARTIFACT_REPO_GO`, `ARTIFACT_REPO_NUGET`) плюс raw-репозиторий со снапшотами
-OSV (`ARTIFACT_REPO_OSV`). Управление — через Nexus REST API (`/service/rest/v1/...`),
-аутентификация basic (`ARTIFACT_USER`/`ARTIFACT_TOKEN`).
+`ARTIFACT_REPO_NPM`, `ARTIFACT_REPO_GO`, `ARTIFACT_REPO_NUGET`,
+`ARTIFACT_REPO_DOCKER`) плюс raw-репозиторий со снапшотами OSV (`ARTIFACT_REPO_OSV`).
+Обычные пакеты публикуются через Nexus REST API (`/service/rest/v1/...`), Docker —
+через Registry API v2. Аутентификация — `ARTIFACT_USER`/`ARTIFACT_TOKEN`.
 
 ```bash
 ARTIFACT_STORE=nexus
@@ -31,8 +32,23 @@ ARTIFACT_REPO_PYPI=pypi-internal
 ARTIFACT_REPO_NPM=npm-internal
 ARTIFACT_REPO_GO=go-internal
 ARTIFACT_REPO_NUGET=nuget-internal
+ARTIFACT_REPO_DOCKER=docker-internal
+ARTIFACT_DOCKER_REGISTRY_URL=http://nexus:8081/docker-internal
+ARTIFACT_DOCKER_PUBLIC_URL=https://nexus.internal.example.com/docker-internal
 ARTIFACT_REPO_OSV=osv-snapshots
 ```
+
+Для Docker создайте hosted repository формата Docker. В Nexus 3.83+ включите
+path-based routing: тогда worker публикует в
+`ARTIFACT_DOCKER_REGISTRY_URL`, а разработчик получает команду вида
+`docker pull nexus.internal.example.com/docker-internal/postgres:14.23@sha256:...`.
+Если используется отдельный connector port, оба Docker URL задаются без
+`/docker-internal`, но с соответствующим внутренним/внешним портом.
+
+Публикацию выполняет `skopeo copy --all --preserve-digests`: в Nexus попадают
+исходный multi-platform index, manifests всех платформ, configs и layers.
+`.oci.tar.gz` остаётся только временным транспортным форматом staging и после
+успешной публикации удаляется; разработчик его не скачивает.
 
 Если Nexus у заказчика уже есть, свой контейнер не поднимается: не указывайте
 `--profile nexus`, укажите внешний `ARTIFACT_BASE_URL`. Репозитории `make bootstrap` создаёт

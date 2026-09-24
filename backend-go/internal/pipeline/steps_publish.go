@@ -65,7 +65,8 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	ref := pc.Ref()
 	repoName := pc.Config.ArtifactRepo(pc.Package.Manager)
 	path := plugin.ArtifactPath(ref, artifact.Filename)
-	command := plugin.InstallCommand(ref, pc.Config.ArtifactBaseURL, repoName)
+	installBaseURL, installRepo := pc.Config.ArtifactInstallLocation(pc.Package.Manager)
+	command := plugin.InstallCommand(ref, installBaseURL, installRepo)
 	// Цель публикации несёт и пакет, и путь: раскладка внутри репозитория
 	// зависит от типа артефактори (Nexus строит её сам по формату), а путь от
 	// плагина — это раскладка Artifactory.
@@ -230,8 +231,7 @@ func publishArtifact(
 		publisher, ok := pc.Deps.Artifacts.(artifactstore.OCIPublisher)
 		if !ok {
 			return "", "", fmt.Errorf(
-				"настроенный артефактори (%s) не поддерживает нативную OCI-публикацию; "+
-					"для Docker используйте JFrog Artifactory с ARTIFACT_STORE=generic",
+				"настроенный артефактори (%s) не поддерживает нативную OCI-публикацию",
 				pc.Deps.Artifacts.Kind())
 		}
 		payload, err := pc.Payload(ctx, artifact)

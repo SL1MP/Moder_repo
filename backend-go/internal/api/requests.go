@@ -281,7 +281,8 @@ func (h *RequestsHandler) installCommand(row repo.VersionRow) string {
 		Manager: row.Manager, Name: row.Name, DisplayName: row.DisplayName,
 		Version: row.Version.Version, RawVersion: row.Version.RawVersion,
 	}
-	return plugin.InstallCommand(ref, h.Cfg.ArtifactBaseURL, h.Cfg.ArtifactRepo(row.Manager))
+	installBaseURL, installRepo := h.Cfg.ArtifactInstallLocation(row.Manager)
+	return plugin.InstallCommand(ref, installBaseURL, installRepo)
 }
 
 // requestSummary — сводка по пакетам заявки. Порт _summary: несколько статусов
