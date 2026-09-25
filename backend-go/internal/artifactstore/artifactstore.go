@@ -51,6 +51,11 @@ type Target struct {
 	DisplayName string
 	Version     string // версия, как её записал разработчик
 	Filename    string
+	// SourceURL — адрес исходного артефакта в публичном реестре. Большинству
+	// форматов он при публикации не нужен. Для Conan из него извлекается
+	// recipe revision: без ревизии загрузка в нативный Conan v2 hosted
+	// repository создаёт неустанавливаемый набор байтов.
+	SourceURL string
 	// Path — путь файла в раскладке generic-артефактори (её задаёт плагин
 	// менеджера). Nexus раскладку строит сам.
 	Path string

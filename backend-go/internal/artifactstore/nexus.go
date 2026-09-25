@@ -3,6 +3,8 @@ package artifactstore
 import (
 	"bytes"
 	"context"
+	"crypto/sha1" //nolint:gosec // обязательная контрольная сумма протокола Conan v2
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,6 +47,11 @@ func (n *Nexus) ArtifactURL(t Target) string {
 	if t.Manager == "docker" {
 		return n.nexusOCIReference(t)
 	}
+	if t.Manager == "conan" {
+		if fileURL, err := n.conanRecipeURL(t); err == nil {
+			return fileURL
+		}
+	}
 	return n.fileURL(t.Repo, n.assetPath(t))
 }
 
@@ -60,6 +67,9 @@ func (n *Nexus) Exists(ctx context.Context, t Target) (bool, error) {
 	if t.Manager == "docker" {
 		return n.nexusOCIExists(ctx, t)
 	}
+	if t.Manager == "conan" {
+		return n.conanExists(ctx, t)
+	}
 	file, err := n.StatFile(ctx, t.Repo, n.assetPath(t))
 	return file != nil, err
 }
@@ -68,6 +78,9 @@ func (n *Nexus) Exists(ctx context.Context, t Target) (bool, error) {
 // та же версия приходит из разных заявок, а подменять байты, по которым уже
 // принято решение, нельзя.
 func (n *Nexus) Publish(ctx context.Context, t Target, data []byte) (string, error) {
+	if t.Manager == "conan" {
+		return n.publishConanRecipe(ctx, t, data)
+	}
 	fileURL := n.ArtifactURL(t)
 	if n.cfg.DryRun {
 		return "", fmt.Errorf("публикация вызвана в режиме dry-run: это ошибка вызывающего кода, " +
@@ -105,6 +118,153 @@ func (n *Nexus) Publish(ctx context.Context, t Target, data []byte) (string, err
 		return "", rejected(n.Kind(), n.assetPath(t), resp.StatusCode, raw)
 	}
 	return fileURL, nil
+}
+
+// conanRecipeURL возвращает адрес recipe archive в нативном Conan v2 API.
+// Components API Nexus не описывает формат загрузки Conan: такие репозитории
+// наполняются тем же протоколом, которым пользуется команда `conan upload`.
+func (n *Nexus) conanRecipeURL(t Target) (string, error) {
+	revision, err := conanRevision(t.SourceURL)
+	if err != nil {
+		return "", err
+	}
+	return n.fileURL(t.Repo, fmt.Sprintf(
+		"v2/conans/%s/%s/_/_/revisions/%s/files/conan_export.tgz",
+		url.PathEscape(t.Name), url.PathEscape(t.Version), url.PathEscape(revision))), nil
+}
+
+// conanRevision достаёт неизменяемую ревизию рецепта из URL ConanCenter:
+// .../revisions/{rrev}/files/conan_export.tgz.
+func conanRevision(sourceURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(sourceURL))
+	if err != nil || parsed.Path == "" {
+		return "", fmt.Errorf("Conan recipe revision не определена: некорректный source URL %q", sourceURL)
+	}
+	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	for i := 0; i+2 < len(parts); i++ {
+		if parts[i] != "revisions" || parts[i+2] != "files" {
+			continue
+		}
+		revision, unescapeErr := url.PathUnescape(parts[i+1])
+		if unescapeErr == nil && revision != "" && !strings.ContainsAny(revision, "/\\") {
+			return revision, nil
+		}
+	}
+	return "", fmt.Errorf("Conan recipe revision не найдена в source URL %q", sourceURL)
+}
+
+// publishConanRecipe загружает уже проверенный conan_export.tgz без запуска
+// conanfile.py. Вызов conan export здесь был бы опасен: рецепт — чужой Python-
+// код и может выполнить произвольные действия ещё до помещения в Nexus.
+func (n *Nexus) publishConanRecipe(ctx context.Context, t Target, data []byte) (string, error) {
+	fileURL, err := n.conanRecipeURL(t)
+	if err != nil {
+		return "", err
+	}
+	if n.cfg.DryRun {
+		return "", fmt.Errorf("публикация вызвана в режиме dry-run: это ошибка вызывающего кода")
+	}
+	token, err := n.conanToken(ctx, t.Repo)
+	if err != nil {
+		return "", err
+	}
+	exists, err := n.conanExistsWithToken(ctx, fileURL, token)
+	if err != nil {
+		return "", err
+	}
+	if exists {
+		return fileURL, nil
+	}
+	sum := sha1.Sum(data) //nolint:gosec // Conan v2 требует X-Checksum-Sha1
+	headers := map[string]string{
+		"Content-Type":    "application/gzip",
+		"X-Checksum-Sha1": hex.EncodeToString(sum[:]),
+	}
+	resp, err := n.doConan(ctx, http.MethodPut, fileURL, data, headers, token)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", rejected(n.Kind(), fileURL, resp.StatusCode, raw)
+	}
+	return fileURL, nil
+}
+
+func (n *Nexus) conanExists(ctx context.Context, t Target) (bool, error) {
+	fileURL, err := n.conanRecipeURL(t)
+	if err != nil {
+		return false, err
+	}
+	token, err := n.conanToken(ctx, t.Repo)
+	if err != nil {
+		return false, err
+	}
+	return n.conanExistsWithToken(ctx, fileURL, token)
+}
+
+func (n *Nexus) conanExistsWithToken(ctx context.Context, fileURL, token string) (bool, error) {
+	resp, err := n.doConan(ctx, http.MethodHead, fileURL, nil, nil, token)
+	if err != nil {
+		return false, err
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode >= 400 {
+		return false, fmt.Errorf("Nexus ответил %d на проверку Conan recipe %s",
+			resp.StatusCode, fileURL)
+	}
+	return true, nil
+}
+
+// conanToken повторяет обязательный шаг аутентификации Conan-клиента. Nexus
+// принимает Basic credentials на /users/authenticate и возвращает bearer-
+// токен, которым подписывается загрузка recipe file.
+func (n *Nexus) conanToken(ctx context.Context, repo string) (string, error) {
+	if n.cfg.AuthType == AuthToken {
+		if token := strings.TrimSpace(n.cfg.Token); token != "" {
+			return token, nil
+		}
+	}
+	authURL := n.fileURL(repo, "v2/users/authenticate")
+	resp, err := n.do(ctx, http.MethodGet, authURL, nil, map[string]string{"Accept": "text/plain"})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode >= 400 {
+		return "", rejected(n.Kind(), authURL, resp.StatusCode, body)
+	}
+	token := strings.TrimSpace(string(body))
+	if token == "" {
+		return "", fmt.Errorf("Nexus вернул пустой токен Conan")
+	}
+	return token, nil
+}
+
+func (n *Nexus) doConan(
+	ctx context.Context, method, requestURL string, body []byte, headers map[string]string, token string,
+) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("сборка запроса Conan к Nexus: %w", err)
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+	req.ContentLength = int64(len(body))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("запрос Conan к Nexus (%s %s): %w", method, requestURL, err)
+	}
+	return resp, nil
 }
 
 // componentForm собирает multipart под формат репозитория. Имя поля с файлом

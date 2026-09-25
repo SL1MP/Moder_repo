@@ -200,6 +200,83 @@ func TestNexusPublishGoModuleAsRaw(t *testing.T) {
 	}
 }
 
+// Conan нельзя загружать через Components API: Nexus ожидает нативный Conan
+// v2 protocol, иначе получившийся файл не виден команде `conan install`.
+func TestNexusPublishConanRecipeThroughV2Protocol(t *testing.T) {
+	const revision = "0123456789abcdef0123456789abcdef"
+	var authenticated, uploaded bool
+	store := newStore(t, artifactstore.Config{
+		Kind: artifactstore.KindNexus, AuthType: artifactstore.AuthBasic,
+		Username: "moderation", Password: "secret",
+	}, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repository/conan-internal/v2/users/authenticate":
+			user, password, ok := r.BasicAuth()
+			if !ok || user != "moderation" || password != "secret" {
+				t.Errorf("Basic auth = %q/%q, ok=%v", user, password, ok)
+			}
+			authenticated = true
+			_, _ = w.Write([]byte("conan-jwt"))
+		case strings.HasSuffix(r.URL.Path,
+			"/v2/conans/boost/1.91.0/_/_/revisions/"+revision+"/files/conan_export.tgz"):
+			if r.Header.Get("Authorization") != "Bearer conan-jwt" {
+				t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+			}
+			if r.Method == http.MethodHead {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if r.Method != http.MethodPut {
+				t.Errorf("метод = %s, ожидался PUT", r.Method)
+			}
+			body, _ := io.ReadAll(r.Body)
+			if string(body) != "recipe-bytes" {
+				t.Errorf("тело = %q", body)
+			}
+			if len(r.Header.Get("X-Checksum-Sha1")) != 40 {
+				t.Errorf("X-Checksum-Sha1 = %q", r.Header.Get("X-Checksum-Sha1"))
+			}
+			uploaded = true
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Errorf("неожиданный запрос %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	target := artifactstore.Target{
+		Repo: "conan-internal", Manager: "conan", Name: "boost", DisplayName: "boost",
+		Version: "1.91.0", Filename: "boost-1.91.0-0123456789ab.tgz",
+		SourceURL: "https://center2.conan.io/v2/conans/boost/1.91.0/_/_/revisions/" +
+			revision + "/files/conan_export.tgz",
+	}
+	gotURL, err := store.Publish(context.Background(), target, []byte("recipe-bytes"))
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if !authenticated || !uploaded {
+		t.Fatalf("authenticated=%v uploaded=%v", authenticated, uploaded)
+	}
+	if !strings.Contains(gotURL, "/repository/conan-internal/v2/conans/boost/1.91.0/") {
+		t.Errorf("URL = %q", gotURL)
+	}
+}
+
+func TestNexusConanPublishRequiresRecipeRevision(t *testing.T) {
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindNexus},
+		func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("без recipe revision сетевого запроса быть не должно")
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+	_, err := store.Publish(context.Background(), artifactstore.Target{
+		Repo: "conan-internal", Manager: "conan", Name: "boost", Version: "1.91.0",
+		SourceURL: "https://center2.conan.io/not-a-revision/conan_export.tgz",
+	}, []byte("recipe"))
+	if err == nil || !strings.Contains(err.Error(), "recipe revision") {
+		t.Fatalf("ошибка = %v", err)
+	}
+}
+
 // Параллельный прогон мог опубликовать ту же версию — это не ошибка.
 func TestNexusPublishIsIdempotentOnConflict(t *testing.T) {
 	uploads := 0

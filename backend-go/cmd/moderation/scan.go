@@ -23,7 +23,7 @@ import (
 	"moderation/internal/storage"
 )
 
-// Команда `moderation scan --item N` — прогон сканеров содержимого по пакету
+// Команда `moderation scan --item N` — повторный прогон сканеров по пакету
 // УЖЕ СУЩЕСТВУЮЩЕЙ заявки и запись отчётов.
 //
 // Зачем она есть: REST API создания заявок на Go ещё не перенесён, заявки
@@ -168,7 +168,13 @@ func scanOne(ctx context.Context, r *repo.Repo, st *stores, cfg *config.Config, 
 		return fmt.Errorf("артефакт не получен: %w", err)
 	}
 
-	for _, step := range []pipeline.Step{pipeline.BannerScanStep, pipeline.SastScanStep} {
+	// Sandbox включён здесь не только для ручного запуска. Наблюдатель вызывает
+	// эту же функцию и восстанавливает отчёт, если внешний сервис уже вернул
+	// вердикт, но запись scan_report сорвалась (например, из-за старого
+	// VARCHAR(32) в поле scanner).
+	for _, step := range []pipeline.Step{
+		pipeline.SandboxScanStep{}, pipeline.BannerScanStep, pipeline.SastScanStep,
+	} {
 		outcome, err := step.Run(ctx, pc)
 		if err != nil {
 			return fmt.Errorf("шаг %s: %w", step.Code(), err)

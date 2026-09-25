@@ -19,9 +19,11 @@
 
 Один инстанс на все менеджеры: hosted-репозиторий на каждый (`ARTIFACT_REPO_PYPI`,
 `ARTIFACT_REPO_NPM`, `ARTIFACT_REPO_GO`, `ARTIFACT_REPO_NUGET`,
-`ARTIFACT_REPO_DOCKER`) плюс raw-репозиторий со снапшотами OSV (`ARTIFACT_REPO_OSV`).
+`ARTIFACT_REPO_DOCKER`, `ARTIFACT_REPO_CONAN`) плюс raw-репозиторий со снапшотами OSV
+(`ARTIFACT_REPO_OSV`).
 Обычные пакеты публикуются через Nexus REST API (`/service/rest/v1/...`), Docker —
-через Registry API v2. Аутентификация — `ARTIFACT_USER`/`ARTIFACT_TOKEN`.
+через Registry API v2, Conan — через Conan v2 API. Аутентификация —
+`ARTIFACT_USER`/`ARTIFACT_TOKEN`.
 
 ```bash
 ARTIFACT_STORE=nexus
@@ -33,6 +35,7 @@ ARTIFACT_REPO_NPM=npm-internal
 ARTIFACT_REPO_GO=go-internal
 ARTIFACT_REPO_NUGET=nuget-internal
 ARTIFACT_REPO_DOCKER=docker-internal
+ARTIFACT_REPO_CONAN=conan-internal
 ARTIFACT_DOCKER_REGISTRY_URL=http://nexus:8081/docker-internal
 ARTIFACT_DOCKER_PUBLIC_URL=https://nexus.internal.example.com/docker-internal
 ARTIFACT_REPO_OSV=osv-snapshots
@@ -53,6 +56,18 @@ path-based routing: тогда worker публикует в
 исходный multi-platform index, manifests всех платформ, configs и layers.
 `.oci.tar.gz` остаётся только временным транспортным форматом staging и после
 успешной публикации удаляется; разработчик его не скачивает.
+
+Для Conan создайте **hosted repository формата Conan 2**, а не raw. Сервис
+публикует проверенный `conan_export.tgz` по исходной recipe revision через
+нативный Conan v2 API; Python-код рецепта при публикации не исполняется.
+Модерируется именно рецепт, а не все бинарные `package_id`: набор бинарников
+зависит от compiler/arch/build_type/options и заранее не ограничен. Разработчик
+подключает Nexus и при необходимости собирает бинарник из одобренного рецепта:
+
+```bash
+conan remote add internal https://nexus.internal.example.com/repository/conan-internal
+conan install --requires=boost/1.91.0 -r internal --build=missing
+```
 
 Если Nexus у заказчика уже есть, свой контейнер не поднимается: не указывайте
 `--profile nexus`, укажите внешний `ARTIFACT_BASE_URL`. Репозитории `make bootstrap` создаёт

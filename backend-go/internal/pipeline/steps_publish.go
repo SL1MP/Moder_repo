@@ -74,6 +74,7 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 		Repo: repoName, Manager: ref.Manager, Name: registry.PublishedName(ref.Manager, ref.Name),
 		DisplayName: ref.DisplayName,
 		Version:     ref.RawVersion, Filename: artifact.Filename, Path: path,
+		SourceURL:   deref(artifact.SourceURL),
 	}
 
 	if pc.Deps.Artifacts.DryRun() {
