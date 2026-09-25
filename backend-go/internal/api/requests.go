@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -49,6 +52,7 @@ func MountRequests(r chi.Router, h *RequestsHandler, a *Auth) {
 		}
 		if h.Queue != nil {
 			sub.Post("/{requestID}/retry", h.Retry)
+			sub.Post("/{requestID}/items/{itemID}/retry", h.RetryItem)
 		}
 		sub.Post("/{requestID}/cancel", h.Cancel)
 	})
@@ -226,6 +230,7 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 			"vulnerabilities":    vulnerabilityViews(vulns[item.PackageVersionID], false),
 			"code_findings":      codeFindingViews(findings[item.PackageVersionID]),
 			"steps":              stepViews(itemSteps),
+			"can_restart":        h.canRestartItem(r, req, &item),
 		}
 		// Дерево зависимостей: кто притащил этот пакет и по какому требованию.
 		// Юристу и DevSecOps это меняет разговор: «эта GPL пришла через вот
@@ -244,7 +249,7 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 		}
 	}
 
-	return map[string]any{
+	payload := map[string]any{
 		"request_id":   req.ID,
 		"manager":      req.Manager,
 		"status":       req.Status,
@@ -269,7 +274,32 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 		"updated_at":         req.UpdatedAt,
 		"summary":            requestSummary(len(packages), statusCounts),
 		"packages":           packages,
-	}, nil
+	}
+	payload["can_restart"] = false
+	for _, item := range items {
+		if h.canRestartItem(r, req, &item) {
+			payload["can_restart"] = true
+			break
+		}
+	}
+	return payload, nil
+}
+
+func (h *RequestsHandler) canRestartItem(
+	r *http.Request, req *domain.ModerationRequest, item *domain.RequestItem,
+) bool {
+	user, ok := CurrentUser(r.Context())
+	if !ok || (req.AuthorID != user.ID && !user.HasRole("admin", "devsecops")) {
+		return false
+	}
+	switch item.Status {
+	case "approved", "rejected", "revoked", "blacklisted", "cancelled", "queued":
+		return false
+	case "running":
+		return h.Queue != nil && item.UpdatedAt.Before(time.Now().UTC().Add(-h.Queue.StaleAfter))
+	default:
+		return h.Queue != nil
+	}
 }
 
 func (h *RequestsHandler) installCommand(row repo.VersionRow) string {
@@ -430,7 +460,7 @@ func (h *RequestsHandler) Retry(w http.ResponseWriter, r *http.Request) {
 		// С начала, а не с прежнего шага: причина падения может быть выше по
 		// конвейеру, чем место, где оно проявилось.
 		if h.Queue != nil {
-			if err := h.Queue.Enqueue(r.Context(), item.ID, ""); err != nil {
+			if err := h.Queue.Restart(r.Context(), item.ID, "db_check"); err != nil {
 				writeError(w, r, errInternal("Пакет не поставлен в очередь").Because(err))
 				return
 			}
@@ -450,6 +480,95 @@ func (h *RequestsHandler) Retry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload["restarted"] = restarted
+	writeJSON(w, http.StatusOK, payload)
+}
+
+type retryItemBody struct {
+	FromStep string `json:"from_step"`
+}
+
+// RetryItem — POST /api/v1/requests/{requestID}/items/{itemID}/retry.
+//
+// from_step означает «повторить этот шаг и все следующие». Запуск одного
+// шага в отрыве от последующих был бы опасен: новый результат sandbox или
+// лицензии обязан заново повлиять на решение о публикации.
+func (h *RequestsHandler) RetryItem(w http.ResponseWriter, r *http.Request) {
+	requestID, ok := pathInt64(w, r, "requestID")
+	if !ok {
+		return
+	}
+	itemID, ok := pathInt64(w, r, "itemID")
+	if !ok {
+		return
+	}
+	user, ok := CurrentUser(r.Context())
+	if !ok {
+		writeError(w, r, errInternal("Маршрут перезапуска не закрыт проверкой токена"))
+		return
+	}
+	req, err := h.Repo.GetModerationRequest(r.Context(), requestID)
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось прочитать заявку").Because(err))
+		return
+	}
+	if req == nil {
+		writeError(w, r, errNotFound("Заявка #"+strconv.FormatInt(requestID, 10)+" не найдена"))
+		return
+	}
+	if req.AuthorID != user.ID && !user.HasRole("admin", "devsecops") {
+		writeError(w, r, errForbidden(
+			"Перезапустить проверку может её автор, DevSecOps или администратор"))
+		return
+	}
+	item, err := h.Repo.GetRequestItem(r.Context(), itemID)
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось прочитать пакет заявки").Because(err))
+		return
+	}
+	if item == nil || item.RequestID != requestID {
+		writeError(w, r, errNotFound("Пакет не найден в этой заявке"))
+		return
+	}
+
+	body := retryItemBody{FromStep: "db_check"}
+	if r.Body != nil {
+		err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+		if err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, r, errBadRequest("Тело перезапуска не разобрано как JSON"))
+			return
+		}
+	}
+	if body.FromStep == "" {
+		body.FromStep = "db_check"
+	}
+	if !pipeline.IsActiveStep(body.FromStep) {
+		writeError(w, r, errValidation("Неизвестный или отключённый шаг: "+body.FromStep))
+		return
+	}
+	if err := h.Queue.Restart(r.Context(), itemID, body.FromStep); err != nil {
+		switch {
+		case errors.Is(err, queue.ErrActive):
+			writeError(w, r, errConflict(
+				"Пакет уже проверяется живым воркером. Дождитесь окончания текущего шага или его таймаута."))
+		case errors.Is(err, queue.ErrTerminal):
+			writeError(w, r, errConflict(
+				"Итоговое решение по пакету нельзя отменить техническим перезапуском."))
+		default:
+			writeError(w, r, errInternal("Пакет не поставлен на повторную проверку").Because(err))
+		}
+		return
+	}
+	if _, err := h.Repo.RecomputeRequestStatus(r.Context(), requestID); err != nil {
+		defaultLogger.Printf("[%s] статус заявки #%d не пересчитан: %v",
+			RequestID(r.Context()), requestID, err)
+	}
+	payload, err := h.requestPayload(r, mustReread(r, h, requestID, req))
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось собрать карточку заявки").Because(err))
+		return
+	}
+	payload["restarted_item"] = itemID
+	payload["from_step"] = body.FromStep
 	writeJSON(w, http.StatusOK, payload)
 }
 

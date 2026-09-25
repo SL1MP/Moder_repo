@@ -119,6 +119,7 @@ type conanRecipeLocation struct {
 	FilesURL    string
 	ArchiveURL  string
 	RecipeURL   string
+	Files       []string
 }
 
 // recipePath — путь рецепта в API conan. Канал общий, поэтому «_/_».
@@ -138,7 +139,7 @@ func (p *Conan) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 		ArtifactURL: location.ArchiveURL,
 		// Ревизия — в имени файла: по нему в артефактори видно, какое именно
 		// содержимое промодерировано.
-		ArtifactFilename: fmt.Sprintf("%s-%s-%s.tgz",
+		ArtifactFilename: fmt.Sprintf("%s-%s-%s.conan-recipe.tgz",
 			safeFilename(ref.Name), safeFilename(ref.RawVersion), shortRevision(location.Revision)),
 	}
 	// Рецепт — Python-код, но для метаданных его выполнять не нужно и опасно.
@@ -202,6 +203,13 @@ func (p *Conan) recipeLocation(ctx context.Context, ref Ref) (conanRecipeLocatio
 		Revision: latest.Revision, PublishedAt: parseTime(latest.Time),
 		FilesURL: filesURL, ArchiveURL: filesURL + "/" + exportFile,
 	}
+	for name := range files.Files {
+		clean := path.Clean(name)
+		if clean == name && path.Base(clean) == clean && clean != "." && clean != ".." {
+			location.Files = append(location.Files, clean)
+		}
+	}
+	sort.Strings(location.Files)
 	// ConanCenter 2 хранит conanfile.py отдельным файлом ревизии. Некоторые
 	// внутренние серверы оставляют его только внутри conan_export.tgz, поэтому
 	// архив остаётся резервным источником.
@@ -209,6 +217,60 @@ func (p *Conan) recipeLocation(ctx context.Context, ref Ref) (conanRecipeLocatio
 		location.RecipeURL = filesURL + "/conanfile.py"
 	}
 	return location, nil
+}
+
+// Download собирает полный снимок recipe revision, а не только
+// conan_export.tgz. Нативному Conan-репозиторию нужны также conanfile.py,
+// conanmanifest.txt, conandata.yml, conan_sources.tgz и служебные файлы,
+// которые сообщил upstream. Внешний tar.gz нужен лишь как транспорт через
+// единый конвейер; при публикации Nexus-адаптер распакует его и загрузит
+// каждый файл по Conan v2 API.
+func (p *Conan) Download(ctx context.Context, ref Ref, limit int64) ([]byte, string, error) {
+	location, err := p.recipeLocation(ctx, ref)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(location.Files) == 0 || len(location.Files) > maxConanRecipeFiles {
+		return nil, "", fmt.Errorf("некорректное число файлов Conan recipe: %d", len(location.Files))
+	}
+
+	var buf limitedBuffer
+	buf.limit = limit
+	var total int64
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, name := range location.Files {
+		remaining := limit - total
+		if limit > 0 && remaining <= 0 {
+			return nil, "", fmt.Errorf("файлы Conan recipe больше допустимого предела %d байт", limit)
+		}
+		body, err := getBytesWithLimit(
+			ctx, p.HTTP, location.FilesURL+"/"+url.PathEscape(name), "", remaining,
+		)
+		if err != nil {
+			return nil, "", fmt.Errorf("скачивание файла Conan recipe %s: %w", name, err)
+		}
+		total += int64(len(body))
+		header := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(header); err != nil {
+			return nil, "", err
+		}
+		if _, err := tw.Write(body); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, "", err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, "", err
+	}
+	if buf.err != nil {
+		return nil, "", buf.err
+	}
+	filename := fmt.Sprintf("%s-%s-%s.conan-recipe.tgz",
+		safeFilename(ref.Name), safeFilename(ref.RawVersion), shortRevision(location.Revision))
+	return buf.data, filename, nil
 }
 
 const (

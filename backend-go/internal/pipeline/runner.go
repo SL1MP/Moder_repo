@@ -73,6 +73,9 @@ func Run(ctx context.Context, pc *Context, fromCode string) (Result, error) {
 	for i := startIdx; i < len(Steps); i++ {
 		step := Steps[i]
 		startedAt := pc.now()
+		if err := saveStepStarted(ctx, r, pc, step.Code(), startedAt); err != nil {
+			return result, err
+		}
 		outcome, err := step.Run(ctx, pc)
 		// Метрику пишем и по упавшему шагу: прогон, оборвавшийся ошибкой, —
 		// это тоже исход, и не видеть его на графике хуже всего. Результат
@@ -85,11 +88,16 @@ func Run(ctx context.Context, pc *Context, fromCode string) (Result, error) {
 		metrics.ObserveStep(step.Code(), outcomeResult, pc.Package.Manager,
 			pc.now().Sub(startedAt).Seconds())
 		if err != nil {
+			failed := Fail(fmt.Sprintf("Техническая ошибка выполнения шага: %v", err))
+			if saveErr := saveStep(ctx, r, pc, step.Code(), failed, startedAt); saveErr != nil {
+				return result, fmt.Errorf("шаг %s: %v; результат ошибки не сохранён: %w",
+					step.Code(), err, saveErr)
+			}
 			return result, fmt.Errorf("шаг %s: %w", step.Code(), err)
 		}
 		result.LastStep = step.Code()
 
-		if err := saveStep(ctx, r, pc, step.Code(), outcome); err != nil {
+		if err := saveStep(ctx, r, pc, step.Code(), outcome, startedAt); err != nil {
 			return result, err
 		}
 
@@ -159,12 +167,36 @@ func loadSecurityOverride(ctx context.Context, pc *Context) error {
 	return nil
 }
 
-func saveStep(ctx context.Context, r *repo.Repo, pc *Context, code string, outcome StepOutcome) error {
+func saveStepStarted(
+	ctx context.Context, r *repo.Repo, pc *Context, code string, startedAt time.Time,
+) error {
+	if err := r.UpdateRequestItemCurrentStep(ctx, pc.Item.ID, code); err != nil {
+		return fmt.Errorf("сохранение текущего шага %s: %w", code, err)
+	}
+	message := "Шаг выполняется. Для внешних проверок это может занять несколько минут."
+	_, err := r.UpsertPipelineStep(ctx, domain.PipelineStep{
+		RequestItemID: pc.Item.ID,
+		StepCode:      code,
+		StepOrder:     domain.StepOrder[code],
+		Result:        "running",
+		Message:       &message,
+		StartedAt:     &startedAt,
+	})
+	if err != nil {
+		return fmt.Errorf("сохранение начала шага %s: %w", code, err)
+	}
+	return nil
+}
+
+func saveStep(
+	ctx context.Context, r *repo.Repo, pc *Context, code string, outcome StepOutcome,
+	startedAt time.Time,
+) error {
 	var message *string
 	if outcome.Message != "" {
 		message = &outcome.Message
 	}
-	now := pc.now()
+	finishedAt := pc.now()
 	_, err := r.UpsertPipelineStep(ctx, domain.PipelineStep{
 		RequestItemID: pc.Item.ID,
 		StepCode:      code,
@@ -172,8 +204,8 @@ func saveStep(ctx context.Context, r *repo.Repo, pc *Context, code string, outco
 		Result:        outcome.Result,
 		Message:       message,
 		Details:       outcome.Details,
-		StartedAt:     &now,
-		FinishedAt:    &now,
+		StartedAt:     &startedAt,
+		FinishedAt:    &finishedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("сохранение результата шага %s: %w", code, err)

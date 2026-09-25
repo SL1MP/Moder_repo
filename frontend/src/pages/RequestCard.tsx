@@ -206,6 +206,22 @@ function PackageBlock({
 }) {
   const isSec = me.roles.includes('devsecops') || me.roles.includes('admin')
   const isLegal = me.roles.includes('legal') || me.roles.includes('admin')
+  const [restartingStep, setRestartingStep] = useState<string | null>(null)
+  const [restartError, setRestartError] = useState<string | null>(null)
+
+  const restart = (stepCode: string, title: string) => {
+    if (!window.confirm(
+      `Перезапустить проверку пакета ${item.name} ${item.version} ${title}? ` +
+        'Результаты выбранного шага и всех следующих будут заменены новым прогоном.',
+    )) return
+    setRestartingStep(stepCode)
+    setRestartError(null)
+    api
+      .retryItem(requestId, item.id, stepCode)
+      .then(onChanged)
+      .catch((e: Error) => setRestartError(e.message))
+      .finally(() => setRestartingStep(null))
+  }
 
   return (
     <div className="card">
@@ -262,8 +278,29 @@ function PackageBlock({
 
       {expanded ? (
         <>
-          <h3 style={{ marginTop: 12 }}>Конвейер проверок</h3>
-          <Pipeline steps={item.steps} />
+          <div className="row between" style={{ marginTop: 12 }}>
+            <h3>Конвейер проверок</h3>
+            {item.can_restart ? (
+              <button
+                className="ghost small"
+                disabled={restartingStep !== null}
+                onClick={() => restart('db_check', 'с самого начала')}
+              >
+                {restartingStep === 'db_check' ? 'запускаю…' : 'перезапустить весь пакет'}
+              </button>
+            ) : null}
+          </div>
+          {restartError ? <Alert kind="error">{restartError}</Alert> : null}
+          <Pipeline
+            steps={item.steps}
+            restartingStep={restartingStep}
+            onRestart={item.can_restart ? (step) => restart(step.code, `с шага «${step.title}»`) : undefined}
+          />
+          {item.can_restart ? (
+            <p className="small muted" style={{ marginTop: 4 }}>
+              Точечный перезапуск повторяет выбранный шаг и все шаги после него в этой же заявке.
+            </p>
+          ) : null}
 
           {item.vulnerabilities.length ? (
             <>

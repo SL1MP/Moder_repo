@@ -61,6 +61,13 @@ func getJSON(ctx context.Context, h Doer, url, accept string, dst any) error {
 }
 
 func getBytes(ctx context.Context, h Doer, url, accept string) ([]byte, error) {
+	return getBytesWithLimit(ctx, h, url, accept, maxRegistryResponseBytes)
+}
+
+// getBytesWithLimit читает бинарный ответ с явным пределом. Метаданные обычно
+// ограничены 64 MiB, но файлы Conan recipe (прежде всего conan_sources.tgz)
+// могут быть крупнее и должны подчиняться общему лимиту артефакта заявки.
+func getBytesWithLimit(ctx context.Context, h Doer, url, accept string, limit int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("сборка запроса к реестру: %w", err)
@@ -81,9 +88,15 @@ func getBytes(ctx context.Context, h Doer, url, accept string) ([]byte, error) {
 	if resp.StatusCode >= 400 {
 		return nil, &HTTPStatusError{StatusCode: resp.StatusCode, URL: url}
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryResponseBytes))
+	if limit <= 0 {
+		limit = maxRegistryResponseBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("чтение ответа реестра (%s): %w", url, err)
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("ответ реестра (%s) больше допустимого предела %d байт", url, limit)
 	}
 	return body, nil
 }

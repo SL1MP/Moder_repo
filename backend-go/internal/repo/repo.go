@@ -174,6 +174,21 @@ func (r *Repo) UpdateRequestItemStatus(ctx context.Context, id int64, status str
 	return nil
 }
 
+// UpdateRequestItemCurrentStep отмечает фактически выполняющийся этап, не
+// затрагивая статус и результаты предыдущих шагов. Это особенно важно для
+// долгих загрузок в песочницу и публикаций OCI: карточка сразу показывает,
+// где находится живой worker.
+func (r *Repo) UpdateRequestItemCurrentStep(ctx context.Context, id int64, currentStep string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE request_item SET current_step = $2, updated_at = now()
+		WHERE id = $1 AND status = 'running'
+	`, id, currentStep)
+	if err != nil {
+		return fmt.Errorf("обновление текущего шага request_item: %w", err)
+	}
+	return nil
+}
+
 func (r *Repo) CreateModerationRequest(ctx context.Context, req domain.ModerationRequest) (*domain.ModerationRequest, error) {
 	warnings, err := jsonOrNull(req.Warnings)
 	if err != nil {
@@ -364,7 +379,7 @@ func (r *Repo) UpsertPipelineStep(ctx context.Context, step domain.PipelineStep)
 			result = EXCLUDED.result,
 			message = EXCLUDED.message,
 			details = EXCLUDED.details,
-			started_at = COALESCE(pipeline_step.started_at, EXCLUDED.started_at),
+			started_at = EXCLUDED.started_at,
 			finished_at = EXCLUDED.finished_at
 		RETURNING id, request_item_id, step_code, step_order, result, message, details,
 		          started_at, finished_at

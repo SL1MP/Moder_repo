@@ -113,13 +113,22 @@ export function Vulns({ items }: { items: Vulnerability[] }) {
 // возник вопрос «почему проверка застряла» — она не начиналась.
 const STEP_RESULT_LABELS: Record<string, string> = {
   pending: 'не начат',
+  running: 'выполняется',
   // info — шаг выполнен, публикацию не блокирует, но по нему есть что сказать:
   // так отдаёт результат SAST. «Пройден» здесь читалось бы как «чисто», хотя
   // находки есть и лежат в отчёте.
   info: 'информация',
 }
 
-export function Pipeline({ steps }: { steps: Step[] }) {
+export function Pipeline({
+  steps,
+  onRestart,
+  restartingStep,
+}: {
+  steps: Step[]
+  onRestart?: (step: Step) => void
+  restartingStep?: string | null
+}) {
   return (
     <div className="pipeline">
       {steps.map((step) => (
@@ -134,6 +143,16 @@ export function Pipeline({ steps }: { steps: Step[] }) {
             <Badge value={step.result} label={STEP_RESULT_LABELS[step.result]} />
             {step.finished_at ? (
               <div className="muted small">{formatTime(step.finished_at)}</div>
+            ) : null}
+            {onRestart && step.result !== 'pending' && step.result !== 'running' ? (
+              <button
+                className="ghost small"
+                disabled={restartingStep !== null && restartingStep !== undefined}
+                title="Повторить этот шаг и все следующие"
+                onClick={() => onRestart(step)}
+              >
+                {restartingStep === step.code ? 'запускаю…' : 'повторить отсюда'}
+              </button>
             ) : null}
           </div>
         </div>

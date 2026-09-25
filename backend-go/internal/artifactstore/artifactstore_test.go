@@ -1,12 +1,16 @@
 package artifactstore_test
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
 
@@ -259,6 +263,107 @@ func TestNexusPublishConanRecipeThroughV2Protocol(t *testing.T) {
 	}
 	if !strings.Contains(gotURL, "/repository/conan-internal/v2/conans/boost/1.91.0/") {
 		t.Errorf("URL = %q", gotURL)
+	}
+}
+
+func TestNexusPublishesCompleteConanRecipeBundle(t *testing.T) {
+	const revision = "fedcba9876543210fedcba9876543210"
+	want := map[string]string{
+		"conan_export.tgz": "export", "conan_sources.tgz": "sources",
+		"conanfile.py": "recipe", "conandata.yml": "sources: {}",
+		"conanmanifest.txt": "manifest",
+	}
+	var bundle bytes.Buffer
+	gz := gzip.NewWriter(&bundle)
+	tw := tar.NewWriter(gz)
+	for name, body := range want {
+		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		_, _ = tw.Write([]byte(body))
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+
+	uploaded := map[string]string{}
+	store := newStore(t, artifactstore.Config{
+		Kind: artifactstore.KindNexus, AuthType: artifactstore.AuthBasic,
+		Username: "moderation", Password: "secret",
+	}, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v2/users/authenticate"):
+			_, _ = w.Write([]byte("conan-jwt"))
+		case r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/files/"):
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/files/"):
+			name := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			body, _ := io.ReadAll(r.Body)
+			uploaded[name] = string(body)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Errorf("неожиданный запрос %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	target := artifactstore.Target{
+		Repo: "conan-internal", Manager: "conan", Name: "boost", Version: "1.91.0",
+		SourceURL: "https://center2.conan.io/v2/conans/boost/1.91.0/_/_/revisions/" +
+			revision + "/files/conan_export.tgz",
+	}
+	if _, err := store.Publish(context.Background(), target, bundle.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range want {
+		if uploaded[name] != body {
+			t.Errorf("%s: загружено %q, ожидалось %q", name, uploaded[name], body)
+		}
+	}
+}
+
+// Прежняя версия сервиса публиковала только conan_export.tgz. Такой recipe
+// нельзя считать полным: повтор должен докачать остальные файлы, не пытаясь
+// перезаписать уже существующий completion marker.
+func TestNexusCompletesLegacyConanRecipe(t *testing.T) {
+	const revision = "abcdefabcdefabcdefabcdefabcdefab"
+	files := map[string]string{"conan_export.tgz": "export", "conandata.yml": "sources: {}"}
+	var bundle bytes.Buffer
+	gz := gzip.NewWriter(&bundle)
+	tw := tar.NewWriter(gz)
+	for name, body := range files {
+		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		_, _ = tw.Write([]byte(body))
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+
+	uploaded := map[string]bool{}
+	store := newStore(t, artifactstore.Config{
+		Kind: artifactstore.KindNexus, AuthType: artifactstore.AuthBasic,
+		Username: "moderation", Password: "secret",
+	}, func(w http.ResponseWriter, r *http.Request) {
+		name := path.Base(r.URL.Path)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v2/users/authenticate"):
+			_, _ = w.Write([]byte("conan-jwt"))
+		case r.Method == http.MethodHead && name == "conan_export.tgz":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodHead:
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPut:
+			uploaded[name] = true
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})
+	target := artifactstore.Target{
+		Repo: "conan-internal", Manager: "conan", Name: "boost", Version: "1.91.0",
+		SourceURL: "https://center2.conan.io/v2/conans/boost/1.91.0/_/_/revisions/" +
+			revision + "/files/conan_export.tgz",
+	}
+	if _, err := store.Publish(context.Background(), target, bundle.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if uploaded["conan_export.tgz"] || !uploaded["conandata.yml"] {
+		t.Fatalf("загруженные файлы = %#v", uploaded)
 	}
 }
 

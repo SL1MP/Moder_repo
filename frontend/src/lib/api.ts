@@ -175,7 +175,7 @@ export interface Step {
   order: number
   title: string
   // info — шаг выполнен, публикацию не блокирует (SAST), см. STEP_RESULT_LABELS
-  result: 'pending' | 'pass' | 'info' | 'warn' | 'fail' | 'skipped'
+  result: 'pending' | 'running' | 'pass' | 'info' | 'warn' | 'fail' | 'skipped'
   message: string | null
   details: Record<string, unknown> | null
   started_at: string | null
@@ -248,6 +248,7 @@ export interface RequestItem {
   required_range?: string
   status: string
   status_title: string
+  can_restart: boolean
   /**
    * Шаги, по которым решение роли ещё не получено: `license` — юристы,
    * `vuln_scan` — DevSecOps, `quarantine` — срок карантина. Их может быть
@@ -280,6 +281,7 @@ export interface ModerationRequest {
   // сервер: правило одно и то же с маршрутом, и дублировать его здесь значило
   // бы завести второй источник правды.
   can_cancel: boolean
+  can_restart: boolean
   author: string | null
   author_role: string | null
   reason: string | null
@@ -539,6 +541,11 @@ export const api = {
     request<RequestListRow[]>(`/requests?${new URLSearchParams(params)}`),
   requestById: (id: number) => request<ModerationRequest>(`/requests/${id}`),
   retryRequest: (id: number) => request<ModerationRequest>(`/requests/${id}/retry`, { method: 'POST' }),
+  retryItem: (requestId: number, itemId: number, fromStep = 'db_check') =>
+    request<ModerationRequest>(`/requests/${requestId}/items/${itemId}/retry`, {
+      method: 'POST',
+      body: JSON.stringify({ from_step: fromStep }),
+    }),
   // Закрытие заявки автором: пакеты больше не нужны. Не отклонение — то
   // решение роли, а это отказ автора.
   cancelRequest: (id: number) =>

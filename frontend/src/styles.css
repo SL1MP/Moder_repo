@@ -130,7 +130,7 @@ button.small { padding: 3px 7px; font-size: 12px; }
   background: var(--bg-elev-2); color: var(--text-dim); white-space: nowrap;
 }
 .badge.pass, .badge.approved { background: #10281a; border-color: #1f5c30; color: #6fdc8c; }
-.badge.warn, .badge.quarantined, .badge.awaiting_legal, .badge.license_claimed,
+.badge.warn, .badge.running, .badge.quarantined, .badge.awaiting_legal, .badge.license_claimed,
 .badge.awaiting_security, .badge.partially_approved, .badge.pending {
   background: #2b2312; border-color: #6b5220; color: #e5c07b;
 }

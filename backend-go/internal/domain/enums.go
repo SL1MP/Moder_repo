@@ -122,7 +122,7 @@ var StepTitles = map[string]string{
 // StepResults — результаты шага. info — шаг выполнен, публикацию не блокирует,
 // но сказать по нему есть что (так отдаёт результат SAST). Держать 1:1 с
 // CHECK-ограничением в migrations/0010.
-var StepResults = []string{"pending", "pass", "info", "warn", "fail", "skipped"}
+var StepResults = []string{"pending", "running", "pass", "info", "warn", "fail", "skipped"}
 
 var ArtifactStatuses = []string{"downloaded", "scanned", "published", "purged", "failed"}
 

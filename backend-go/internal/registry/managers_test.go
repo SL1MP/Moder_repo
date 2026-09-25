@@ -226,11 +226,12 @@ func TestFilesMetadataCarriesDeclaredChecksum(t *testing.T) {
 	}
 }
 
-// TestDownloaderManagers — docker и git забирают артефакт сами, остальные
-// идут обычным GET. Проверка удерживает это различие: плагин, случайно
-// потерявший Downloader, молча начнёт скачиваться по пустому ArtifactURL.
+// TestDownloaderManagers — docker, git и Conan забирают артефакт сами:
+// Conan собирает полный recipe revision из нескольких файлов. Остальные идут
+// обычным GET. Проверка удерживает это различие: плагин, случайно потерявший
+// Downloader, скачал бы только часть пакета или пошёл по пустому ArtifactURL.
 func TestDownloaderManagers(t *testing.T) {
-	want := map[string]bool{"docker": true, "git": true}
+	want := map[string]bool{"docker": true, "git": true, "conan": true}
 	for _, plugin := range newAll(nil).Plugins() {
 		_, ok := plugin.(registry.Downloader)
 		if ok != want[plugin.Code()] {

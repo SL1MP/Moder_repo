@@ -34,6 +34,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"moderation/internal/domain"
 )
 
 // Channel — канал LISTEN/NOTIFY. Имя фиксировано: его знают и тот, кто ставит
@@ -80,6 +82,15 @@ var ErrEmpty = errors.New("очередь пуста")
 // потому что пакет уже не наш». В первом случае пакет надо пометить неудачей,
 // во втором — не трогать вовсе.
 var ErrNotOurs = errors.New("пакет больше не принадлежит этому прогону")
+
+// ErrActive — пакет уже обрабатывается живым воркером. Два параллельных
+// прогона одного request_item писать нельзя: один может опубликовать то, что
+// второй в этот момент ещё проверяет.
+var ErrActive = errors.New("пакет уже находится в активной проверке")
+
+// ErrTerminal — решение по пакету нельзя отменить техническим перезапуском.
+// Отзыв одобренного и пересмотр отклонённого — отдельные бизнес-операции.
+var ErrTerminal = errors.New("пакет находится в терминальном статусе")
 
 // Claim забирает один пакет. Возвращает ErrEmpty, если работы нет.
 //
@@ -205,6 +216,75 @@ func (q *Queue) Enqueue(ctx context.Context, itemID int64, fromStep string) erro
 		WHERE id = $1
 	`, itemID, step); err != nil {
 		return fmt.Errorf("постановка пакета #%d в очередь: %w", itemID, err)
+	}
+	return q.Notify(ctx)
+}
+
+// Restart сбрасывает выбранный шаг и все следующие, затем возвращает тот же
+// пакет заявки в очередь. Результаты предыдущих шагов сохраняются: при
+// перезапуске публикации нет смысла повторно скачивать и сканировать уже
+// проверенный артефакт.
+//
+// Живой running не отбираем. Его HTTP-вызов может ещё выполняться, а
+// конкурентный прогон привёл бы к смешанной истории и двойной публикации.
+// Брошенный running (heartbeat старше StaleAfter) перезапустить можно.
+func (q *Queue) Restart(ctx context.Context, itemID int64, fromStep string) error {
+	fromOrder, ok := domain.StepOrder[fromStep]
+	if !ok || !domain.Contains(domain.StepCodes, fromStep) {
+		return fmt.Errorf("неизвестный шаг перезапуска %q", fromStep)
+	}
+
+	tx, err := q.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("начало перезапуска пакета #%d: %w", itemID, err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // после Commit откат штатно ничего не делает
+
+	var status string
+	var updatedAt time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT status, updated_at FROM request_item WHERE id = $1 FOR UPDATE
+	`, itemID).Scan(&status, &updatedAt); err != nil {
+		return fmt.Errorf("чтение пакета #%d для перезапуска: %w", itemID, err)
+	}
+	if status == "queued" || (status == "running" && updatedAt.After(q.now().UTC().Add(-q.StaleAfter))) {
+		return ErrActive
+	}
+	if domain.Contains([]string{
+		"approved", "rejected", "revoked", "blacklisted", "cancelled",
+	}, status) {
+		return ErrTerminal
+	}
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM pipeline_step
+		WHERE request_item_id = $1 AND step_order >= $2
+	`, itemID, fromOrder); err != nil {
+		return fmt.Errorf("сброс шагов пакета #%d: %w", itemID, err)
+	}
+
+	// Отчёт выбранного сканера относится к прежнему прогону. Убираем его
+	// вместе с записью шага; файл в reports останется до регламентной уборки,
+	// но API больше не покажет устаревший вердикт как новый.
+	restartedCodes := append([]string(nil), domain.StepCodes[fromOrder:]...)
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM scan_report
+		WHERE request_item_id = $1 AND step_code = ANY($2)
+	`, itemID, restartedCodes); err != nil {
+		return fmt.Errorf("сброс отчётов пакета #%d: %w", itemID, err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE request_item
+		SET status = 'queued', resume_from_step = $2, attempts = 0,
+		    current_step = NULL, blocked_reason = NULL, next_action = NULL,
+		    waiting_since = NULL, finished_at = NULL, updated_at = now()
+		WHERE id = $1
+	`, itemID, fromStep); err != nil {
+		return fmt.Errorf("возврат пакета #%d в очередь: %w", itemID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("завершение перезапуска пакета #%d: %w", itemID, err)
 	}
 	return q.Notify(ctx)
 }

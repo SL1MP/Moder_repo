@@ -124,6 +124,10 @@ func errBadRequest(message string) *Error {
 	return &Error{Code: "bad_request", Status: http.StatusBadRequest, Message: message}
 }
 
+func errConflict(message string) *Error {
+	return &Error{Code: "conflict", Status: http.StatusConflict, Message: message}
+}
+
 func errUpstream(message string) *Error {
 	return &Error{Code: "upstream_error", Status: http.StatusBadGateway, Message: message}
 }

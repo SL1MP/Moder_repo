@@ -1,7 +1,9 @@
 package artifactstore
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha1" //nolint:gosec // обязательная контрольная сумма протокола Conan v2
 	"encoding/hex"
@@ -11,6 +13,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path"
+	"sort"
 	"strings"
 
 	"moderation/internal/registry"
@@ -124,13 +128,18 @@ func (n *Nexus) Publish(ctx context.Context, t Target, data []byte) (string, err
 // Components API Nexus не описывает формат загрузки Conan: такие репозитории
 // наполняются тем же протоколом, которым пользуется команда `conan upload`.
 func (n *Nexus) conanRecipeURL(t Target) (string, error) {
+	return n.conanRecipeFileURL(t, "conan_export.tgz")
+}
+
+func (n *Nexus) conanRecipeFileURL(t Target, filename string) (string, error) {
 	revision, err := conanRevision(t.SourceURL)
 	if err != nil {
 		return "", err
 	}
 	return n.fileURL(t.Repo, fmt.Sprintf(
-		"v2/conans/%s/%s/_/_/revisions/%s/files/conan_export.tgz",
-		url.PathEscape(t.Name), url.PathEscape(t.Version), url.PathEscape(revision))), nil
+		"v2/conans/%s/%s/_/_/revisions/%s/files/%s",
+		url.PathEscape(t.Name), url.PathEscape(t.Version), url.PathEscape(revision),
+		url.PathEscape(filename))), nil
 }
 
 // conanRevision достаёт неизменяемую ревизию рецепта из URL ConanCenter:
@@ -164,32 +173,122 @@ func (n *Nexus) publishConanRecipe(ctx context.Context, t Target, data []byte) (
 	if n.cfg.DryRun {
 		return "", fmt.Errorf("публикация вызвана в режиме dry-run: это ошибка вызывающего кода")
 	}
+	files, err := conanRecipeFiles(data)
+	if err != nil {
+		return "", err
+	}
 	token, err := n.conanToken(ctx, t.Repo)
 	if err != nil {
 		return "", err
 	}
-	exists, err := n.conanExistsWithToken(ctx, fileURL, token)
-	if err != nil {
-		return "", err
+	existing := make(map[string]bool, len(files))
+	allExist := true
+	for name := range files {
+		targetURL, urlErr := n.conanRecipeFileURL(t, name)
+		if urlErr != nil {
+			return "", urlErr
+		}
+		exists, existsErr := n.conanExistsWithToken(ctx, targetURL, token)
+		if existsErr != nil {
+			return "", existsErr
+		}
+		existing[name] = exists
+		allExist = allExist && exists
 	}
-	if exists {
+	if allExist {
 		return fileURL, nil
 	}
-	sum := sha1.Sum(data) //nolint:gosec // Conan v2 требует X-Checksum-Sha1
-	headers := map[string]string{
-		"Content-Type":    "application/gzip",
-		"X-Checksum-Sha1": hex.EncodeToString(sum[:]),
+	// conan_export.tgz загружается последним и служит признаком завершённой
+	// ревизии. Если сеть оборвётся посередине, повтор докачает все файлы, а не
+	// примет частичный recipe за уже опубликованный.
+	names := make([]string, 0, len(files))
+	for name := range files {
+		if name != "conan_export.tgz" {
+			names = append(names, name)
+		}
 	}
-	resp, err := n.doConan(ctx, http.MethodPut, fileURL, data, headers, token)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", rejected(n.Kind(), fileURL, resp.StatusCode, raw)
+	sort.Strings(names)
+	names = append(names, "conan_export.tgz")
+	for _, name := range names {
+		if existing[name] {
+			continue
+		}
+		body := files[name]
+		targetURL, err := n.conanRecipeFileURL(t, name)
+		if err != nil {
+			return "", err
+		}
+		sum := sha1.Sum(body) //nolint:gosec // Conan v2 требует X-Checksum-Sha1
+		contentType := "application/octet-stream"
+		if strings.HasSuffix(name, ".tgz") {
+			contentType = "application/gzip"
+		}
+		headers := map[string]string{
+			"Content-Type": contentType, "X-Checksum-Sha1": hex.EncodeToString(sum[:]),
+		}
+		resp, err := n.doConan(ctx, http.MethodPut, targetURL, body, headers, token)
+		if err != nil {
+			return "", err
+		}
+		if resp.StatusCode >= 400 {
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			resp.Body.Close()
+			return "", rejected(n.Kind(), targetURL, resp.StatusCode, raw)
+		}
+		resp.Body.Close()
 	}
 	return fileURL, nil
+}
+
+const (
+	maxConanBundleFiles = 256
+	maxConanBundleBytes = 512 * 1024 * 1024
+)
+
+// conanRecipeFiles разбирает транспортный bundle из registry.Conan.Download.
+// Старый staging-артефакт содержал один conan_export.tgz; его продолжаем
+// принимать, чтобы кнопка повтора публикации работала и для уже созданных
+// заявок после обновления сервиса.
+func conanRecipeFiles(data []byte) (map[string][]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return map[string][]byte{"conan_export.tgz": data}, nil
+	}
+	defer gz.Close()
+	t := tar.NewReader(gz)
+	files := make(map[string][]byte)
+	total := int64(0)
+	for count := 0; count < maxConanBundleFiles; count++ {
+		header, err := t.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("bundle Conan recipe не разобран: %w", err)
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		name := path.Clean(header.Name)
+		if name != header.Name || path.Base(name) != name || name == "." || name == ".." {
+			return nil, fmt.Errorf("небезопасное имя файла в bundle Conan recipe: %q", header.Name)
+		}
+		if header.Size < 0 || total+header.Size > maxConanBundleBytes {
+			return nil, fmt.Errorf("распакованный bundle Conan recipe больше допустимого предела")
+		}
+		body, err := io.ReadAll(io.LimitReader(t, header.Size+1))
+		if err != nil || int64(len(body)) != header.Size {
+			return nil, fmt.Errorf("файл %s из bundle Conan recipe прочитан не полностью", name)
+		}
+		files[name] = body
+		total += header.Size
+	}
+	if _, ok := files["conan_export.tgz"]; !ok {
+		// Это обычный conan_export.tgz, а не наш внешний bundle: внутри него
+		// лежат conanfile.py/conandata.yml, но сам архив как файл отсутствует.
+		return map[string][]byte{"conan_export.tgz": data}, nil
+	}
+	return files, nil
 }
 
 func (n *Nexus) conanExists(ctx context.Context, t Target) (bool, error) {
@@ -237,6 +336,11 @@ func (n *Nexus) conanToken(ctx context.Context, repo string) (string, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode >= 400 {
+		if resp.StatusCode == http.StatusNotFound {
+			return "", fmt.Errorf(
+				"репозиторий %q не найден в Nexus: создайте Conan (hosted) с версией протокола 2 "+
+					"и проверьте ARTIFACT_REPO_CONAN", repo)
+		}
 		return "", rejected(n.Kind(), authURL, resp.StatusCode, body)
 	}
 	token := strings.TrimSpace(string(body))

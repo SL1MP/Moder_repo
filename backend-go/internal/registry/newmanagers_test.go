@@ -1,7 +1,11 @@
 package registry_test
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -243,6 +247,60 @@ func TestConanPicksLatestRevision(t *testing.T) {
 	}
 	if meta.PublishedAt == nil || meta.PublishedAt.Format("2006-01-02") != "2024-03-01" {
 		t.Errorf("дата публикации = %v", meta.PublishedAt)
+	}
+}
+
+func TestConanDownloadIncludesEveryRecipeFile(t *testing.T) {
+	const revision = "1234567890abcdef1234567890abcdef"
+	filesURL := "https://conan.test/v2/conans/zlib/1.3.1/_/_/revisions/" + revision + "/files"
+	f := &fakeRegistry{responses: map[string]string{
+		"https://conan.test/v2/conans/zlib/1.3.1/_/_/revisions": `{"revisions":[
+			{"revision":"` + revision + `","time":"2026-01-01T10:00:00Z"}]}`,
+		filesURL:                        `{"files":{"conan_export.tgz":{},"conan_sources.tgz":{},"conanfile.py":{}}}`,
+		filesURL + "/conan_export.tgz":  "export",
+		filesURL + "/conan_sources.tgz": "sources",
+		filesURL + "/conanfile.py":      "recipe",
+	}}
+	plugin := pluginWith(t, "conan", f)
+	ref, err := registry.ParseEntry(plugin, "zlib/1.3.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloader, ok := plugin.(registry.Downloader)
+	if !ok {
+		t.Fatal("Conan обязан скачивать полный recipe bundle через Downloader")
+	}
+	payload, filename, err := downloader.Download(context.Background(), ref, 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(filename, ".conan-recipe.tgz") {
+		t.Errorf("имя bundle = %q", filename)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	got := map[string]string{}
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(tr)
+		got[header.Name] = string(body)
+	}
+	for name, body := range map[string]string{
+		"conan_export.tgz": "export", "conan_sources.tgz": "sources", "conanfile.py": "recipe",
+	} {
+		if got[name] != body {
+			t.Errorf("%s: получено %q, ожидалось %q", name, got[name], body)
+		}
 	}
 }
 

@@ -461,3 +461,80 @@ func TestRetryOnlyFailedItems(t *testing.T) {
 		}
 	}
 }
+
+func TestRetryItemFromSelectedStep(t *testing.T) {
+	f := newCreateFixture(t)
+	ctx := context.Background()
+	created := decodeObject(t, f.post(t,
+		fmt.Sprintf(`{"manager":"pypi","packages":["retry-step-%s==1.0.0"]}`, f.slug), nil))
+	requestID := int64(created["request_id"].(float64))
+	items, err := f.repo.ListItemsByRequest(ctx, requestID)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("пакет заявки: %v (%d)", err, len(items))
+	}
+	itemID := items[0].ID
+	for _, code := range []string{"db_check", "blacklist", "sandbox_scan", "publish"} {
+		now := time.Now().UTC()
+		if _, err := f.repo.UpsertPipelineStep(ctx, domain.PipelineStep{
+			RequestItemID: itemID, StepCode: code, StepOrder: domain.StepOrder[code],
+			Result: "pass", StartedAt: &now, FinishedAt: &now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.repo.UpdateRequestItemStatus(ctx, itemID, "failed", nil, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/api/v1/requests/%d/items/%d/retry", requestID, itemID),
+		strings.NewReader(`{"from_step":"sandbox_scan"}`))
+	f.authorize(t, req, map[string]string{})
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var status string
+	var resume *string
+	if err := f.repo.Pool().QueryRow(ctx,
+		`SELECT status, resume_from_step FROM request_item WHERE id = $1`, itemID,
+	).Scan(&status, &resume); err != nil {
+		t.Fatal(err)
+	}
+	if status != "queued" || resume == nil || *resume != "sandbox_scan" {
+		t.Fatalf("status=%q resume=%v", status, resume)
+	}
+	steps, err := f.repo.ListStepsByItem(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range steps {
+		if step.StepOrder >= domain.StepOrder["sandbox_scan"] {
+			t.Errorf("шаг %s не был сброшен", step.StepCode)
+		}
+	}
+}
+
+func TestRetryItemRejectsLiveRun(t *testing.T) {
+	f := newCreateFixture(t)
+	ctx := context.Background()
+	created := decodeObject(t, f.post(t,
+		fmt.Sprintf(`{"manager":"pypi","packages":["retry-live-%s==1.0.0"]}`, f.slug), nil))
+	requestID := int64(created["request_id"].(float64))
+	items, _ := f.repo.ListItemsByRequest(ctx, requestID)
+	if err := f.repo.UpdateRequestItemStatus(ctx, items[0].ID, "running", nil, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/api/v1/requests/%d/items/%d/retry", requestID, items[0].ID),
+		strings.NewReader(`{"from_step":"sandbox_scan"}`))
+	f.authorize(t, req, map[string]string{})
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("живой прогон: код %d, ожидался 409: %s", rec.Code, rec.Body.String())
+	}
+}

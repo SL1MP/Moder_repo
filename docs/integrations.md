@@ -58,8 +58,11 @@ path-based routing: тогда worker публикует в
 успешной публикации удаляется; разработчик его не скачивает.
 
 Для Conan создайте **hosted repository формата Conan 2**, а не raw. Сервис
-публикует проверенный `conan_export.tgz` по исходной recipe revision через
-нативный Conan v2 API; Python-код рецепта при публикации не исполняется.
+публикует полный снимок исходной recipe revision через нативный Conan v2 API:
+`conan_export.tgz`, `conan_sources.tgz`, `conanfile.py`, `conandata.yml`,
+`conanmanifest.txt` и остальные файлы, которые перечислил upstream. Поэтому
+репозиторий пригоден для обычного `conan install`, а не выглядит как raw-архив.
+Python-код рецепта при публикации не исполняется.
 Модерируется именно рецепт, а не все бинарные `package_id`: набор бинарников
 зависит от compiler/arch/build_type/options и заранее не ограничен. Разработчик
 подключает Nexus и при необходимости собирает бинарник из одобренного рецепта:
@@ -70,8 +73,11 @@ conan install --requires=boost/1.91.0 -r internal --build=missing
 ```
 
 Если Nexus у заказчика уже есть, свой контейнер не поднимается: не указывайте
-`--profile nexus`, укажите внешний `ARTIFACT_BASE_URL`. Репозитории `make bootstrap` создаёт
-автоматически (`ArtifactStore.ensure_repositories`), если их ещё нет — идемпотентно.
+`--profile nexus`, укажите внешний `ARTIFACT_BASE_URL`. Команда `make bootstrap`
+проверяет наличие репозиториев, но не создаёт их: сервисной учётной записи для
+этого намеренно не требуются административные права. Отсутствующий
+`conan-internal` создаётся один раз администратором Nexus через
+Settings → Repositories → Create repository → Conan (hosted), Conan version 2.
 
 Go-модули публикуются в raw-репозиторий по схеме, совместимой с `GOPROXY`: путь
 `{module}/@v/{version}.zip` (модуль экранируется по правилам Go: заглавные буквы → `!строчная`).
