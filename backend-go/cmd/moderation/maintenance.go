@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -139,6 +140,10 @@ func (m *maintenanceRunner) syncOSV(ctx context.Context, force bool) {
 	defer cancel()
 	result, err := m.service.SyncOSVSnapshot(runCtx, m.osv, force)
 	if err != nil {
+		if errors.Is(err, osv.ErrSnapshotSyncInProgress) {
+			m.logger.Info("синхронизация OSV пропущена: её уже выполняет другой worker")
+			return
+		}
 		// Молчать нельзя: пока снапшот не обновляется, каждый пакет уходит к
 		// DevSecOps вручную, и снаружи это выглядит как «сервис стал строже».
 		m.logger.Error("снапшот OSV не синхронизирован", "error", err)
@@ -239,7 +244,9 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 			fmt.Fprintln(os.Stderr, "артефактори не настроено — снапшот OSV загружать неоткуда")
 			code = 1
 		} else {
-			result, err := runner.service.SyncOSVSnapshot(ctx, runner.osv, *force)
+			syncCtx, cancel := context.WithTimeout(ctx, osvSyncTimeout)
+			result, err := runner.service.SyncOSVSnapshot(syncCtx, runner.osv, *force)
+			cancel()
 			switch {
 			case err != nil:
 				logger.Error("снапшот OSV не синхронизирован", "error", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -124,6 +125,9 @@ func (s *Service) SyncOSVSnapshot(ctx context.Context, cfg OSVConfig, force bool
 	if err != nil {
 		return SyncResult{}, err
 	}
+	s.logger().Info("синхронизация снапшота OSV начата",
+		"источник", string(cfg.Kind), "откуда", cfg.location(), "force", force)
+	src = loggingSnapshotSource{next: src, logger: s.logger()}
 	index := osv.NewSnapshotIndex(cfg.LocalPath)
 
 	var info *osv.IndexVersion
@@ -174,6 +178,38 @@ func (s *Service) SyncOSVSnapshot(ctx context.Context, cfg OSVConfig, force bool
 		Updated: true, Version: info.Version, Records: info.RecordCount,
 		IndexVersionID: &row.ID,
 	}, nil
+}
+
+// loggingSnapshotSource делает продолжительную загрузку видимой в логах.
+// Без этих сообщений CLI молчал до полной загрузки и распаковки обоих ZIP,
+// поэтому нормальная работа выглядела как зависание.
+type loggingSnapshotSource struct {
+	next   osv.SnapshotSource
+	logger *slog.Logger
+}
+
+func (s loggingSnapshotSource) StatSnapshot(
+	ctx context.Context, repo, path string,
+) (*osv.RemoteSnapshot, error) {
+	s.logger.Info("проверка архива OSV", "архив", path)
+	remote, err := s.next.StatSnapshot(ctx, repo, path)
+	if err == nil && remote != nil {
+		s.logger.Info("архив OSV найден", "архив", path, "размер, байт", remote.SizeBytes)
+	}
+	return remote, err
+}
+
+func (s loggingSnapshotSource) ReadSnapshot(
+	ctx context.Context, repo, path string,
+) ([]byte, error) {
+	started := time.Now()
+	s.logger.Info("скачивание архива OSV", "архив", path)
+	payload, err := s.next.ReadSnapshot(ctx, repo, path)
+	if err == nil {
+		s.logger.Info("архив OSV скачан, начинается распаковка", "архив", path,
+			"размер, байт", len(payload), "время", time.Since(started).Round(time.Millisecond))
+	}
+	return payload, err
 }
 
 func ageDays(v osv.IndexVersion, now time.Time) float64 {

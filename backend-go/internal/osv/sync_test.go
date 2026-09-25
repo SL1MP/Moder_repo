@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,6 +32,24 @@ type fakeSource struct {
 
 type multiSource struct {
 	items map[string]*fakeSource
+}
+
+type blockingSource struct {
+	*fakeSource
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingSource) ReadSnapshot(
+	ctx context.Context, repo, path string,
+) ([]byte, error) {
+	close(s.started)
+	select {
+	case <-s.release:
+		return s.fakeSource.ReadSnapshot(ctx, repo, path)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (m *multiSource) StatSnapshot(
@@ -143,6 +162,35 @@ func TestSyncDownloadsAndUnpacks(t *testing.T) {
 	}
 	if len(findings) != 1 || findings[0].ExternalID != "GHSA-1" {
 		t.Fatalf("находки по свежему снапшоту: %+v", findings)
+	}
+}
+
+func TestSyncRejectsConcurrentProcessForSameRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "osv-db")
+	index := osv.NewSnapshotIndex(root)
+	source := &blockingSource{
+		fakeSource: newSource(t, map[string]string{
+			"PyPI/GHSA-1.json": advisory("GHSA-1", "PyPI", "requests", "0", "2.32.0"),
+		}),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := index.Sync(context.Background(), source, "r", "p", false)
+		done <- err
+	}()
+	<-source.started
+
+	_, err := osv.NewSnapshotIndex(root).Sync(
+		context.Background(), source.fakeSource, "r", "p", false,
+	)
+	if !errors.Is(err, osv.ErrSnapshotSyncInProgress) {
+		t.Errorf("параллельная синхронизация: error=%v, ожидался ErrSnapshotSyncInProgress", err)
+	}
+	close(source.release)
+	if err := <-done; err != nil {
+		t.Fatalf("первая синхронизация: %v", err)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"moderation/internal/unpack"
@@ -50,6 +51,12 @@ type SnapshotSpec struct {
 // о котором администратору надо сказать прямо.
 var ErrSnapshotMissing = fmt.Errorf("снапшот базы OSV не найден в артефактори")
 
+// ErrSnapshotSyncInProgress означает, что другой worker/container уже
+// обновляет тот же локальный индекс. Все контейнеры видят один named volume,
+// поэтому блокировка на файле защищает не только goroutine, но и процессы в
+// разных контейнерах.
+var ErrSnapshotSyncInProgress = errors.New("синхронизация снапшота OSV уже выполняется другим процессом")
+
 // snapshotLimits — границы распаковки снапшота. Отдельные от пакетных:
 // снапшот — это десятки тысяч мелких json-файлов, и лимит в 20 000 файлов
 // (норма для пакета) обрезал бы базу молча.
@@ -69,6 +76,12 @@ func snapshotLimits() unpack.Limits {
 //
 // Идемпотентна: повторный вызов с тем же снапшотом ничего не меняет.
 func (s *SnapshotIndex) Sync(ctx context.Context, src SnapshotSource, repo, path string, force bool) (*IndexVersion, error) {
+	release, err := acquireSyncLock(s.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	remote, err := src.StatSnapshot(ctx, repo, path)
 	if err != nil {
 		return nil, err
@@ -115,14 +128,11 @@ func (s *SnapshotIndex) Sync(ctx context.Context, src SnapshotSource, repo, path
 			remote.Checksum, checksum)
 	}
 
-	// Каталог загрузки уникален для процесса: воркеров может быть несколько, и
-	// общий «.new» они затирали бы друг у друга посреди распаковки.
-	staging := fmt.Sprintf("%s.new-%d", s.Root, os.Getpid())
-	if err := os.RemoveAll(staging); err != nil {
-		return nil, fmt.Errorf("очистка каталога загрузки: %w", err)
-	}
-	if err := os.MkdirAll(staging, 0o755); err != nil {
-		return nil, fmt.Errorf("создание каталога загрузки: %w", err)
+	// Каталог загрузки уникален между процессами и контейнерами: PID внутри
+	// разных контейнеров обычно одинаковый и для имени не подходит.
+	staging, err := makeStagingDir(s.Root)
+	if err != nil {
+		return nil, err
 	}
 	count, err := extractSnapshot(payload, staging)
 	if err != nil {
@@ -174,6 +184,11 @@ func (s *SnapshotIndex) SyncMany(
 	if len(specs) == 0 {
 		return nil, errors.New("не заданы архивы составного снапшота OSV")
 	}
+	release, err := acquireSyncLock(s.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	remotes := make([]RemoteSnapshot, len(specs))
 	for i, spec := range specs {
@@ -202,12 +217,9 @@ func (s *SnapshotIndex) SyncMany(
 		return nil, nil
 	}
 
-	staging := fmt.Sprintf("%s.new-%d", s.Root, os.Getpid())
-	if err := os.RemoveAll(staging); err != nil {
-		return nil, fmt.Errorf("очистка каталога загрузки: %w", err)
-	}
-	if err := os.MkdirAll(staging, 0o755); err != nil {
-		return nil, fmt.Errorf("создание каталога загрузки: %w", err)
+	staging, err := makeStagingDir(s.Root)
+	if err != nil {
+		return nil, err
 	}
 	failed := true
 	defer func() {
@@ -401,6 +413,48 @@ func copyFile(from, to string) error {
 	return dst.Close()
 }
 
+// acquireSyncLock не даёт двум worker-контейнерам одновременно собирать и
+// подменять один индекс. PID для этого непригоден: основной процесс внутри
+// каждого контейнера обычно имеет PID 1.
+func acquireSyncLock(root string) (func(), error) {
+	parent := filepath.Dir(filepath.Clean(root))
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return nil, fmt.Errorf("создание каталога OSV: %w", err)
+	}
+	lockPath := filepath.Join(parent, "."+filepath.Base(root)+".sync.lock")
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("открытие блокировки OSV: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = lock.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, ErrSnapshotSyncInProgress
+		}
+		return nil, fmt.Errorf("блокировка синхронизации OSV: %w", err)
+	}
+	return func() {
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = lock.Close()
+	}, nil
+}
+
+// makeStagingDir использует случайный суффикс, уникальный и между
+// контейнерами. os.Getpid() здесь не подходит: в каждом контейнере PID равен
+// единице, из-за чего два worker'а распаковывали архив в один current.new-1.
+func makeStagingDir(root string) (string, error) {
+	parent := filepath.Dir(filepath.Clean(root))
+	staging, err := os.MkdirTemp(parent, filepath.Base(root)+".new-")
+	if err != nil {
+		return "", fmt.Errorf("создание каталога загрузки: %w", err)
+	}
+	if err := os.Chmod(staging, 0o755); err != nil {
+		_ = os.RemoveAll(staging)
+		return "", fmt.Errorf("права каталога загрузки: %w", err)
+	}
+	return staging, nil
+}
+
 // swapDir подменяет каталог снапшота новым.
 //
 // Сначала переименование старого, потом нового на его место: если делать
@@ -408,7 +462,8 @@ func copyFile(from, to string) error {
 // параллельный прогон конвейера в этот момент решит, что база не загружена, и
 // отправит пакет к DevSecOps.
 func swapDir(root, staging string) error {
-	previous := fmt.Sprintf("%s.old-%d", root, os.Getpid())
+	suffix := strings.TrimPrefix(filepath.Base(staging), filepath.Base(root)+".new-")
+	previous := fmt.Sprintf("%s.old-%s", root, suffix)
 	if err := os.RemoveAll(previous); err != nil {
 		return fmt.Errorf("очистка прежнего снапшота: %w", err)
 	}
