@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     # OSV
     osv_source: Literal["snapshot", "api"] = "snapshot"
     osv_snapshot_path: str = "osv/latest/osv-all.zip"
-    osv_local_db_path: str = "/var/lib/osv-db"
+    osv_local_db_path: str = "/var/lib/osv-db/current"
     osv_sync_cron: str = "0 4 * * *"
     osv_max_staleness_days: int = 3
     osv_api_url: str = "https://api.osv.dev"

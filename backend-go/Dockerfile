@@ -48,9 +48,11 @@ RUN if [ "$INSTALL_SEMGREP" = "true" ]; then \
       || echo "semgrep не установлен: шаг SAST будет требовать решения DevSecOps"; \
     fi
 
-# Непривилегированный пользователь: сервис пишет только во временные каталоги
-# распаковки/сканирования и временный OCI archive для skopeo.
-RUN useradd -u 10001 -m moderation
+# Непривилегированный пользователь. Каталог OSV создаётся в образе заранее:
+# при первом подключении пустого named volume Docker сохранит его владельца,
+# и worker сможет атомарно менять /var/lib/osv-db/current без root.
+RUN useradd -u 10001 -m moderation \
+ && install -d -o moderation -g moderation /var/lib/osv-db
 USER moderation
 
 COPY --from=build /out/moderation /usr/local/bin/moderation

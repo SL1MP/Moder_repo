@@ -175,6 +175,20 @@ make sync-osv                       # без принуждения — толь
 make cli ARGS="sync-osv --force"    # перезагрузить тот же снапшот
 ```
 
+`OSV_LOCAL_DB_PATH` должен указывать на дочерний каталог writable-тома, а не
+на саму точку монтирования. Для Docker Compose используется
+`/var/lib/osv-db/current`: временные каталоги `current.new-*` и
+`current.old-*` создаются рядом с ним внутри volume, поэтому атомарная
+подмена работает и под непривилегированным UID 10001.
+
+Если named volume был создан старой версией образа и принадлежит root, права
+исправляются один раз:
+
+```bash
+docker compose run --rm --user root --entrypoint sh worker-go -lc \
+  'install -d -o 10001 -g 10001 /var/lib/osv-db && chown -R 10001:10001 /var/lib/osv-db'
+```
+
 или из UI: «Настройка» → карточка «База уязвимостей OSV» → «синхронизировать снапшот» (роль
 `devsecops`/`admin`).
 

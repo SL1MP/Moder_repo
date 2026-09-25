@@ -67,7 +67,7 @@ def fetch(ecosystem: str, root: Path) -> tuple[int, str]:
 
 
 def main() -> int:
-    root = Path(os.environ.get("OSV_LOCAL_DB_PATH", "/var/lib/osv-db"))
+    root = Path(os.environ.get("OSV_LOCAL_DB_PATH", "/var/lib/osv-db/current"))
     ecosystems = os.environ.get("OSV_ECOSYSTEMS", " ".join(DEFAULT_ECOSYSTEMS)).split()
     root.mkdir(parents=True, exist_ok=True)
 

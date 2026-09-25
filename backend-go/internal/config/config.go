@@ -362,7 +362,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		ArtifactToken:    getenv("ARTIFACT_TOKEN"),
 		ArtifactDryRun:   boolOr(getenv("ARTIFACT_DRY_RUN"), false),
 
-		OSVLocalDBPath:  valueOr(getenv("OSV_LOCAL_DB_PATH"), "/var/lib/osv-db"),
+		OSVLocalDBPath:  valueOr(getenv("OSV_LOCAL_DB_PATH"), "/var/lib/osv-db/current"),
 		OSVDBSource:     valueOr(getenv("OSV_DB_SOURCE"), "artifactory"),
 		OSVDBURL:        strings.TrimSpace(getenv("OSV_DB_URL")),
 		OSVDBToken:      strings.TrimSpace(getenv("OSV_DB_TOKEN")),
