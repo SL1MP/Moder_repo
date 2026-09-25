@@ -134,7 +134,7 @@ func TestQuarantineMetadataFailureCanBeReleasedManually(t *testing.T) {
 	e := newEnv(t, r)
 	e.registry = registry.New(registry.Config{
 		PyPIURL: "https://pypi.test",
-		HTTP:    &fakeRegistryHTTP{responses: map[string]string{}},
+		HTTP:    &fakeRegistryHTTP{err: fmt.Errorf("connection refused")},
 	})
 	pkg, ver, item := setup(t, r, "metadata-unavailable", "1.0.0")
 
@@ -148,6 +148,31 @@ func TestQuarantineMetadataFailureCanBeReleasedManually(t *testing.T) {
 	steps := stepsByCode(t, r, item.ID)
 	if steps["quarantine"].Result != "warn" {
 		t.Errorf("quarantine = %q, ожидался warn", steps["quarantine"].Result)
+	}
+}
+
+func TestQuarantineMissingVersionFailsInsteadOfWaitingForManualRelease(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	e.registry = registry.New(registry.Config{
+		PyPIURL: "https://pypi.test",
+		HTTP:    &fakeRegistryHTTP{responses: map[string]string{}},
+	})
+	pkg, ver, item := setup(t, r, "missing-version", "99.99.99")
+
+	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ItemStatus != "failed" {
+		t.Fatalf("ItemStatus = %q, ожидался failed", res.ItemStatus)
+	}
+	steps := stepsByCode(t, r, item.ID)
+	if steps["quarantine"].Result != "fail" {
+		t.Errorf("quarantine = %q, ожидался fail", steps["quarantine"].Result)
 	}
 }
 

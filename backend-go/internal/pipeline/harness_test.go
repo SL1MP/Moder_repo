@@ -120,9 +120,13 @@ func (f *fakeFetcher) Fetch(_ context.Context, url string, limit int64) ([]byte,
 type fakeRegistryHTTP struct {
 	responses map[string]string
 	fallback  string
+	err       error
 }
 
 func (f *fakeRegistryHTTP) Do(req *http.Request) (*http.Response, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	body, ok := f.responses[req.URL.String()]
 	status := 200
 	if !ok {

@@ -30,6 +30,7 @@ type dockerRegistry struct {
 	// identityEncodingSeen подтверждает, что клиент запретил прозрачную
 	// распаковку gzip-слоёв стандартным HTTP transport Go.
 	identityEncodingSeen bool
+	registryRequests     []string
 }
 
 func newDockerRegistry() *dockerRegistry {
@@ -61,6 +62,7 @@ func (d *dockerRegistry) Do(req *http.Request) (*http.Response, error) {
 		d.tokenIssued++
 		return jsonResponse(http.StatusOK, `{"token":"test-token"}`, nil), nil
 	}
+	d.registryRequests = append(d.registryRequests, url)
 	if d.requireToken && req.Header.Get("Authorization") == "" {
 		header := http.Header{}
 		header.Set("WWW-Authenticate",
@@ -91,6 +93,29 @@ func (d *dockerRegistry) Do(req *http.Request) (*http.Response, error) {
 		return jsonResponse(http.StatusOK, string(body), nil), nil
 	}
 	return jsonResponse(http.StatusNotFound, `{"errors":[]}`, nil), nil
+}
+
+// TestDockerUsesRegistryHostFromImage проверяет образы не из Docker Hub.
+// mcr.microsoft.com в имени — это registry host, а не первый namespace.
+func TestDockerUsesRegistryHostFromImage(t *testing.T) {
+	d := newDockerRegistry()
+	singleImage(d, "10.0.12", "2026-09-01T10:00:00Z", "MIT")
+	plugin := dockerPlugin(t, d)
+	ref, err := registry.ParseEntry(plugin, "mcr.microsoft.com/dotnet/aspnet:10.0.12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.FetchMetadata(context.Background(), ref); err != nil {
+		t.Fatalf("FetchMetadata из MCR: %v", err)
+	}
+	if len(d.registryRequests) == 0 {
+		t.Fatal("реестр не получил ни одного запроса")
+	}
+	for _, requestURL := range d.registryRequests {
+		if !strings.HasPrefix(requestURL, "https://mcr.microsoft.com/v2/dotnet/aspnet/") {
+			t.Errorf("запрос ушёл не в MCR или содержит host в repository path: %s", requestURL)
+		}
+	}
 }
 
 func jsonResponse(status int, body string, header http.Header) *http.Response {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -403,8 +404,9 @@ func (p *Docker) Download(ctx context.Context, ref Ref, limit int64) ([]byte, st
 // manifest скачивает манифест по тегу или digest. Возвращает сырые байты (их
 // и надо класть в раскладку: пересериализация изменила бы digest) и сам digest.
 func (p *Docker) manifest(ctx context.Context, image, reference string) ([]byte, string, error) {
-	url := fmt.Sprintf("%s/v2/%s/manifests/%s", strings.TrimRight(p.BaseURL, "/"), image, reference)
-	body, header, err := p.get(ctx, url, manifestAccept, image, maxRegistryResponseBytes)
+	baseURL, repository := p.registryTarget(image)
+	manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", baseURL, repository, reference)
+	body, header, err := p.get(ctx, manifestURL, manifestAccept, repository, maxRegistryResponseBytes)
 	if err != nil {
 		return nil, "", err
 	}
@@ -419,8 +421,9 @@ func (p *Docker) manifest(ctx context.Context, image, reference string) ([]byte,
 }
 
 func (p *Docker) blob(ctx context.Context, image, digest string, limit int64) ([]byte, error) {
-	url := fmt.Sprintf("%s/v2/%s/blobs/%s", strings.TrimRight(p.BaseURL, "/"), image, digest)
-	body, _, err := p.get(ctx, url, "*/*", image, limit)
+	baseURL, repository := p.registryTarget(image)
+	blobURL := fmt.Sprintf("%s/v2/%s/blobs/%s", baseURL, repository, digest)
+	body, _, err := p.get(ctx, blobURL, "*/*", repository, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -435,6 +438,39 @@ func (p *Docker) blob(ctx context.Context, image, digest string, limit int64) ([
 				"реестр отдал не те байты", digest, got)
 	}
 	return body, nil
+}
+
+// registryTarget отделяет registry host от имени репозитория.
+//
+// В записи mcr.microsoft.com/dotnet/aspnet первый сегмент — не namespace, а
+// адрес реестра. Раньше он оставался частью image, а запрос всё равно уходил
+// на REGISTRY_DOCKER_URL (обычно Docker Hub): получался запрос Docker Hub за
+// репозиторием mcr.microsoft.com/dotnet/aspnet и закономерный 401.
+func (p *Docker) registryTarget(image string) (baseURL, repository string) {
+	baseURL = strings.TrimRight(p.BaseURL, "/")
+	repository = image
+	host, rest, explicit := strings.Cut(image, "/")
+	if !explicit || !(host == "localhost" || strings.ContainsAny(host, ".:")) {
+		return baseURL, repository
+	}
+
+	// Явное docker.io использует тот же endpoint, который задан настройкой,
+	// а не HTML-хост docker.io. Для официального образа восстанавливаем
+	// обязательный namespace library.
+	if host == "docker.io" || host == "index.docker.io" || host == "registry-1.docker.io" {
+		if !strings.Contains(rest, "/") {
+			rest = "library/" + rest
+		}
+		return baseURL, rest
+	}
+
+	// Если явно указанный host совпадает с REGISTRY_DOCKER_URL, сохраняем его
+	// схему (внутренний registry может быть доступен по http). Для внешнего
+	// host безопасный вариант по умолчанию — https.
+	if configured, err := url.Parse(baseURL); err == nil && strings.EqualFold(configured.Host, host) {
+		return baseURL, rest
+	}
+	return "https://" + host, rest
 }
 
 // get — запрос к реестру с получением токена при 401.

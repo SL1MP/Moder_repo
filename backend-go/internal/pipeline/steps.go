@@ -2,10 +2,12 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"moderation/internal/domain"
+	"moderation/internal/registry"
 )
 
 // Step — один шаг конвейера.
@@ -151,6 +153,14 @@ func (QuarantineStep) Run(ctx context.Context, pc *Context) (StepOutcome, error)
 		// свежей версии.
 		meta, err := pc.Metadata(ctx)
 		if err != nil {
+			// Отсутствующая версия — не сбой проверки карантина и не повод для
+			// ручного снятия. Скачивать дальше всё равно нечего: показываем
+			// разработчику точную ошибку уже на первом обращении к реестру.
+			if errors.Is(err, registry.ErrNotFound) {
+				return Fail(fmt.Sprintf("Версия не найдена в реестре: %v", err)).
+					WithStatus("failed", "failed").
+					WithNextAction("Исправьте имя или версию пакета и создайте новую заявку."), nil
+			}
 			// Это именно ручной карантин, а не решение по результатам
 			// сканирования. ReleaseQuarantine принимает статус quarantined;
 			// прежний awaiting_security показывал кнопку снятия карантина,
