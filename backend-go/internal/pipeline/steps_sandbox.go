@@ -47,6 +47,17 @@ func (SandboxScanStep) Code() string { return "sandbox_scan" }
 const sandboxTitle = "Проверка в песочнице"
 
 func (s SandboxScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
+	if pc.Package.Manager == "docker" {
+		return StepOutcome{
+			Result:  "skipped",
+			Message: "Проверка в песочнице отключена для Docker-образов.",
+			Details: map[string]any{
+				"applicable": false,
+				"manager":    pc.Package.Manager,
+				"reason":     "not_applicable",
+			},
+		}, nil
+	}
 	if !pc.Config.SandboxEnabled {
 		// Чистое выключение: шаг отдаёт pass с явной пометкой, а не молча
 		// пропускается. Отчёт при этом не пишется — прогона не было.

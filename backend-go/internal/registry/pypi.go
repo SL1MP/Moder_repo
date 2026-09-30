@@ -2,8 +2,12 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"path"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -98,13 +102,8 @@ type pypiDist struct {
 }
 
 func (p *PyPI) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
-	url := fmt.Sprintf("%s/pypi/%s/%s/json", p.BaseURL, ref.Name, ref.RawVersion)
-	var payload pypiResponse
-	if err := getJSON(ctx, p.HTTP, url, "application/json", &payload); err != nil {
-		if err == ErrNotFound {
-			return Metadata{}, fmt.Errorf("%w: пакет %s==%s отсутствует в реестре pypi",
-				ErrNotFound, ref.DisplayName, ref.RawVersion)
-		}
+	payload, err := p.release(ctx, ref)
+	if err != nil {
 		return Metadata{}, err
 	}
 
@@ -149,6 +148,79 @@ func (p *PyPI) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 		meta.LicenseSPDX = SPDXFromClassifiers(payload.Info.Classifiers)
 	}
 	return meta, nil
+}
+
+func (p *PyPI) release(ctx context.Context, ref Ref) (pypiResponse, error) {
+	requestURL := fmt.Sprintf("%s/pypi/%s/%s/json", p.BaseURL, ref.Name, ref.RawVersion)
+	var payload pypiResponse
+	if err := getJSON(ctx, p.HTTP, requestURL, "application/json", &payload); err != nil {
+		if err == ErrNotFound {
+			return pypiResponse{}, fmt.Errorf("%w: пакет %s==%s отсутствует в реестре pypi",
+				ErrNotFound, ref.DisplayName, ref.RawVersion)
+		}
+		return pypiResponse{}, err
+	}
+	return payload, nil
+}
+
+func (*PyPI) ReleaseBundle() {}
+
+// Download переносит весь релиз: source distribution и каждый wheel для всех
+// опубликованных Python ABI/платформ. Выбор одного универсального wheel делал
+// версию недоступной для разработчиков на другой платформе.
+func (p *PyPI) Download(ctx context.Context, ref Ref, limit int64) ([]byte, string, error) {
+	payload, err := p.release(ctx, ref)
+	if err != nil {
+		return nil, "", err
+	}
+	dists := make([]pypiDist, 0, len(payload.URLs))
+	seen := map[string]bool{}
+	for _, dist := range payload.URLs {
+		if dist.PackageType != "bdist_wheel" && dist.PackageType != "sdist" {
+			continue
+		}
+		name := path.Base(strings.TrimSpace(dist.Filename))
+		if name == "." || name == "" || name != dist.Filename || seen[name] {
+			continue
+		}
+		seen[name] = true
+		dists = append(dists, dist)
+	}
+	if len(dists) == 0 {
+		return nil, "", fmt.Errorf("релиз %s==%s не содержит wheel или sdist",
+			ref.DisplayName, ref.RawVersion)
+	}
+	sort.Slice(dists, func(i, j int) bool { return dists[i].Filename < dists[j].Filename })
+
+	files := make([]BundleFile, 0, len(dists))
+	remaining := limit
+	for _, dist := range dists {
+		if limit > 0 && (remaining <= 0 || dist.Size > remaining) {
+			return nil, "", fmt.Errorf("файлы PyPI-релиза больше допустимого предела %d байт", limit)
+		}
+		body, err := getBytesWithLimit(ctx, p.HTTP, dist.URL, "application/octet-stream", remaining)
+		if err != nil {
+			return nil, "", fmt.Errorf("скачивание PyPI-файла %s: %w", dist.Filename, err)
+		}
+		if declared := strings.TrimSpace(dist.Digests["sha256"]); declared != "" {
+			sum := sha256.Sum256(body)
+			actual := hex.EncodeToString(sum[:])
+			if !strings.EqualFold(actual, declared) {
+				return nil, "", fmt.Errorf("sha256 PyPI-файла %s не совпал: ожидалось %s, получено %s",
+					dist.Filename, declared, actual)
+			}
+		}
+		files = append(files, BundleFile{Name: dist.Filename, Data: body})
+		if limit > 0 {
+			remaining -= int64(len(body))
+		}
+	}
+	bundle, err := PackBundle("pypi", files, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	filename := fmt.Sprintf("%s-%s.pypi-release.tgz", safeFilename(ref.Name), safeFilename(ref.RawVersion))
+	return bundle, filename, nil
 }
 
 // choosePypiDist предпочитает wheel: он же обычно и публикуется во внутренний

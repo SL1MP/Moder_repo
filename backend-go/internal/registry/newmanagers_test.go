@@ -74,6 +74,103 @@ func TestMavenMetadata(t *testing.T) {
 	}
 }
 
+func TestMavenDownloadFiltersAndBundlesVersionAssets(t *testing.T) {
+	base := "https://maven.test/org/example/tool/2.2.21"
+	f := &fakeRegistry{responses: map[string]string{
+		base + "/tool-2.2.21.pom": `<project><licenses><license><name>MIT</name></license></licenses></project>`,
+		base + "/": `<html><body>
+		  <a href="tool-2.2.21.pom">pom</a>
+		  <a href="tool-2.2.21.jar">jar</a>
+		  <a href="tool-2.2.21.zip">zip</a>
+		  <a href="tool-2.2.21.aar">aar</a>
+		  <a href="tool-2.2.21.klib">klib</a>
+		  <a href="tool-2.2.21-gradle80.jar">gradle80</a>
+		  <a href="tool-2.2.21.module">module</a>
+		  <a href="tool-2.2.21-sources.jar">sources</a>
+		  <a href="tool-2.2.21-javadoc.jar">javadoc</a>
+		  <a href="tool-2.2.21.pom.md5">md5</a>
+		  <a href="tool-2.2.21-sources.jar.sha1">sha1</a>
+		  <a href="tool-2.2.21.jar.sha256">sha</a>
+		  <a href="tool-2.2.21.jar.sha512">sha512</a>
+		  <a href="tool-2.2.21.jar.asc">signature</a>
+		</body></html>`,
+		base + "/tool-2.2.21.jar":          "main",
+		base + "/tool-2.2.21.jar.sha256":   "0d6e4079e36703ebd37c00722f5891d28b0e2811dc114b129215123adcce3605",
+		base + "/tool-2.2.21.zip":          "zip",
+		base + "/tool-2.2.21.aar":          "aar",
+		base + "/tool-2.2.21.klib":         "klib",
+		base + "/tool-2.2.21-gradle80.jar": "gradle",
+		base + "/tool-2.2.21.module":       `{"variants":[]}`,
+	}}
+	p := pluginWith(t, "maven", f)
+	ref, _ := registry.ParseEntry(p, "org.example:tool:2.2.21")
+	downloader, ok := p.(registry.ReleaseBundleDownloader)
+	if !ok {
+		t.Fatal("Maven обязан собирать многофайловый release bundle")
+	}
+	bundle, _, err := downloader.Download(context.Background(), ref, 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := registry.UnpackBundle(bundle, "maven", 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, file := range files {
+		got[file.Name] = true
+	}
+	for _, name := range []string{
+		"tool-2.2.21.pom", "tool-2.2.21.jar", "tool-2.2.21.zip", "tool-2.2.21.aar",
+		"tool-2.2.21.klib", "tool-2.2.21-gradle80.jar", "tool-2.2.21.module",
+	} {
+		if !got[name] {
+			t.Errorf("разрешённый Maven-файл %s не попал в bundle", name)
+		}
+	}
+	for _, name := range []string{
+		"tool-2.2.21-sources.jar", "tool-2.2.21-javadoc.jar",
+		"tool-2.2.21.pom.md5", "tool-2.2.21-sources.jar.sha1", "tool-2.2.21.jar.sha256",
+		"tool-2.2.21.jar.sha512", "tool-2.2.21.jar.asc",
+	} {
+		if got[name] {
+			t.Errorf("исключённый Maven-файл %s попал в bundle", name)
+		}
+	}
+}
+
+func TestMavenDownloadIncludesProtocExecutables(t *testing.T) {
+	base := "https://maven.test/com/google/protobuf/protoc/4.31.1"
+	f := &fakeRegistry{responses: map[string]string{
+		base + "/protoc-4.31.1.pom": `<project/>`,
+		base + "/": `<a href="protoc-4.31.1-linux-x86_64.exe">linux</a>
+			<a href="protoc-4.31.1-windows-x86_64.exe">windows</a>`,
+		base + "/protoc-4.31.1-linux-x86_64.exe":   "linux-exe",
+		base + "/protoc-4.31.1-windows-x86_64.exe": "windows-exe",
+	}}
+	p := pluginWith(t, "maven", f)
+	ref, _ := registry.ParseEntry(p, "com.google.protobuf:protoc:4.31.1")
+	bundle, _, err := p.(registry.ReleaseBundleDownloader).Download(context.Background(), ref, 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := registry.UnpackBundle(bundle, "maven", 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, file := range files {
+		got[file.Name] = true
+	}
+	for _, name := range []string{
+		"protoc-4.31.1-linux-x86_64.exe", "protoc-4.31.1-windows-x86_64.exe",
+	} {
+		if !got[name] {
+			t.Errorf("Maven executable %s не попал в bundle", name)
+		}
+	}
+}
+
 // TestMavenMissingPOMIsNotFound — отсутствие POM означает «такой версии нет»,
 // а не «лицензия не указана»: шаг конвейера обязан отличать ошибку
 // пользователя от недоступности реестра.

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"moderation/internal/artifactstore"
+	"moderation/internal/registry"
 )
 
 func newStore(t *testing.T, cfg artifactstore.Config, handler http.HandlerFunc) artifactstore.Store {
@@ -263,6 +264,126 @@ func TestNexusPublishConanRecipeThroughV2Protocol(t *testing.T) {
 	}
 	if !strings.Contains(gotURL, "/repository/conan-internal/v2/conans/boost/1.91.0/") {
 		t.Errorf("URL = %q", gotURL)
+	}
+}
+
+func TestNexusPublishesMavenReleaseBundle(t *testing.T) {
+	files := []registry.BundleFile{
+		{Name: "tool-2.2.21.pom", Data: []byte("pom")},
+		{Name: "tool-2.2.21.jar", Data: []byte("jar")},
+		{Name: "tool-2.2.21-gradle80.jar", Data: []byte("gradle")},
+		{Name: "tool-2.2.21.module", Data: []byte("module")},
+	}
+	bundle, err := registry.PackBundle("maven", files, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploaded := map[string]string{}
+	fields := map[string]string{}
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindNexus},
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if r.Method != http.MethodPost || r.URL.Path != "/service/rest/v1/components" {
+				t.Errorf("неожиданный запрос %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			reader, parseErr := r.MultipartReader()
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			for {
+				part, nextErr := reader.NextPart()
+				if nextErr == io.EOF {
+					break
+				}
+				if nextErr != nil {
+					t.Fatal(nextErr)
+				}
+				body, _ := io.ReadAll(part)
+				if part.FileName() != "" {
+					uploaded[part.FileName()] = string(body)
+				} else {
+					fields[part.FormName()] = string(body)
+				}
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	publisher := store.(artifactstore.ReleaseBundlePublisher)
+	_, err = publisher.PublishReleaseBundle(context.Background(), artifactstore.Target{
+		Repo: "maven-releases", Manager: "maven", Name: "org.example:tool", Version: "2.2.21",
+	}, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields["maven2.groupId"] != "org.example" || fields["maven2.artifactId"] != "tool" {
+		t.Fatalf("Maven coordinates = %#v", fields)
+	}
+	for _, file := range files {
+		if uploaded[file.Name] != string(file.Data) {
+			t.Errorf("Maven asset %s не опубликован", file.Name)
+		}
+	}
+	foundClassifier := false
+	for name, value := range fields {
+		if strings.HasSuffix(name, ".classifier") && value == "gradle80" {
+			foundClassifier = true
+		}
+	}
+	if !foundClassifier {
+		t.Errorf("classifier gradle80 не передан: %#v", fields)
+	}
+}
+
+func TestNexusPublishesEveryPyPIDistribution(t *testing.T) {
+	files := []registry.BundleFile{
+		{Name: "demo-1.0.0.tar.gz", Data: []byte("sdist")},
+		{Name: "demo-1.0.0-cp311-linux.whl", Data: []byte("linux")},
+		{Name: "demo-1.0.0-cp312-win.whl", Data: []byte("win")},
+	}
+	bundle, err := registry.PackBundle("pypi", files, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploaded := map[string]bool{}
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindNexus},
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			reader, parseErr := r.MultipartReader()
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			for {
+				part, nextErr := reader.NextPart()
+				if nextErr == io.EOF {
+					break
+				}
+				if nextErr != nil {
+					t.Fatal(nextErr)
+				}
+				if part.FileName() != "" {
+					uploaded[part.FileName()] = true
+				}
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	publisher := store.(artifactstore.ReleaseBundlePublisher)
+	_, err = publisher.PublishReleaseBundle(context.Background(), artifactstore.Target{
+		Repo: "pypi-internal", Manager: "pypi", Name: "demo", Version: "1.0.0",
+	}, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		if !uploaded[file.Name] {
+			t.Errorf("PyPI distribution %s не опубликован", file.Name)
+		}
 	}
 }
 

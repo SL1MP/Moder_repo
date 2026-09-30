@@ -43,6 +43,11 @@ func (n *Nexus) assetPath(t Target) string {
 	case "go":
 		// Модули лежат в raw-репозитории по схеме GOPROXY.
 		return fmt.Sprintf("%s/@v/%s", registry.EscapeModule(t.DisplayName), t.Filename)
+	case "maven":
+		if group, artifact, ok := strings.Cut(t.Name, ":"); ok {
+			return fmt.Sprintf("%s/%s/%s/%s",
+				strings.ReplaceAll(group, ".", "/"), artifact, t.Version, t.Filename)
+		}
 	}
 	return fmt.Sprintf("%s/%s/%s", t.Name, t.Version, t.Filename)
 }
@@ -122,6 +127,134 @@ func (n *Nexus) Publish(ctx context.Context, t Target, data []byte) (string, err
 		return "", rejected(n.Kind(), n.assetPath(t), resp.StatusCode, raw)
 	}
 	return fileURL, nil
+}
+
+// PublishReleaseBundle раскладывает transport bundle в реальные компоненты.
+// PyPI API принимает по одному distribution за запрос, Maven — все assets
+// одной GAV-координаты одним multipart-компонентом.
+func (n *Nexus) PublishReleaseBundle(ctx context.Context, t Target, data []byte) (string, error) {
+	files, err := registry.UnpackBundle(data, t.Manager, 2*1024*1024*1024)
+	if err != nil {
+		return "", err
+	}
+	switch t.Manager {
+	case "pypi":
+		firstURL := ""
+		for _, file := range files {
+			part := t
+			part.Filename = file.Name
+			published, err := n.Publish(ctx, part, file.Data)
+			if err != nil {
+				return "", err
+			}
+			if firstURL == "" {
+				firstURL = published
+			}
+		}
+		return firstURL, nil
+	case "maven":
+		return n.publishMavenBundle(ctx, t, files)
+	default:
+		return "", fmt.Errorf("transport bundle менеджера %s не поддержан Nexus", t.Manager)
+	}
+}
+
+func (n *Nexus) publishMavenBundle(ctx context.Context, t Target, files []registry.BundleFile) (string, error) {
+	if n.cfg.DryRun {
+		return "", fmt.Errorf("публикация вызвана в режиме dry-run: это ошибка вызывающего кода")
+	}
+	missing := make([]registry.BundleFile, 0, len(files))
+	for _, file := range files {
+		part := t
+		part.Filename = file.Name
+		exists, err := n.Exists(ctx, part)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			missing = append(missing, file)
+		}
+	}
+	first := t
+	first.Filename = files[0].Name
+	if len(missing) == 0 {
+		return n.ArtifactURL(first), nil
+	}
+	body, contentType, err := n.mavenComponentForm(t, missing)
+	if err != nil {
+		return "", err
+	}
+	upload := fmt.Sprintf("%s/service/rest/v1/components?repository=%s",
+		n.cfg.BaseURL, url.QueryEscape(t.Repo))
+	resp, err := n.do(ctx, http.MethodPost, upload, body, map[string]string{"Content-Type": contentType})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", rejected(n.Kind(), n.assetPath(first), resp.StatusCode, raw)
+	}
+	return n.ArtifactURL(first), nil
+}
+
+func (n *Nexus) mavenComponentForm(t Target, files []registry.BundleFile) ([]byte, string, error) {
+	group, artifact, ok := strings.Cut(t.Name, ":")
+	if !ok || group == "" || artifact == "" {
+		return nil, "", fmt.Errorf("некорректная Maven-координата %q", t.Name)
+	}
+	var buf bytes.Buffer
+	form := multipart.NewWriter(&buf)
+	for field, value := range map[string]string{
+		"maven2.groupId": group, "maven2.artifactId": artifact, "maven2.version": t.Version,
+	} {
+		if err := form.WriteField(field, value); err != nil {
+			return nil, "", err
+		}
+	}
+	for i, file := range files {
+		extension, classifier, err := mavenAssetCoordinates(artifact, t.Version, file.Name)
+		if err != nil {
+			return nil, "", err
+		}
+		field := fmt.Sprintf("maven2.asset%d", i+1)
+		part, err := form.CreateFormFile(field, file.Name)
+		if err != nil {
+			return nil, "", err
+		}
+		if _, err := part.Write(file.Data); err != nil {
+			return nil, "", err
+		}
+		if err := form.WriteField(field+".extension", extension); err != nil {
+			return nil, "", err
+		}
+		if classifier != "" {
+			if err := form.WriteField(field+".classifier", classifier); err != nil {
+				return nil, "", err
+			}
+		}
+	}
+	if err := form.Close(); err != nil {
+		return nil, "", err
+	}
+	return buf.Bytes(), form.FormDataContentType(), nil
+}
+
+func mavenAssetCoordinates(artifact, version, filename string) (extension, classifier string, err error) {
+	extension = strings.TrimPrefix(path.Ext(filename), ".")
+	if extension == "" {
+		return "", "", fmt.Errorf("у Maven-файла %s нет расширения", filename)
+	}
+	base := strings.TrimSuffix(filename, "."+extension)
+	prefix := artifact + "-" + version
+	switch {
+	case base == prefix:
+		return extension, "", nil
+	case strings.HasPrefix(base, prefix+"-"):
+		return extension, strings.TrimPrefix(base, prefix+"-"), nil
+	default:
+		return "", "", fmt.Errorf("Maven-файл %s не принадлежит координате %s:%s", filename, artifact, version)
+	}
 }
 
 // conanRecipeURL возвращает адрес recipe archive в нативном Conan v2 API.
@@ -375,6 +508,9 @@ func (n *Nexus) doConan(
 // у каждого формата своё, и ошибиться в нём значит получить 400 «missing
 // asset» вместо публикации.
 func (n *Nexus) componentForm(t Target, data []byte) ([]byte, string, error) {
+	if t.Manager == "maven" {
+		return n.mavenComponentForm(t, []registry.BundleFile{{Name: t.Filename, Data: data}})
+	}
 	var buf bytes.Buffer
 	form := multipart.NewWriter(&buf)
 

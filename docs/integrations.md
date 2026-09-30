@@ -18,7 +18,7 @@
 ### Sonatype Nexus (значение по умолчанию в коде — не то, что использует production)
 
 Один инстанс на все менеджеры: hosted-репозиторий на каждый (`ARTIFACT_REPO_PYPI`,
-`ARTIFACT_REPO_NPM`, `ARTIFACT_REPO_GO`, `ARTIFACT_REPO_NUGET`,
+`ARTIFACT_REPO_NPM`, `ARTIFACT_REPO_GO`, `ARTIFACT_REPO_NUGET`, `ARTIFACT_REPO_MAVEN`,
 `ARTIFACT_REPO_DOCKER`, `ARTIFACT_REPO_CONAN`) плюс raw-репозиторий со снапшотами OSV
 (`ARTIFACT_REPO_OSV`).
 Обычные пакеты публикуются через Nexus REST API (`/service/rest/v1/...`), Docker —
@@ -34,6 +34,7 @@ ARTIFACT_REPO_PYPI=pypi-internal
 ARTIFACT_REPO_NPM=npm-internal
 ARTIFACT_REPO_GO=go-internal
 ARTIFACT_REPO_NUGET=nuget-internal
+ARTIFACT_REPO_MAVEN=maven-releases
 ARTIFACT_REPO_DOCKER=docker-internal
 ARTIFACT_REPO_CONAN=conan-internal
 ARTIFACT_DOCKER_REGISTRY_URL=http://nexus:8081/docker-internal
@@ -56,6 +57,23 @@ path-based routing: тогда worker публикует в
 исходный multi-platform index, manifests всех платформ, configs и layers.
 `.oci.tar.gz` остаётся только временным транспортным форматом staging и после
 успешной публикации удаляется; разработчик его не скачивает.
+Шаг Sandbox для Docker не выполняется: образ уже представлен OCI layout с
+несколькими платформами, а загрузка всего набора в файловую песочницу не даёт
+корректного платформенного запуска.
+
+Для Maven сервис модерирует и публикует набор файлов одной GAV-версии. В него
+входят `*.zip`, `*.jar`, `*.pom`, `*.aar`, `*.klib`, `*.module`,
+`protoc-*.exe` и classifier-варианты вида `*-gradle*.jar`. Не публикуются
+`-sources.jar`, `-javadoc.jar`, подписи `.asc` и checksum-файлы `.md5`,
+`.sha1`, `.sha256`, `.sha512`; доступные checksum используются только для
+проверки скачанных байтов. В staging набор хранится как служебный bundle, а в
+Maven hosted repository загружается одним компонентом с отдельными assets.
+
+Для PyPI скачиваются source distribution и **все** wheel-файлы запрошенной
+версии из `/pypi/{name}/{version}/json`: универсальные, платформенные и ABI-
+зависимые. Поэтому одна одобренная версия доступна для всех Python/platform
+комбинаций, которые опубликовал автор. Transport bundle в PyPI repository не
+попадает: каждый `.whl`/sdist загружается как отдельный distribution.
 
 Для Conan создайте **hosted repository формата Conan 2**, а не raw. Сервис
 публикует полный снимок исходной recipe revision через нативный Conan v2 API:
@@ -93,12 +111,14 @@ ARTIFACT_REPO_PYPI=pypi-local
 ARTIFACT_REPO_NPM=npm-local
 ARTIFACT_REPO_GO=go-local
 ARTIFACT_REPO_NUGET=nuget-local
+ARTIFACT_REPO_MAVEN=maven-local
 ARTIFACT_REPO_OSV=generic-local
 # Шаблоны путей загрузки на каждый менеджер: {repo}, {name}, {normalized_name}, {version}, {filename}
 ARTIFACT_PATH_TEMPLATE_PYPI={repo}/{name}/{filename}
 ARTIFACT_PATH_TEMPLATE_NPM={repo}/{name}/-/{filename}
 ARTIFACT_PATH_TEMPLATE_GO={repo}/{name}/@v/{filename}
 ARTIFACT_PATH_TEMPLATE_NUGET={repo}/{name}/{version}/{filename}
+ARTIFACT_PATH_TEMPLATE_MAVEN={repo}/{name}/{version}/{filename}
 ```
 
 Для Docker `ARTIFACT_REPO_DOCKER` должен указывать на локальный репозиторий

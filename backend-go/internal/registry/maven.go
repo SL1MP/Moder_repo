@@ -2,10 +2,18 @@ package registry
 
 import (
 	"context"
+	"crypto/sha1" //nolint:gosec // сверка с опубликованной Maven checksum
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"html"
+	"net/url"
+	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -14,6 +22,7 @@ var (
 	// groupId и artifactId Maven: буквы, цифры, дефис, подчёркивание, точка.
 	mavenCoordRe  = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
 	mavenVersionR = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
+	mavenHrefRe   = regexp.MustCompile(`(?i)href\s*=\s*["']([^"']+)["']`)
 )
 
 // Maven — плагин менеджера maven. Формат записи: groupId:artifactId:version.
@@ -180,6 +189,229 @@ func (p *Maven) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 
 	meta.PublishedAt = p.publishedAt(ctx, group, artifact, ref.Version)
 	return meta, nil
+}
+
+func (*Maven) ReleaseBundle() {}
+
+type gradleModuleMetadata struct {
+	Variants []struct {
+		Files []struct {
+			Name string `json:"name"`
+		} `json:"files"`
+	} `json:"variants"`
+}
+
+// Download собирает все устанавливаемые ассеты одной Maven-версии. Файлы
+// документации, исходников, подписей и checksum не публикуются; checksum при
+// наличии используется только для проверки скачанных байтов.
+func (p *Maven) Download(ctx context.Context, ref Ref, limit int64) ([]byte, string, error) {
+	group, artifact, ok := splitMavenName(ref.Name)
+	if !ok {
+		return nil, "", invalidFormat(p.EntryFormat(), "некорректная Maven-координата %q", ref.Name)
+	}
+	pomBody, base, err := p.fetchPOM(ctx, group, artifact, ref.RawVersion)
+	if err != nil {
+		return nil, "", err
+	}
+	prefix := artifact + "-" + ref.RawVersion
+	pomName := prefix + ".pom"
+
+	// Directory listing нужен для classifier-артефактов, имя которых нельзя
+	// вывести заранее: gradle80/gradle81, платформенные protoc-*.exe и т.п.
+	listed := map[string]bool{}
+	if listing, listErr := getBytes(ctx, p.HTTP, base+"/", "text/html"); listErr == nil {
+		for _, name := range mavenListingNames(listing) {
+			listed[name] = true
+		}
+	}
+
+	candidates := map[string]bool{pomName: true}
+	for name := range listed {
+		if allowedMavenAsset(name) {
+			candidates[name] = true
+		}
+	}
+	// Для репозиториев без listing пробуем стандартные имена. .module затем
+	// подскажет дополнительные variant files.
+	for _, ext := range []string{"jar", "aar", "klib", "zip", "module"} {
+		candidates[prefix+"."+ext] = true
+	}
+
+	bodies := map[string][]byte{pomName: pomBody}
+	queue := sortedKeys(candidates)
+	for cursor := 0; cursor < len(queue); cursor++ {
+		name := queue[cursor]
+		if _, present := bodies[name]; present {
+			continue
+		}
+		remaining := remainingLimit(limit, bodies)
+		if limit > 0 && remaining <= 0 {
+			return nil, "", fmt.Errorf("файлы Maven-версии больше допустимого предела %d байт", limit)
+		}
+		body, fetchErr := getBytesWithLimit(ctx, p.HTTP, base+"/"+url.PathEscape(name),
+			"application/octet-stream", remaining)
+		if errors.Is(fetchErr, ErrNotFound) {
+			// Стандартные имена — пробы; отсутствие конкретного packaging штатно.
+			if listed[name] {
+				return nil, "", fmt.Errorf("файл %s объявлен Maven-репозиторием, но исчез при скачивании", name)
+			}
+			continue
+		}
+		if fetchErr != nil {
+			return nil, "", fmt.Errorf("скачивание Maven-файла %s: %w", name, fetchErr)
+		}
+		bodies[name] = body
+		if strings.HasSuffix(strings.ToLower(name), ".module") {
+			for _, variant := range mavenModuleFiles(body) {
+				if allowedMavenAsset(variant) && !candidates[variant] {
+					candidates[variant] = true
+					queue = append(queue, variant)
+				}
+			}
+		}
+	}
+
+	files := make([]BundleFile, 0, len(bodies))
+	for _, name := range sortedBodyKeys(bodies) {
+		body := bodies[name]
+		if err := verifyMavenChecksum(ctx, p.HTTP, base, name, body, listed); err != nil {
+			return nil, "", err
+		}
+		files = append(files, BundleFile{Name: name, Data: body})
+	}
+	if len(files) == 0 {
+		return nil, "", fmt.Errorf("Maven-версия %s:%s не содержит разрешённых артефактов",
+			ref.DisplayName, ref.RawVersion)
+	}
+	bundle, err := PackBundle("maven", files, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	return bundle, prefix + ".maven-release.tgz", nil
+}
+
+func mavenListingNames(body []byte) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, match := range mavenHrefRe.FindAllSubmatch(body, -1) {
+		raw := html.UnescapeString(string(match[1]))
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Path == "" || strings.HasSuffix(parsed.Path, "/") {
+			continue
+		}
+		name, err := url.PathUnescape(path.Base(parsed.Path))
+		if err != nil || name == "" || name == "." || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func allowedMavenAsset(name string) bool {
+	lower := strings.ToLower(path.Base(strings.TrimSpace(name)))
+	if lower == "" || lower != strings.ToLower(strings.TrimSpace(name)) {
+		return false
+	}
+	for _, suffix := range []string{
+		"-sources.jar", "-javadoc.jar", ".md5", ".sha1", ".sha256", ".sha512", ".asc",
+	} {
+		if strings.HasSuffix(lower, suffix) {
+			return false
+		}
+	}
+	switch path.Ext(lower) {
+	case ".zip", ".jar", ".pom", ".aar", ".klib", ".module":
+		return true
+	case ".exe":
+		return strings.HasPrefix(lower, "protoc-")
+	default:
+		return false
+	}
+}
+
+func mavenModuleFiles(body []byte) []string {
+	var module gradleModuleMetadata
+	if json.Unmarshal(body, &module) != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, variant := range module.Variants {
+		for _, file := range variant.Files {
+			name := path.Base(strings.TrimSpace(file.Name))
+			if name != file.Name || seen[name] {
+				continue
+			}
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func verifyMavenChecksum(ctx context.Context, client Doer, base, name string, body []byte, listed map[string]bool) error {
+	for _, check := range []struct {
+		suffix string
+		length int
+		actual func([]byte) string
+	}{
+		{".sha256", 64, func(data []byte) string {
+			sum := sha256.Sum256(data)
+			return hex.EncodeToString(sum[:])
+		}},
+		{".sha1", 40, func(data []byte) string {
+			sum := sha1.Sum(data) //nolint:gosec // сверка с Maven checksum
+			return hex.EncodeToString(sum[:])
+		}},
+	} {
+		checksumName := name + check.suffix
+		if !listed[checksumName] {
+			continue
+		}
+		raw, err := getBytes(ctx, client, base+"/"+url.PathEscape(checksumName), "text/plain")
+		if err != nil {
+			return fmt.Errorf("чтение checksum %s: %w", checksumName, err)
+		}
+		declared := firstToken(string(raw))
+		if len(declared) != check.length || !strings.EqualFold(declared, check.actual(body)) {
+			return fmt.Errorf("контрольная сумма Maven-файла %s не совпала (%s)", name, check.suffix[1:])
+		}
+		return nil
+	}
+	return nil
+}
+
+func remainingLimit(limit int64, bodies map[string][]byte) int64 {
+	if limit <= 0 {
+		return limit
+	}
+	remaining := limit
+	for _, body := range bodies {
+		remaining -= int64(len(body))
+	}
+	return remaining
+}
+
+func sortedKeys(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedBodyKeys(values map[string][]byte) []string {
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 const mavenMaxParentDepth = 6

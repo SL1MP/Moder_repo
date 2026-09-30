@@ -209,6 +209,50 @@ func TestPyPIMetadata(t *testing.T) {
 	}
 }
 
+func TestPyPIDownloadIncludesEveryWheelAndSdist(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://pypi.test/pypi/demo/1.0.0/json": `{
+		  "info": {}, "urls": [
+		    {"packagetype":"sdist","url":"https://files.test/demo-1.0.0.tar.gz",
+		     "filename":"demo-1.0.0.tar.gz","size":6,"digests":{}},
+		    {"packagetype":"bdist_wheel","url":"https://files.test/demo-1.0.0-cp311-linux.whl",
+		     "filename":"demo-1.0.0-cp311-linux.whl","size":5,"digests":{}},
+		    {"packagetype":"bdist_wheel","url":"https://files.test/demo-1.0.0-cp312-win.whl",
+		     "filename":"demo-1.0.0-cp312-win.whl","size":5,"digests":{}}
+		  ]
+		}`,
+		"https://files.test/demo-1.0.0.tar.gz":          "sdist!",
+		"https://files.test/demo-1.0.0-cp311-linux.whl": "linux",
+		"https://files.test/demo-1.0.0-cp312-win.whl":   "win!!",
+	}}
+	p := pluginFor(t, "pypi", f)
+	ref, _ := registry.ParseEntry(p, "demo==1.0.0")
+	downloader, ok := p.(registry.ReleaseBundleDownloader)
+	if !ok {
+		t.Fatal("PyPI обязан собирать многофайловый release bundle")
+	}
+	bundle, _, err := downloader.Download(context.Background(), ref, 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := registry.UnpackBundle(bundle, "pypi", 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, file := range files {
+		got[file.Name] = string(file.Data)
+	}
+	for name, body := range map[string]string{
+		"demo-1.0.0.tar.gz": "sdist!", "demo-1.0.0-cp311-linux.whl": "linux",
+		"demo-1.0.0-cp312-win.whl": "win!!",
+	} {
+		if got[name] != body {
+			t.Errorf("%s = %q, ожидалось %q", name, got[name], body)
+		}
+	}
+}
+
 // TestPyPILicenseFromClassifiers — поле license пустое, лицензия есть только в
 // classifiers.
 func TestPyPILicenseFromClassifiers(t *testing.T) {

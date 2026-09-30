@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"moderation/internal/artifactstore"
 	"moderation/internal/domain"
@@ -74,7 +75,7 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 		Repo: repoName, Manager: ref.Manager, Name: registry.PublishedName(ref.Manager, ref.Name),
 		DisplayName: ref.DisplayName,
 		Version:     ref.RawVersion, Filename: artifact.Filename, Path: path,
-		SourceURL:   deref(artifact.SourceURL),
+		SourceURL: deref(artifact.SourceURL),
 	}
 
 	if pc.Deps.Artifacts.DryRun() {
@@ -240,6 +241,31 @@ func publishArtifact(
 			return "", "", err
 		}
 		url, err := publisher.PublishOCI(ctx, target, payload)
+		if err != nil {
+			return "", "", err
+		}
+		return url, publishByUpload, nil
+	}
+
+	if target.Manager == "maven" || target.Manager == "pypi" {
+		expectedSuffix := "." + target.Manager + "-release.tgz"
+		if !strings.HasSuffix(artifact.Filename, expectedSuffix) {
+			return "", "", fmt.Errorf(
+				"в staging лежит старый одиночный %s-артефакт %s; "+
+					"перезапустите заявку с шага «Скачивание артефакта», чтобы собрать весь релиз",
+				target.Manager, artifact.Filename)
+		}
+		publisher, ok := pc.Deps.Artifacts.(artifactstore.ReleaseBundlePublisher)
+		if !ok {
+			return "", "", fmt.Errorf(
+				"настроенный артефактори (%s) не поддерживает публикацию многофайловых %s-релизов",
+				pc.Deps.Artifacts.Kind(), target.Manager)
+		}
+		payload, err := pc.Payload(ctx, artifact)
+		if err != nil {
+			return "", "", err
+		}
+		url, err := publisher.PublishReleaseBundle(ctx, target, payload)
 		if err != nil {
 			return "", "", err
 		}

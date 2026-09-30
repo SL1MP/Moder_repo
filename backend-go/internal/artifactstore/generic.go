@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"moderation/internal/registry"
 )
 
 // Generic — JFrog Artifactory и совместимые: файл кладётся PUT'ом прямо по
@@ -77,6 +79,39 @@ func (g *Generic) Publish(ctx context.Context, t Target, data []byte) (string, e
 		return "", rejected(g.Kind(), t.Path, resp.StatusCode, body)
 	}
 	return url, nil
+}
+
+func (g *Generic) PublishReleaseBundle(ctx context.Context, t Target, data []byte) (string, error) {
+	files, err := registry.UnpackBundle(data, t.Manager, 2*1024*1024*1024)
+	if err != nil {
+		return "", err
+	}
+	firstURL := ""
+	for _, file := range files {
+		part := t
+		part.Filename = file.Name
+		switch t.Manager {
+		case "pypi":
+			part.Path = fmt.Sprintf("%s/%s/%s", t.Name, t.Version, file.Name)
+		case "maven":
+			group, artifact, ok := strings.Cut(t.Name, ":")
+			if !ok || group == "" || artifact == "" {
+				return "", fmt.Errorf("некорректная Maven-координата %q", t.Name)
+			}
+			part.Path = fmt.Sprintf("%s/%s/%s/%s",
+				strings.ReplaceAll(group, ".", "/"), artifact, t.Version, file.Name)
+		default:
+			return "", fmt.Errorf("transport bundle менеджера %s не поддержан", t.Manager)
+		}
+		published, err := g.Publish(ctx, part, file.Data)
+		if err != nil {
+			return "", err
+		}
+		if firstURL == "" {
+			firstURL = published
+		}
+	}
+	return firstURL, nil
 }
 
 // Delete снимает файл с публикации.

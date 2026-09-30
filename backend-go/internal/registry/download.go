@@ -22,8 +22,9 @@ import (
 // нельзя: он тогда превращается в набор веток на каждый менеджер.
 //
 // Плагин, не реализующий Downloader, скачивается обычным путём: Metadata даёт
-// ArtifactURL, шаг делает GET. Так работают все менеджеры, у которых артефакт
-// — файл (pypi, npm, maven, nuget, php, luarocks, terraform, conan, files).
+// ArtifactURL, шаг делает GET. Так работают менеджеры, у которых релиз — один
+// файл (npm, nuget, php, luarocks, terraform, files). Maven и PyPI реализуют
+// Downloader, потому что целиком переносят многофайловый релиз.
 type Downloader interface {
 	// Download возвращает байты артефакта и имя файла под ним.
 	//
@@ -31,6 +32,15 @@ type Downloader interface {
 	// файлом: усечённый архив распакуется наполовину и будет просканирован
 	// наполовину, а выглядеть это будет как «проверено».
 	Download(ctx context.Context, ref Ref, limit int64) (payload []byte, filename string, err error)
+}
+
+// ReleaseBundleDownloader скачивает несколько файлов одной версии и
+// упаковывает их в служебный transport bundle. DownloadStep не должен сверять
+// хеш всего bundle с хешем одного выбранного файла из Metadata: каждый файл
+// проверяется самим менеджером до упаковки.
+type ReleaseBundleDownloader interface {
+	Downloader
+	ReleaseBundle()
 }
 
 // --------------------------------------------------------------------------- вспомогательное

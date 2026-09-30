@@ -51,7 +51,7 @@ func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 		limit = 512 * 1024 * 1024
 	}
 
-	payload, filename, err := fetchArtifact(ctx, pc, meta, limit)
+	payload, filename, releaseBundle, err := fetchArtifact(ctx, pc, meta, limit)
 	if err != nil {
 		return Fail(fmt.Sprintf("Артефакт не скачан: %v", err)).
 			WithStatus("failed", "failed").
@@ -65,7 +65,9 @@ func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	// перезалитый в реестре между запросом метаданных и скачиванием, не должен
 	// уехать дальше по конвейеру.
 	checksumNote := "реестр не сообщил контрольную сумму"
-	if meta.Checksum != "" && meta.ChecksumAlgo != "" {
+	if releaseBundle {
+		checksumNote = "контрольные суммы файлов релиза проверены до упаковки"
+	} else if meta.Checksum != "" && meta.ChecksumAlgo != "" {
 		actual, ok := hashWith(meta.ChecksumAlgo, payload)
 		switch {
 		case !ok:
@@ -126,33 +128,36 @@ func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 // сам. Большинству это не нужно: артефакт лежит по ссылке одним файлом, и
 // обычного GET достаточно. Docker и git — исключения по природе предмета: у
 // первого артефакт собирается из блобов по манифесту, у второго его как файла
-// вообще не существует, пока не создан (см. registry.Downloader).
+// вообще не существует, пока не создан. Maven и PyPI тоже используют
+// Downloader, потому что один релиз состоит из нескольких файлов
+// (см. registry.Downloader и registry.ReleaseBundleDownloader).
 func fetchArtifact(
 	ctx context.Context, pc *Context, meta registry.Metadata, limit int64,
-) ([]byte, string, error) {
+) ([]byte, string, bool, error) {
 	plugin, err := pc.Plugin()
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	if downloader, ok := plugin.(registry.Downloader); ok {
 		payload, filename, err := downloader.Download(ctx, pc.Ref(), limit)
 		if err != nil {
-			return nil, "", err
+			return nil, "", false, err
 		}
 		if filename == "" {
 			filename = meta.ArtifactFilename
 		}
-		return payload, defaultFilename(filename, pc), nil
+		_, releaseBundle := plugin.(registry.ReleaseBundleDownloader)
+		return payload, defaultFilename(filename, pc), releaseBundle, nil
 	}
 
 	if meta.ArtifactURL == "" {
-		return nil, "", fmt.Errorf("реестр не сообщил адрес артефакта — скачивать нечего")
+		return nil, "", false, fmt.Errorf("реестр не сообщил адрес артефакта — скачивать нечего")
 	}
 	payload, err := pc.Deps.Fetch.Fetch(ctx, meta.ArtifactURL, limit)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
-	return payload, defaultFilename(meta.ArtifactFilename, pc), nil
+	return payload, defaultFilename(meta.ArtifactFilename, pc), false, nil
 }
 
 // defaultFilename — имя файла, если менеджер его не сообщил. Пустое имя
