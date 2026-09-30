@@ -219,17 +219,40 @@ func (LicenseStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	}
 
 	spdx := ""
+	raw := ""
 	if pc.Version.LicenseSPDX != nil {
 		spdx = *pc.Version.LicenseSPDX
 	}
+	if pc.Version.LicenseRaw != nil {
+		raw = *pc.Version.LicenseRaw
+	}
 	// Лицензии ещё нет в базе — берём из метаданных реестра.
 	if spdx == "" {
-		if meta, err := pc.Metadata(ctx); err == nil && meta.LicenseSPDX != "" {
+		if meta, err := pc.Metadata(ctx); err == nil {
 			spdx = meta.LicenseSPDX
-			pc.Version.LicenseSPDX = &spdx
-			source := "registry"
-			pc.Version.LicenseSource = &source
+			raw = meta.LicenseRaw
+			if spdx != "" {
+				pc.Version.LicenseSPDX = &spdx
+			}
+			if raw != "" {
+				pc.Version.LicenseRaw = &raw
+			}
+			if spdx != "" || raw != "" {
+				source := "registry"
+				pc.Version.LicenseSource = &source
+			}
 		}
+	}
+
+	if pc.Lic != nil && (pc.Lic.IsForbidden(spdx) || pc.Lic.IsForbidden(raw)) {
+		license := spdx
+		if license == "" {
+			license = raw
+		}
+		return Fail(fmt.Sprintf("Лицензия %q запрещена политикой сервиса.", license)).
+			WithDetails(map[string]any{"spdx": spdx, "raw": raw, "forbidden": true}).
+			WithStatus("rejected", "rejected").
+			WithNextAction("Подберите пакет или версию с разрешённой лицензией."), nil
 	}
 
 	if pc.Lic != nil && pc.Lic.IsAllowed(spdx) {

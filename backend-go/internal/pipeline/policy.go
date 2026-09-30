@@ -23,5 +23,6 @@ type BlacklistPolicy interface {
 // LicensePolicy — справочник разрешённых лицензий.
 type LicensePolicy interface {
 	IsAllowed(spdxID string) bool
+	IsForbidden(spdxOrName string) bool
 	Failed() bool
 }

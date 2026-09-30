@@ -62,6 +62,58 @@ func (p *LicensePolicy) IsAllowed(spdx string) bool {
 	return p.isAllowed(spdx, 0)
 }
 
+// IsForbidden — запрещена ли лицензия политикой без права на ручное
+// согласование. Помимо SPDX ID принимает полное имя из licenses.yml: не все
+// реестры возвращают канонический идентификатор, некоторые отдают только
+// человекочитаемое название.
+//
+// В выражении `A OR B` запрет безусловен, только когда запрещены все варианты:
+// правообладатель разрешает выбрать один. В `A AND B` достаточно одной
+// запрещённой части, потому что соблюдать придётся обе лицензии.
+func (p *LicensePolicy) IsForbidden(value string) bool {
+	return p.isForbidden(value, 0)
+}
+
+func (p *LicensePolicy) isForbidden(value string, depth int) bool {
+	if p == nil || depth > maxExpressionDepth {
+		return false
+	}
+	key := normalizeSPDX(value)
+	if key == "" {
+		return false
+	}
+	if _, forbidden := p.Forbidden[key]; forbidden {
+		return true
+	}
+	// Полное имя проверяем до разбора выражений: названия вида
+	// "GNU ... v2.0 or later" содержат слово OR, но выражением SPDX не являются.
+	for _, entry := range p.Forbidden {
+		if normalizeLicenseName(entry.Name) == normalizeLicenseName(value) {
+			return true
+		}
+	}
+	if parts := splitExpression(key, " or "); len(parts) > 1 {
+		for _, part := range parts {
+			if !p.isForbidden(part, depth+1) {
+				return false
+			}
+		}
+		return true
+	}
+	if parts := splitExpression(key, " and "); len(parts) > 1 {
+		for _, part := range parts {
+			if p.isForbidden(part, depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	if parts := splitExpression(key, " with "); len(parts) > 1 {
+		return p.isForbidden(parts[0], depth+1)
+	}
+	return false
+}
+
 // maxExpressionDepth — предел вложенности составного выражения. Выражения
 // приходят из метаданных чужого пакета, то есть это недоверенный ввод:
 // без предела «A OR (B OR (C OR …))» уводит разбор в глубокую рекурсию.
@@ -163,6 +215,10 @@ func splitExpression(key, sep string) []string {
 
 func normalizeSPDX(spdx string) string {
 	return strings.ToLower(strings.TrimSpace(spdx))
+}
+
+func normalizeLicenseName(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(name), " "))
 }
 
 // --------------------------------------------------------------------------- blacklist

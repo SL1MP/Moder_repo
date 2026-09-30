@@ -3,6 +3,7 @@ package policy
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,36 @@ func TestLoadsRepositoryLicenses(t *testing.T) {
 	}
 }
 
+func TestRepositoryContainsImmediateLicenseDenylist(t *testing.T) {
+	p := LoadLicensePolicy(repoLicenses)
+	if p.Failed() {
+		t.Fatalf("справочник не прочитан: %s", p.Err)
+	}
+	want := strings.Fields(`
+		AGPL-1.0 AGPL-1.0-only AGPL-1.0-or-later Aladdin BUSL-1.1 CDLA-Sharing-1.0
+		CC-BY-ND-1.0 CC-BY-ND-2.0 CC-BY-ND-2.5 CC-BY-ND-3.0-DE CC-BY-ND-3.0 CC-BY-ND-4.0
+		CC-BY-NC-1.0 CC-BY-NC-2.0 CC-BY-NC-2.5 CC-BY-NC-3.0-DE CC-BY-NC-3.0 CC-BY-NC-4.0
+		CC-BY-NC-ND-1.0 CC-BY-NC-ND-2.0 CC-BY-NC-ND-2.5 CC-BY-NC-ND-3.0-DE
+		CC-BY-NC-ND-3.0-IGO CC-BY-NC-ND-3.0 CC-BY-NC-ND-4.0
+		CC-BY-NC-SA-1.0 CC-BY-NC-SA-2.0-UK CC-BY-NC-SA-2.0-FR CC-BY-NC-SA-2.0
+		CC-BY-NC-SA-2.0-DE CC-BY-NC-SA-2.5 CC-BY-NC-SA-3.0-DE CC-BY-NC-SA-3.0-IGO
+		CC-BY-NC-SA-3.0 CC-BY-NC-SA-4.0
+		CC-BY-SA-1.0 CC-BY-SA-2.0-UK CC-BY-SA-2.0 CC-BY-SA-2.1-JP CC-BY-SA-2.5
+		CC-BY-SA-3.0-AT CC-BY-SA-3.0-DE CC-BY-SA-3.0-IGO CC-BY-SA-3.0 CC-BY-SA-4.0
+		AGPL-3.0 AGPL-3.0-only AGPL-3.0-or-later
+		GPL-1.0-only GPL-1.0-or-later GPL-2.0-only GPL-2.0-or-later GPL-3.0-only GPL-3.0-or-later
+		LGPL-2.0-only LGPL-2.0-or-later MS-RL RPL-1.1 RPL-1.5 SimPL-2.0
+	`)
+	for _, id := range want {
+		if !p.IsForbidden(id) {
+			t.Errorf("%s отсутствует в безусловном denylist", id)
+		}
+	}
+	if !p.IsForbidden("Creative Commons Attribution Non Commercial Share Alike 4.0 International") {
+		t.Error("полное имя запрещённой лицензии должно распознаваться без SPDX ID")
+	}
+}
+
 // Составные выражения SPDX встречаются в метаданных реально (Python-пакеты
 // часто «MIT OR Apache-2.0»). Без их разбора такой пакет уходил бы юристу
 // каждый раз, хотя обе лицензии разрешены.
@@ -58,6 +89,26 @@ func TestCompositeLicenseExpressions(t *testing.T) {
 	for _, tc := range cases {
 		if got := p.IsAllowed(tc.expr); got != tc.want {
 			t.Errorf("IsAllowed(%q) = %v, ожидалось %v", tc.expr, got, tc.want)
+		}
+	}
+}
+
+func TestForbiddenCompositeLicenseExpressions(t *testing.T) {
+	p := policyWith([]string{"MIT"}, []string{"GPL-3.0-only", "AGPL-3.0-only"})
+	cases := []struct {
+		expr string
+		want bool
+	}{
+		{"GPL-3.0-only", true},
+		{"MIT OR GPL-3.0-only", false},
+		{"GPL-3.0-only OR AGPL-3.0-only", true},
+		{"MIT AND GPL-3.0-only", true},
+		{"GPL-3.0-only WITH Classpath-exception-2.0", true},
+		{"Unknown-License", false},
+	}
+	for _, tc := range cases {
+		if got := p.IsForbidden(tc.expr); got != tc.want {
+			t.Errorf("IsForbidden(%q) = %v, ожидалось %v", tc.expr, got, tc.want)
 		}
 	}
 }

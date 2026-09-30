@@ -246,6 +246,30 @@ func TestLicenseIsNotApplicableToExcludedManagers(t *testing.T) {
 	}
 }
 
+func TestForbiddenLicenseRejectsImmediately(t *testing.T) {
+	spdx := "GPL-3.0-only"
+	lic := licensePolicy()
+	lic.Forbidden[strings.ToLower(spdx)] = policy.LicenseEntry{SPDXID: spdx}
+	outcome, err := (pipeline.LicenseStep{}).Run(context.Background(), &pipeline.Context{
+		Package: &domain.Package{Manager: "pypi"},
+		Version: &domain.PackageVersion{LicenseSPDX: &spdx},
+		Lic:     lic,
+	})
+	if err != nil {
+		t.Fatalf("LicenseStep.Run: %v", err)
+	}
+	if outcome.Result != "fail" || !outcome.Stop || outcome.Defer {
+		t.Fatalf("результат = %+v, ожидался немедленный fail", outcome)
+	}
+	if outcome.ItemStatus != "rejected" || outcome.VersionStatus != "rejected" {
+		t.Fatalf("статусы = %q/%q, ожидались rejected/rejected",
+			outcome.ItemStatus, outcome.VersionStatus)
+	}
+	if forbidden, ok := outcome.Details["forbidden"].(bool); !ok || !forbidden {
+		t.Fatalf("details.forbidden = %#v, ожидался true", outcome.Details["forbidden"])
+	}
+}
+
 func TestSandboxIsNotApplicableToDocker(t *testing.T) {
 	outcome, err := (pipeline.SandboxScanStep{}).Run(context.Background(), &pipeline.Context{
 		Package: &domain.Package{Manager: "docker"},
