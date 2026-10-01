@@ -339,13 +339,14 @@ type ScanReport struct {
 	RequestItemID    int64
 	PackageVersionID int64
 
-	StepCode string // banner_scan | sast_scan
-	Scanner  string // yara | semgrep
+	StepCode string // sandbox_scan (исторически также banner_scan | sast_scan)
+	Scanner  string // внешняя песочница (исторически yara | semgrep)
 	Rules    *string
 
 	// State: clean | findings | unavailable. unavailable — проверка НЕ
 	// состоялась; это не «чисто», и отличать обязательно.
 	State            string
+	Verdict          *string
 	Threshold        string
 	FindingsTotal    int
 	FindingsBlocking int

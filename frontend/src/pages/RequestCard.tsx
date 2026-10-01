@@ -34,7 +34,17 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
 
   // Пока заявка в работе — обновляем состояние: конвейер выполняется асинхронно.
   useEffect(() => {
-    if (!data || !['pending'].includes(data.status)) return
+    const pipelineIsAdvancing = data?.packages.some((item) => {
+      if (item.status === 'queued' || item.status === 'running') return true
+      if (item.steps.some((step) => step.result === 'running')) return true
+      const current = item.steps.findIndex((step) => step.code === item.current_step)
+      if (current < 0 || current >= item.steps.length - 1) return false
+      const result = item.steps[current].result
+      // license/warn — отложенное согласование: конвейер продолжает проверки.
+      if (item.steps[current].code === 'license' && result === 'warn') return true
+      return ['pass', 'info', 'skipped'].includes(result)
+    })
+    if (!data || (data.status !== 'pending' && !pipelineIsAdvancing)) return
     const timer = setTimeout(reload, 4000)
     return () => clearTimeout(timer)
   }, [data, reload])
@@ -208,6 +218,10 @@ function PackageBlock({
   const isLegal = me.roles.includes('legal') || me.roles.includes('admin')
   const [restartingStep, setRestartingStep] = useState<string | null>(null)
   const [restartError, setRestartError] = useState<string | null>(null)
+  // При отложенном решении лицензии агрегатный current_step может ещё
+  // указывать на license, хотя worker уже выполняет следующий шаг. Строка
+  // pipeline_step с result=running — более точный источник текущей работы.
+  const runningStep = item.steps.find((step) => step.result === 'running')
 
   const restart = (stepCode: string, title: string) => {
     if (!window.confirm(
@@ -233,7 +247,7 @@ function PackageBlock({
           <b className="mono">
             {item.name} {item.version}
           </b>
-          <Badge value={item.status} title={item.status_title} />
+          <Badge value={item.status} title={item.status_title} label={item.status_title} />
           {item.dependency_kind === 'transitive' ? (
             <span className="badge">транзитивная</span>
           ) : null}
@@ -253,10 +267,20 @@ function PackageBlock({
           ) : null}
         </div>
         <div className="small muted nowrap">
-          {item.current_step_title ? `шаг: ${item.current_step_title}` : null}
+          {runningStep
+            ? `выполняется: ${runningStep.title}`
+            : item.current_step_title
+              ? `шаг: ${item.current_step_title}`
+              : null}
           {item.quarantine_until ? ` · карантин до ${formatDate(item.quarantine_until)}` : null}
         </div>
       </div>
+
+      {item.waiting_for ? (
+        <div className="next-action" style={{ marginTop: 8 }}>
+          <strong>Требуется решение:</strong> {item.waiting_for.replace(/^Ждёт /, '')}
+        </div>
+      ) : null}
 
       {item.blocked_reason ? (
         <div className="small dim" style={{ marginTop: 6 }}>
@@ -316,7 +340,11 @@ function PackageBlock({
             </>
           ) : null}
 
-          <ScanReports itemId={item.id} />
+          <ScanReports
+            itemId={item.id}
+            steps={item.steps}
+            refreshKey={item.steps.find((step) => step.code === 'sandbox_scan')?.finished_at ?? item.status}
+          />
           <SBOMs
             itemId={item.id}
             refreshKey={item.steps.find((step) => step.code === 'sbom')?.finished_at ?? item.status}
@@ -389,8 +417,16 @@ function SBOMs({ itemId, refreshKey }: { itemId: number; refreshKey: string | nu
  * состояния, а не ошибка карточки. Иначе у всех, кто Go-версию не поднимал,
  * в каждой карточке висела бы красная ошибка.
  */
-function ScanReports({ itemId }: { itemId: number }) {
-  const reports = useAsync(() => api.scanReports(itemId), [itemId])
+function ScanReports({
+  itemId,
+  steps,
+  refreshKey,
+}: {
+  itemId: number
+  steps: RequestItem['steps']
+  refreshKey: string | null
+}) {
+  const reports = useAsync(() => api.scanReports(itemId), [itemId, refreshKey])
   const [open, setOpen] = useState<{ title: string; url: string; kind: 'html' | 'json' } | null>(
     null,
   )
@@ -398,7 +434,11 @@ function ScanReports({ itemId }: { itemId: number }) {
   // Сервис не поднят или маршрут не проброшен — молча ничего не показываем.
   if (reports.error) return null
   if (reports.loading) return null
-  const items = reports.data?.reports ?? []
+  const stepResults = new Map(steps.map((step) => [step.code, step.result]))
+  const items = (reports.data?.reports ?? []).filter((report) => {
+    const result = stepResults.get(report.step_code)
+    return result !== 'pending' && result !== 'running'
+  })
   if (!items.length) return null
 
   return (
@@ -426,6 +466,8 @@ function ScanReports({ itemId }: { itemId: number }) {
                   // Пустой список находок здесь НЕ означает «чисто»: прогон не
                   // состоялся. Показать «0» было бы прямой дезинформацией.
                   <span className="muted">не проверялось</span>
+                ) : r.findings_total === 0 && r.verdict ? (
+                  <span className="mono">{r.verdict}</span>
                 ) : r.findings_total === 0 ? (
                   <span className="muted">нет</span>
                 ) : (
@@ -537,7 +579,10 @@ function Actions({
   // лицензии не доходила — юрист не мог поставить апрув, пока не решит DevSecOps.
   const pending = item.pending ?? []
   const waitsQuarantine = pending.includes('quarantine') || item.status === 'quarantined'
-  const waitsSecurity = pending.includes('vuln_scan') || item.status === 'awaiting_security'
+  // Статус awaiting_security мог остаться у старой заявки, которую когда-то
+  // заблокировал OSV. После перевода OSV в advisory решение DevSecOps должно
+  // появляться только при открытой блокировке обязательной песочницы.
+  const waitsSecurity = pending.includes('sandbox_scan')
   const waitsLegal =
     pending.includes('license') ||
     item.status === 'awaiting_legal' ||
@@ -628,11 +673,19 @@ function SecurityBlock({
   onChanged: () => void
 }) {
   const { comment, setComment, busy, error, run } = useDecision(onChanged)
+  const sandboxStep = item.steps.find((step) => step.code === 'sandbox_scan')
+  const sandboxUnavailable = sandboxStep?.details?.reason === 'sandbox_unavailable'
 
   return (
     <div className="card tight" style={{ marginTop: 12 }}>
       <h3>Решение DevSecOps</h3>
       {error ? <Alert kind="error">{error}</Alert> : null}
+      {sandboxUnavailable ? (
+        <Alert kind="warn">
+          Песочница не выполнила обязательную проверку. Разрешить публикацию вручную нельзя:
+          восстановите SANDBOX_URL/SANDBOX_TOKEN и перезапустите шаг.
+        </Alert>
+      ) : null}
       {isSec ? (
         <>
           <textarea
@@ -643,7 +696,7 @@ function SecurityBlock({
           <div className="row">
             <button
               className="primary small"
-              disabled={busy}
+              disabled={busy || sandboxUnavailable}
               onClick={() => run(() => api.securityDecision(item.id, true, comment))}
             >
               разрешить публикацию

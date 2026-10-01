@@ -357,6 +357,14 @@ func TestGoldenPathPublishes(t *testing.T) {
 	if artifact.StagingClearedAt == nil {
 		t.Error("время очистки промежуточной зоны не проставлено")
 	}
+	freshVersion, err := r.GetPackageVersion(ctx, ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if freshVersion.LicenseSPDX == nil || *freshVersion.LicenseSPDX != "MIT" ||
+		freshVersion.LicenseRaw == nil || *freshVersion.LicenseRaw != "MIT" {
+		t.Errorf("найденная лицензия не сохранена: %+v", freshVersion)
+	}
 }
 
 // --------------------------------------------------------------------- шаг 4
@@ -417,7 +425,7 @@ func TestDownloadUnknownChecksumAlgoIsNotSilentPass(t *testing.T) {
 
 // --------------------------------------------------------------------- шаг 5
 
-func TestVulnAboveThresholdGoesToSecurity(t *testing.T) {
+func TestVulnAboveThresholdIsAdvisory(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -430,21 +438,18 @@ func TestVulnAboveThresholdGoesToSecurity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.ItemStatus != "awaiting_security" {
-		t.Fatalf("ItemStatus = %q, ожидался awaiting_security", res.ItemStatus)
+	if !res.Terminal || res.ItemStatus != "approved" {
+		t.Fatalf("результат = %+v, OSV не должен блокировать публикацию", res)
 	}
 	steps := stepsByCode(t, r, item.ID)
-	if steps["vuln_scan"].Result != "fail" {
+	if steps["vuln_scan"].Result != "info" {
 		t.Fatalf("vuln_scan = %q", steps["vuln_scan"].Result)
 	}
-	// fail у vuln_scan — это непогашенная блокировка, а не отказ: решение
-	// принимает DevSecOps.
-	if !pipeline.IsOpenResult("vuln_scan", "fail") {
-		t.Error("fail у vuln_scan не считается непогашенной блокировкой")
+	if pipeline.IsOpenResult("vuln_scan", "info") {
+		t.Error("информационный результат OSV попал в блокировки")
 	}
-	// Отклонённый на шаге 5 артефакт вычищается из карантинной зоны сразу.
-	if objects, _ := e.storage.List(ctx, "pypi/"); len(objects) != 0 {
-		t.Errorf("артефакт не вычищен после отклонения: %+v", objects)
+	if len(e.artifacts.published) != 1 {
+		t.Error("пакет с предупреждением OSV не опубликован")
 	}
 	// Уязвимость сохранена.
 	got, err := r.GetPackageVersion(ctx, ver.ID)
@@ -456,8 +461,7 @@ func TestVulnAboveThresholdGoesToSecurity(t *testing.T) {
 	}
 }
 
-// TestStaleIndexDoesNotAutoApprove — молча одобрять на устаревших данных нельзя.
-func TestStaleIndexDoesNotAutoApprove(t *testing.T) {
+func TestStaleIndexWarnsButDoesNotBlock(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -471,23 +475,23 @@ func TestStaleIndexDoesNotAutoApprove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.ItemStatus != "awaiting_security" {
-		t.Fatalf("ItemStatus = %q, устаревшая база должна звать DevSecOps", res.ItemStatus)
+	if !res.Terminal || res.ItemStatus != "approved" {
+		t.Fatalf("результат = %+v, устаревший OSV должен быть предупреждением", res)
 	}
 	steps := stepsByCode(t, r, item.ID)
-	if steps["vuln_scan"].Result != "warn" {
-		t.Fatalf("vuln_scan = %q", steps["vuln_scan"].Result)
+	if steps["vuln_scan"].Result != "info" {
+		t.Fatalf("vuln_scan = %q, ожидался info", steps["vuln_scan"].Result)
 	}
 	if !strings.Contains(*steps["vuln_scan"].Message, "устарела") {
 		t.Errorf("сообщение = %q", *steps["vuln_scan"].Message)
 	}
-	if len(e.artifacts.published) != 0 {
-		t.Error("пакет опубликован по устаревшей базе уязвимостей")
+	if len(e.artifacts.published) != 1 {
+		t.Error("предупреждение об устаревшей OSV заблокировало публикацию")
 	}
 }
 
-// TestMissingSnapshotDoesNotAutoApprove — отсутствующий снапшот тоже не «чисто».
-func TestMissingSnapshotDoesNotAutoApprove(t *testing.T) {
+// Отсутствующий снапшот не называется чистой проверкой, но публикацию не держит.
+func TestMissingSnapshotWarnsButDoesNotBlock(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -500,19 +504,21 @@ func TestMissingSnapshotDoesNotAutoApprove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.ItemStatus != "awaiting_security" {
-		t.Fatalf("ItemStatus = %q — пакет проскочил бы без базы уязвимостей", res.ItemStatus)
+	if !res.Terminal || res.ItemStatus != "approved" {
+		t.Fatalf("результат = %+v, отсутствие OSV не должно блокировать", res)
 	}
-	if len(e.artifacts.published) != 0 {
-		t.Error("пакет опубликован без загруженной базы уязвимостей")
+	steps := stepsByCode(t, r, item.ID)
+	if steps["vuln_scan"].Result != "info" ||
+		!strings.Contains(stepMessage(steps["vuln_scan"]), "не блокирует") {
+		t.Errorf("результат OSV = %+v — нет явного предупреждения", steps["vuln_scan"])
 	}
 }
 
 // --------------------------------------------------------------------- шаг 6: песочница
 
 // TestSandboxUnavailableIsNotClean — песочница не ответила. Это «проверка не
-// выполнена», а не «чисто»: публикация останавливается, решение принимает
-// DevSecOps. Тот же принцип, что у устаревшего снапшота OSV.
+// выполнена», а не «чисто»: публикация останавливается. В отличие от
+// информационного OSV, обязательную песочницу нельзя пропустить.
 func TestSandboxUnavailableIsNotClean(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
@@ -580,6 +586,35 @@ func TestSandboxNotConfiguredIsNotClean(t *testing.T) {
 	if !strings.Contains(stepMessage(steps["sandbox_scan"]), "SANDBOX_URL") {
 		t.Errorf("сообщение = %q — не названа настройка, которой задаётся адрес",
 			stepMessage(steps["sandbox_scan"]))
+	}
+}
+
+func TestSandboxUnavailableCannotBeSkippedBySecurityOverride(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	e.sandbox.available = false
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+	user, err := r.GetOrCreateUser(ctx, "sec.unavailable", "DevSecOps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetSecurityOverride(ctx, ver.ID, user.ID, "ручное разрешение"); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := r.GetPackageVersion(ctx, ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := pipeline.Run(ctx, e.context(pkg, fresh, item), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ItemStatus != "awaiting_security" || len(e.artifacts.published) != 0 {
+		t.Fatalf("недоступная песочница была пропущена override: %+v", res)
 	}
 }
 
@@ -654,6 +689,32 @@ func TestSandboxDangerousBlocksPublication(t *testing.T) {
 	}
 	if report == nil || report.State != "findings" || report.FindingsTotal != 2 {
 		t.Errorf("отчёт = %+v", report)
+	}
+}
+
+func TestSandboxDangerousWithoutDetectionsStillHasFindingsState(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	e.sandbox.result = sandbox.Result{Verdict: sandbox.VerdictDangerous, ScanID: "scan-empty"}
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+
+	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ItemStatus != "awaiting_security" {
+		t.Fatalf("результат = %+v", res)
+	}
+	report, err := r.GetScanReport(ctx, item.ID, "sandbox_scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report == nil || report.State != "findings" || report.Verdict == nil ||
+		*report.Verdict != sandbox.VerdictDangerous {
+		t.Fatalf("отчёт = %+v", report)
 	}
 }
 
@@ -769,9 +830,8 @@ func TestSandboxReceivesPublishedArtifact(t *testing.T) {
 	}
 }
 
-// TestDisabledScanIsExplicit — выключенный шаг отдаёт pass с явной пометкой, а
-// не молча пропускается, и отчёта не пишет: прогона не было.
-func TestDisabledScanIsExplicit(t *testing.T) {
+// Песочница обязательна: SANDBOX_ENABLED=false не превращает её в pass.
+func TestDisabledSandboxBlocksPublication(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -780,11 +840,15 @@ func TestDisabledScanIsExplicit(t *testing.T) {
 	e.config.SandboxEnabled = false
 	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
 
-	if _, err := pipeline.Run(ctx, e.context(pkg, ver, item), ""); err != nil {
+	res, err := pipeline.Run(ctx, e.context(pkg, ver, item), "")
+	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	if res.ItemStatus != "awaiting_security" {
+		t.Fatalf("результат = %+v, выключенная песочница должна блокировать", res)
+	}
 	steps := stepsByCode(t, r, item.ID)
-	if steps["sandbox_scan"].Result != "pass" {
+	if steps["sandbox_scan"].Result != "warn" {
 		t.Fatalf("sandbox_scan = %q", steps["sandbox_scan"].Result)
 	}
 	if !strings.Contains(stepMessage(steps["sandbox_scan"]), "SANDBOX_ENABLED") {
@@ -798,8 +862,8 @@ func TestDisabledScanIsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report != nil {
-		t.Error("для выключенного шага записан отчёт — прогона не было")
+	if report == nil || report.State != "unavailable" {
+		t.Errorf("для обязательной невыполненной проверки нужен unavailable-отчёт: %+v", report)
 	}
 }
 
@@ -954,16 +1018,16 @@ func TestReportSurvivesRerun(t *testing.T) {
 
 // --------------------------------------------------------------------- решение DevSecOps
 
-// TestSecurityOverrideUnblocksAllScanSteps — без этого возобновлённый после
+// TestSecurityOverrideUnblocksDangerousSandbox — без этого возобновлённый после
 // одобрения конвейер снова упёрся бы в тот же вердикт и вернул пакет в
 // очередь: решение DevSecOps не имело бы эффекта.
-func TestSecurityOverrideUnblocksAllScanSteps(t *testing.T) {
+func TestSecurityOverrideUnblocksDangerousSandbox(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
 	ctx := context.Background()
 
 	e := newEnv(t, r)
-	// Всё сразу против пакета: уязвимость выше порога и вердикт песочницы.
+	// OSV предупреждает, но блокирует только опасный вердикт песочницы.
 	e.sandbox.result = sandbox.Result{
 		Verdict: sandbox.VerdictDangerous, ScanID: "scan-13",
 		Detections: []sandbox.Detection{{Name: "Trojan.Generic", Severity: "critical"}},

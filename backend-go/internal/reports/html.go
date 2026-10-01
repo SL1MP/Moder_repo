@@ -90,7 +90,14 @@ func newView(r *Report) view {
 	case "unavailable":
 		v.StateLabel = "Проверка не выполнена"
 	case "findings":
-		v.StateLabel = "Есть срабатывания"
+		switch r.Scan.Verdict {
+		case "DANGEROUS":
+			v.StateLabel = "Опасно"
+		case "UNWANTED":
+			v.StateLabel = "Нежелательное содержимое"
+		default:
+			v.StateLabel = "Есть срабатывания"
+		}
 	default:
 		v.StateLabel = "Чисто"
 	}
@@ -225,6 +232,7 @@ var reportTemplate = template.Must(template.New("report").Parse(`<!doctype html>
       {{if .Package.Artifact}}<dt>Артефакт</dt><dd>{{.Package.Artifact}}</dd>{{end}}
       {{if .Package.SHA256}}<dt>sha256</dt><dd><code>{{.Package.SHA256}}</code></dd>{{end}}
       <dt>Сканер</dt><dd>{{.Scan.Scanner}}</dd>
+      {{if .Scan.Verdict}}<dt>Вердикт</dt><dd><strong>{{.Scan.Verdict}}</strong></dd>{{end}}
       {{if .Rules}}<dt>Правила</dt><dd><code>{{.Rules}}</code></dd>{{end}}
       <dt>Порог</dt><dd>{{.Scan.Threshold}}</dd>
       <dt>Файлов разложено</dt><dd>{{.Unpacked.Files}}{{if .Unpacked.Truncated}} (распаковка ограничена){{end}}</dd>

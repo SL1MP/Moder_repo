@@ -339,7 +339,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		GitBinary:  valueOr(getenv("GIT_BINARY"), "git"),
 		GitTimeout: secondsOr(getenv("GIT_CLONE_TIMEOUT_SECONDS"), 600),
 
-		ScanWatcherEnabled:     boolOr(getenv("SCAN_WATCHER_ENABLED"), true),
+		ScanWatcherEnabled:     boolOr(getenv("SCAN_WATCHER_ENABLED"), false),
 		ScanWatcherInterval:    secondsOr(getenv("SCAN_WATCHER_INTERVAL_SECONDS"), 60),
 		ScanWatcherBatch:       intOr(getenv("SCAN_WATCHER_BATCH"), 10),
 		ScanWatcherItemTimeout: secondsOr(getenv("SCAN_WATCHER_ITEM_TIMEOUT_SECONDS"), 20*60),

@@ -28,7 +28,7 @@ export default function QueueSecurity({ onChange }: { onChange: () => void }) {
         <div>
           <h1>Очередь DevSecOps</h1>
           <p className="page-hint">
-            Только то, что ждёт решения DevSecOps: уязвимости выше порога, устаревшая база OSV,
+            Только то, что ждёт решения DevSecOps: вердикт песочницы,
             карантин. Сортировка по времени ожидания.
           </p>
         </div>

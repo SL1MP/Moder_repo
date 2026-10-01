@@ -25,24 +25,21 @@ import "moderation/internal/domain"
 // статус не «слабел» при действиях по менее важному шагу.
 //
 // Песочница стоит первой: её вердикт DANGEROUS — это «в пакете нашли вредонос
-// при запуске», то есть находка весомее и уязвимости по базе, и просроченной
-// лицензии.
-var BlockerPriority = []string{"sandbox_scan", "vuln_scan", "license", "quarantine"}
+// при запуске», то есть обязательная проверка важнее согласования лицензии.
+var BlockerPriority = []string{"sandbox_scan", "license", "quarantine"}
 
 // BlockerStatus — статус пакета, пока шаг не погашен.
 var BlockerStatus = map[string]string{
 	"sandbox_scan": "awaiting_security",
-	"vuln_scan":    "awaiting_security",
 	"license":      "awaiting_legal",
 	"quarantine":   "quarantined",
 }
 
 // OpenResults — какие результаты шага означают «решение роли ещё не принято».
-// У проверки уязвимостей таких два: warn — база устарела, fail — балл выше
-// порога. Оба уходят к DevSecOps, а не отклоняют пакет сами по себе.
+// OSV сюда намеренно не входит: его результат информационный и публикацию не
+// блокирует даже при высокой уязвимости или устаревшем снапшоте.
 var OpenResults = map[string][]string{
-	"vuln_scan": {"warn", "fail"},
-	// У песочницы их два по той же причине, что у проверки уязвимостей:
+	// У песочницы два блокирующих результата:
 	// fail — вердикт DANGEROUS, warn — песочница не ответила или вернула
 	// вердикт, которого мы не знаем. Оба случая — «публиковать нельзя, пока не
 	// посмотрит человек», а не «чисто».
@@ -59,7 +56,6 @@ var OpenResults = map[string][]string{
 // решение (снять досрочно может DevSecOps, но обычный путь — истечение).
 var BlockerRole = map[string]string{
 	"sandbox_scan": "devsecops",
-	"vuln_scan":    "devsecops",
 	"license":      "legal",
 	"quarantine":   "",
 }
@@ -67,7 +63,6 @@ var BlockerRole = map[string]string{
 // BlockerWaitingFor — как назвать ожидание пользователю.
 var BlockerWaitingFor = map[string]string{
 	"sandbox_scan": "DevSecOps",
-	"vuln_scan":    "DevSecOps",
 	"license":      "юристов",
 	"quarantine":   "окончания карантина",
 }
@@ -79,7 +74,7 @@ var BlockerWaitingFor = map[string]string{
 // Снятых шагов тут нет по той же причине, что и в таблицах выше: снимать
 // нечего. Строки banner_scan со старым результатом warn перевела в info
 // миграция 0013.
-var SecurityBlockers = []string{"vuln_scan", "sandbox_scan"}
+var SecurityBlockers = []string{"sandbox_scan"}
 
 // PendingBlockers — шаги, ждущие решения роли, в порядке убывания блокирующей
 // силы.

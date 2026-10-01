@@ -227,7 +227,7 @@ func TestReleaseQuarantineResumesPipeline(t *testing.T) {
 }
 
 func TestReleaseQuarantineWrongStatus(t *testing.T) {
-	f := newDecisionFixture(t, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+	f := newDecisionFixture(t, "awaiting_security", map[string]string{"sandbox_scan": "warn"})
 	rec := f.do(t, "devsecops", http.MethodPost,
 		fmt.Sprintf("/api/v1/items/%d/quarantine/release", f.itemID), `{}`)
 	if rec.Code != http.StatusConflict {
@@ -238,11 +238,11 @@ func TestReleaseQuarantineWrongStatus(t *testing.T) {
 // ---------------------------------------------------------------- DevSecOps
 
 func TestSecurityApprovalResumesFromDownload(t *testing.T) {
-	f := newDecisionFixture(t, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+	f := newDecisionFixture(t, "awaiting_security", map[string]string{"sandbox_scan": "warn"})
 
 	rec := f.do(t, "devsecops", http.MethodPost,
 		fmt.Sprintf("/api/v1/items/%d/security-decision", f.itemID),
-		`{"approve":true,"comment":"уязвимость неприменима"}`)
+		`{"approve":true,"comment":"ложное срабатывание песочницы"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 	}
@@ -273,7 +273,7 @@ func TestSecurityApprovalResumesFromDownload(t *testing.T) {
 }
 
 func TestSecurityRejectionRequiresComment(t *testing.T) {
-	f := newDecisionFixture(t, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+	f := newDecisionFixture(t, "awaiting_security", map[string]string{"sandbox_scan": "warn"})
 	rec := f.do(t, "devsecops", http.MethodPost,
 		fmt.Sprintf("/api/v1/items/%d/security-decision", f.itemID), `{"approve":false}`)
 	if rec.Code != http.StatusUnprocessableEntity {
@@ -285,7 +285,7 @@ func TestSecurityRejectionRequiresComment(t *testing.T) {
 }
 
 func TestSecurityRejectionStopsPipeline(t *testing.T) {
-	f := newDecisionFixture(t, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+	f := newDecisionFixture(t, "awaiting_security", map[string]string{"sandbox_scan": "warn"})
 	rec := f.do(t, "devsecops", http.MethodPost,
 		fmt.Sprintf("/api/v1/items/%d/security-decision", f.itemID),
 		`{"approve":false,"comment":"эксплуатируется в дикой природе"}`)
@@ -304,7 +304,7 @@ func TestSecurityRejectionStopsPipeline(t *testing.T) {
 
 // Роль проверяется в API: юрист не принимает решения DevSecOps.
 func TestDecisionRoleGuard(t *testing.T) {
-	f := newDecisionFixture(t, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+	f := newDecisionFixture(t, "awaiting_security", map[string]string{"sandbox_scan": "warn"})
 	cases := []struct {
 		role   string
 		status int
@@ -317,7 +317,7 @@ func TestDecisionRoleGuard(t *testing.T) {
 		f := f
 		if tc.status == http.StatusOK {
 			// Успешный случай меняет состояние, поэтому берём свежую фикстуру.
-			f = newDecisionFixture(t, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+			f = newDecisionFixture(t, "awaiting_security", map[string]string{"sandbox_scan": "warn"})
 		}
 		rec := f.do(t, tc.role, http.MethodPost,
 			fmt.Sprintf("/api/v1/items/%d/security-decision", f.itemID),
@@ -429,7 +429,7 @@ func TestLicenseDecisionRoleGuard(t *testing.T) {
 }
 
 func TestDecisionOnMissingItem(t *testing.T) {
-	f := newDecisionFixture(t, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+	f := newDecisionFixture(t, "awaiting_security", map[string]string{"sandbox_scan": "warn"})
 	rec := f.do(t, "devsecops", http.MethodPost,
 		"/api/v1/items/999999999/security-decision", `{"approve":true}`)
 	if rec.Code != http.StatusNotFound {
@@ -489,7 +489,7 @@ func TestRequestStatusHandlesDryRun(t *testing.T) {
 // закрыть заявку, и по ответам понять, что схема отстала от кода, было
 // невозможно.
 func TestSecurityDecisionExplainsStaleSchema(t *testing.T) {
-	f := newDecisionFixture(t, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+	f := newDecisionFixture(t, "awaiting_security", map[string]string{"sandbox_scan": "warn"})
 	ctx := context.Background()
 
 	// Столбец возвращается сразу после теста: он нужен и очереди, и другим

@@ -337,6 +337,22 @@ func (r *Repo) SetVersionLicense(ctx context.Context, packageVersionID int64, sp
 	return nil
 }
 
+// SetDetectedLicense сохраняет лицензию, автоматически найденную в метаданных
+// реестра. Raw нужен юристу, когда значение не удалось нормализовать в SPDX:
+// без него карточка говорила «лицензия не определена», хотя npm прислал своё
+// исходное выражение.
+func (r *Repo) SetDetectedLicense(ctx context.Context, packageVersionID int64, spdx, raw, source string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE package_version SET
+			license_spdx = $2, license_raw = $3, license_source = $4, updated_at = now()
+		WHERE id = $1
+	`, packageVersionID, nullIfEmpty(spdx), nullIfEmpty(raw), nullIfEmpty(source))
+	if err != nil {
+		return fmt.Errorf("сохранение найденной лицензии версии: %w", err)
+	}
+	return nil
+}
+
 // SetPackageConfirmedLicense — подтверждённая лицензия предлагается для других
 // версий этого пакета.
 func (r *Repo) SetPackageConfirmedLicense(ctx context.Context, packageID int64, spdx, version string) error {

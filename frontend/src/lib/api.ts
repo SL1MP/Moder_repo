@@ -219,6 +219,7 @@ export interface ScanReport {
   rules?: string
   state: 'clean' | 'findings' | 'unavailable'
   state_title: string
+  verdict?: string
   threshold: string
   findings_total: number
   findings_blocking: number
@@ -268,11 +269,13 @@ export interface RequestItem {
   can_restart: boolean
   /**
    * Шаги, по которым решение роли ещё не получено: `license` — юристы,
-   * `vuln_scan` — DevSecOps, `quarantine` — срок карантина. Их может быть
+   * `sandbox_scan` — DevSecOps, `quarantine` — срок карантина. OSV сюда не
+   * входит: его результат информационный. Блокировок может быть
    * несколько сразу, поэтому статуса (он один) для интерфейса недостаточно:
    * более блокирующий скрыл бы блок второй роли.
    */
   pending: string[]
+  waiting_for: string | null
   current_step: string | null
   current_step_title: string | null
   blocked_reason: string | null

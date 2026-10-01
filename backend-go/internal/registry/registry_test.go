@@ -356,6 +356,31 @@ func TestNpmDeprecatedLicensesArray(t *testing.T) {
 	}
 }
 
+// Некоторые npm-прокси вырезают license из abbreviated metadata, но отдают
+// её в документе конкретной версии. Без fallback такой пакет без причины
+// уходил юристам как «лицензия не определена».
+func TestNpmLicenseFallsBackToVersionDocument(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://npm.test/is-unsafe": `{
+		  "time": {"2.0.2": "2020-01-01T00:00:00.000Z"},
+		  "versions": {"2.0.2": {"dist": {"tarball": "https://t/is-unsafe-2.0.2.tgz"}}}
+		}`,
+		"https://npm.test/is-unsafe/2.0.2": `{
+		  "name": "is-unsafe", "version": "2.0.2", "license": "MIT",
+		  "dist": {"tarball": "https://t/is-unsafe-2.0.2.tgz"}
+		}`,
+	}}
+	p := pluginFor(t, "npm", f)
+	ref, _ := registry.ParseEntry(p, "is-unsafe@2.0.2")
+	meta, err := p.FetchMetadata(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.LicenseSPDX != "MIT" || meta.LicenseRaw != "MIT" {
+		t.Errorf("лицензия = raw:%q spdx:%q", meta.LicenseRaw, meta.LicenseSPDX)
+	}
+}
+
 // TestNpmMissingVersionIsNotFound — пакет есть, версии нет: чаще всего опечатка
 // в версии, и сообщение обязано это различать.
 func TestNpmMissingVersionIsNotFound(t *testing.T) {

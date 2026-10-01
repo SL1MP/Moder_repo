@@ -117,6 +117,31 @@ func TestCleanScan(t *testing.T) {
 	}
 }
 
+// Вердикт песочницы важнее наличия структурированных detections: API может
+// вернуть DANGEROUS и только текстовый результат. Такой отчёт не должен стать
+// «чистым» из-за нулевого массива находок.
+func TestDangerousVerdictWithoutDetectionsIsNotClean(t *testing.T) {
+	in := sampleInput()
+	in.Kind = reports.KindSandbox
+	in.Verdict = "DANGEROUS"
+	in.Outcome = scanners.Outcome{Available: true, Detail: "песочница вернула вердикт DANGEROUS"}
+	r := reports.Build(in)
+
+	if r.State() != "findings" {
+		t.Errorf("State = %q, DANGEROUS не может быть clean", r.State())
+	}
+	if !strings.Contains(r.Verdict(), "DANGEROUS") {
+		t.Errorf("Verdict = %q", r.Verdict())
+	}
+	html, err := r.HTML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(html), ">Чисто<") || !strings.Contains(string(html), ">Опасно<") {
+		t.Errorf("HTML неверно подписал DANGEROUS: %s", html)
+	}
+}
+
 func TestBelowThresholdIsStillClean(t *testing.T) {
 	in := sampleInput()
 	in.Outcome.Findings = []scanners.Finding{

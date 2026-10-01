@@ -164,7 +164,6 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 func blockedOutcome(blockers []string) StepOutcome {
 	primary := blockers[0]
 	status := BlockerStatus[primary]
-	who := BlockerWaitingFor[primary]
 	role := BlockerRole[primary]
 
 	event := EventDecisionMade
@@ -176,9 +175,22 @@ func blockedOutcome(blockers []string) StepOutcome {
 	}
 
 	names := make([]string, 0, len(blockers))
+	waiters := make([]string, 0, len(blockers))
+	roles := make([]string, 0, len(blockers))
+	seenWaiters := map[string]bool{}
+	seenRoles := map[string]bool{}
 	for _, code := range blockers {
 		names = append(names, domain.StepTitles[code])
+		if waiter := BlockerWaitingFor[code]; waiter != "" && !seenWaiters[waiter] {
+			seenWaiters[waiter] = true
+			waiters = append(waiters, waiter)
+		}
+		if blockerRole := BlockerRole[code]; blockerRole != "" && !seenRoles[blockerRole] {
+			seenRoles[blockerRole] = true
+			roles = append(roles, blockerRole)
+		}
 	}
+	who := joinWithAnd(waiters)
 
 	outcome := StepOutcome{
 		Result: "warn",
@@ -193,11 +205,20 @@ func blockedOutcome(blockers []string) StepOutcome {
 			"Пакет проверен, но ждёт решения (%s). Как только согласование будет получено, "+
 				"публикация пройдёт автоматически.", who),
 		NotifyEvent: event,
-	}
-	if role != "" {
-		outcome.NotifyRoles = []string{role}
+		NotifyRoles: roles,
 	}
 	return outcome
+}
+
+func joinWithAnd(values []string) string {
+	switch len(values) {
+	case 0:
+		return "ответственной роли"
+	case 1:
+		return values[0]
+	default:
+		return strings.Join(values[:len(values)-1], ", ") + " и " + values[len(values)-1]
+	}
 }
 
 // --------------------------------------------------------------------------- как публикуем

@@ -12,7 +12,7 @@ import (
 )
 
 const scanReportColumns = `id, request_item_id, package_version_id, step_code, scanner, rules,
-	state, threshold, findings_total, findings_blocking, worst_severity, detail,
+	state, verdict, threshold, findings_total, findings_blocking, worst_severity, detail,
 	json_key, html_key, repo, duration_ms, created_at`
 
 // UpsertScanReport — один актуальный отчёт на пару (пакет заявки, шаг):
@@ -20,19 +20,19 @@ const scanReportColumns = `id, request_item_id, package_version_id, step_code, s
 func (r *Repo) UpsertScanReport(ctx context.Context, report domain.ScanReport) (*domain.ScanReport, error) {
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO scan_report
-			(request_item_id, package_version_id, step_code, scanner, rules, state, threshold,
+			(request_item_id, package_version_id, step_code, scanner, rules, state, verdict, threshold,
 			 findings_total, findings_blocking, worst_severity, detail, json_key, html_key,
 			 repo, duration_ms)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT ON CONSTRAINT uq_scan_report_item_step DO UPDATE SET
 			scanner = EXCLUDED.scanner, rules = EXCLUDED.rules, state = EXCLUDED.state,
-			threshold = EXCLUDED.threshold, findings_total = EXCLUDED.findings_total,
+			verdict = EXCLUDED.verdict, threshold = EXCLUDED.threshold, findings_total = EXCLUDED.findings_total,
 			findings_blocking = EXCLUDED.findings_blocking, worst_severity = EXCLUDED.worst_severity,
 			detail = EXCLUDED.detail, json_key = EXCLUDED.json_key, html_key = EXCLUDED.html_key,
 			repo = EXCLUDED.repo, duration_ms = EXCLUDED.duration_ms, created_at = now()
 		RETURNING `+scanReportColumns, //nolint:gocritic // константа колонок, не пользовательский ввод
 		report.RequestItemID, report.PackageVersionID, report.StepCode, report.Scanner,
-		report.Rules, report.State, report.Threshold, report.FindingsTotal,
+		report.Rules, report.State, report.Verdict, report.Threshold, report.FindingsTotal,
 		report.FindingsBlocking, report.WorstSeverity, report.Detail,
 		report.JSONKey, report.HTMLKey, report.Bucket, report.DurationMs)
 	return scanScanReport(row)
@@ -78,7 +78,7 @@ func scanScanReport(row scanner) (*domain.ScanReport, error) {
 	var s domain.ScanReport
 	if err := row.Scan(
 		&s.ID, &s.RequestItemID, &s.PackageVersionID, &s.StepCode, &s.Scanner, &s.Rules,
-		&s.State, &s.Threshold, &s.FindingsTotal, &s.FindingsBlocking, &s.WorstSeverity,
+		&s.State, &s.Verdict, &s.Threshold, &s.FindingsTotal, &s.FindingsBlocking, &s.WorstSeverity,
 		&s.Detail, &s.JSONKey, &s.HTMLKey, &s.Bucket, &s.DurationMs, &s.CreatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("чтение scan_report: %w", err)

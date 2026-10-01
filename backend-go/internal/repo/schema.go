@@ -157,6 +157,7 @@ var requiredColumns = []struct {
 	{"artifact", "staged_at", "backend-go/migrations/0015_staging_columns"},
 	{"artifact", "staging_cleared_at", "backend-go/migrations/0015_staging_columns"},
 	{"scan_report", "repo", "backend-go/migrations/0015_staging_columns"},
+	{"scan_report", "verdict", "backend-go/migrations/0021_scan_report_verdict"},
 }
 
 // requiredTables — таблицы поздних миграций.

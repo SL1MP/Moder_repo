@@ -325,6 +325,7 @@ func saveScanReport(ctx context.Context, pc *Context, code string, report *repor
 		Scanner:          report.Scan.Scanner,
 		Rules:            nilIfEmpty(report.Scan.Rules),
 		State:            report.State(),
+		Verdict:          nilIfEmpty(report.Scan.Verdict),
 		Threshold:        report.Scan.Threshold,
 		FindingsTotal:    report.Summary.Total,
 		FindingsBlocking: report.Summary.Blocking,

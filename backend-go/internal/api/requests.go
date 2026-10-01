@@ -205,6 +205,12 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 	for _, item := range items {
 		version := versions[item.PackageVersionID]
 		itemSteps := steps[item.ID]
+		pending := pipeline.PendingBlockers(itemSteps)
+		waitingFor := pendingDecisionTitle(pending)
+		itemStatusTitle := statusTitle(item.Status)
+		if waitingFor != "" {
+			itemStatusTitle = waitingFor
+		}
 
 		view := map[string]any{
 			"id":                 item.ID,
@@ -213,11 +219,12 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 			"version":            item.RequestedVersion,
 			"dependency_kind":    item.DependencyKind,
 			"status":             item.Status,
-			"status_title":       statusTitle(item.Status),
+			"status_title":       itemStatusTitle,
 			// Какие решения ролей ещё не получены. Статус у пакета один, а
 			// ждать он может двух сразу — интерфейс рисует блоки решений по
 			// этому списку, иначе более блокирующий статус скрыл бы второй.
-			"pending":            listOrEmpty(pipeline.PendingBlockers(itemSteps)),
+			"pending":            listOrEmpty(pending),
+			"waiting_for":        nilIfEmpty(waitingFor),
 			"current_step":       item.CurrentStep,
 			"current_step_title": stepTitleOf(item.CurrentStep),
 			"blocked_reason":     item.BlockedReason,
@@ -393,6 +400,32 @@ func statusTitle(status string) string {
 		return title
 	}
 	return status
+}
+
+// pendingDecisionTitle называет все роли, решений которых пакет ждёт прямо
+// сейчас. Статус в БД один, а блокировок может быть несколько; показывать
+// только более приоритетную роль значит скрывать от второй её работу.
+func pendingDecisionTitle(pending []string) string {
+	hasSecurity := false
+	hasLegal := false
+	for _, code := range pending {
+		switch pipeline.BlockerRole[code] {
+		case "devsecops":
+			hasSecurity = true
+		case "legal":
+			hasLegal = true
+		}
+	}
+	switch {
+	case hasSecurity && hasLegal:
+		return "Ждёт DevSecOps и юристов"
+	case hasSecurity:
+		return "Ждёт DevSecOps"
+	case hasLegal:
+		return "Ждёт юристов"
+	default:
+		return ""
+	}
 }
 
 // stepTitleOf — название текущего шага. null, если шага нет: python-версия

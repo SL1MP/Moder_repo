@@ -110,13 +110,10 @@ func (s *Service) releaseLegacyQuarantineSiblings(
 
 // --------------------------------------------------------------------------- DevSecOps
 
-// DecideSecurity — решение DevSecOps по пакету, остановленному на шаге
-// уязвимостей или сканирования содержимого.
+// DecideSecurity — решение DevSecOps по пакету, остановленному обязательной
+// проверкой в песочнице.
 //
-// Одобрение снимает обе блокировки по содержимому (vuln_scan, banner_scan):
-// DevSecOps принимает решение по пакету целиком, а не по каждому сканеру
-// отдельно. SAST в этот список не входит — он информационный (см.
-// pipeline.SecurityBlockers).
+// OSV сюда не входит: он информационный и блокировки не создаёт.
 func (s *Service) DecideSecurity(ctx context.Context, item *domain.RequestItem, approve bool, actorID int64, comment string) (*Result, error) {
 	if item.Status != "awaiting_security" {
 		return nil, fmt.Errorf("%w: пакет не ждёт решения DevSecOps (текущий статус: %s)",
@@ -155,8 +152,8 @@ func (s *Service) DecideSecurity(ctx context.Context, item *domain.RequestItem, 
 		result.Notifications = append(result.Notifications, Notification{
 			RequestItemID: item.ID, Event: pipeline.EventDecisionMade, Message: note,
 		})
-		// Артефакт мог быть удалён из карантинной зоны при отклонении на шаге
-		// уязвимостей — возобновляем со скачивания, чтобы его перекачать.
+		// Возобновляем со скачивания: решение относится к версии, а сохранённый
+		// промежуточный артефакт к этому моменту мог быть уже очищен.
 		if err := s.resume(ctx, item, "download"); err != nil {
 			return nil, err
 		}

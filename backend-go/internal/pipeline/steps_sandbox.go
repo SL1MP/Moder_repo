@@ -58,12 +58,6 @@ func (s SandboxScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, err
 			},
 		}, nil
 	}
-	if !pc.Config.SandboxEnabled {
-		// Чистое выключение: шаг отдаёт pass с явной пометкой, а не молча
-		// пропускается. Отчёт при этом не пишется — прогона не было.
-		return Pass("Шаг выключен настройкой (SANDBOX_ENABLED)."), nil
-	}
-
 	artifact, err := pc.Deps.Repo.CurrentArtifact(ctx, pc.Version.ID)
 	if err != nil {
 		return StepOutcome{}, err
@@ -82,6 +76,8 @@ func (s SandboxScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, err
 
 	client := pc.Deps.Sandbox
 	switch {
+	case !pc.Config.SandboxEnabled:
+		run.detail = "обязательная проверка отключена настройкой SANDBOX_ENABLED=false"
 	case client == nil || !client.Available():
 		run.detail = "песочница не настроена (SANDBOX_URL не задан)"
 	default:
@@ -137,6 +133,7 @@ func (s SandboxScanStep) finish(ctx context.Context, pc *Context, run sandboxRun
 		},
 		Kind:    reports.KindSandbox,
 		Scanner: scannerName(run.endpoint),
+		Verdict: run.result.Verdict,
 		// Порога у песочницы нет: блокирует вердикт, а не число находок. «info»
 		// означает «в сводку идут все находки» — прятать часть из них под
 		// порогом, который ни на что не влияет, было бы обманом.
@@ -199,6 +196,22 @@ func (s SandboxScanStep) verdictOutcome(
 	pc *Context, run sandboxRun, report *reports.Report,
 	details map[string]any, reportNote string,
 ) StepOutcome {
+	// Отсутствующую проверку нельзя заменить ручным разрешением: пользователь
+	// разрешил advisory-пропуск OSV, но песочница для применимых менеджеров
+	// остаётся обязательной. Override допустим только после фактического
+	// вердикта (например, для ложного DANGEROUS).
+	if !run.available {
+		details["reason"] = "sandbox_unavailable"
+		return Warn(fmt.Sprintf(
+			"%s: обязательная проверка не выполнена (%s). Публикация запрещена до успешного прогона.%s",
+			sandboxTitle, run.detail, reportNote)).
+			WithDetails(details).
+			WithStatus("awaiting_security", "awaiting_security").
+			WithNextAction("Перезапустите проверку после восстановления песочницы: "+
+				"публикация без её вердикта не разрешена.").
+			WithNotify(EventAwaitsSecurity, "devsecops")
+	}
+
 	// Явное разрешение DevSecOps важнее вердикта шага — как и в проверке
 	// уязвимостей: иначе возобновлённый конвейер снова упёрся бы в тот же
 	// вердикт, и решение не имело бы эффекта.
@@ -218,18 +231,6 @@ func (s SandboxScanStep) verdictOutcome(
 		return Pass(fmt.Sprintf("%s: публикация разрешена вручную (%s). %s%s",
 			sandboxTitle, pc.SecurityOverride.DecidedBy, verdict, reportNote)).
 			WithDetails(details)
-	}
-
-	if !run.available {
-		details["reason"] = "sandbox_unavailable"
-		return Warn(fmt.Sprintf(
-			"%s: проверка не выполнена (%s). Автоматическое одобрение по этому шагу отключено.%s",
-			sandboxTitle, run.detail, reportNote)).
-			WithDetails(details).
-			WithStatus("awaiting_security", "awaiting_security").
-			WithNextAction("Дождитесь решения DevSecOps: песочница не вынесла вердикт, "+
-				"решение принимается вручную.").
-			WithNotify(EventAwaitsSecurity, "devsecops")
 	}
 
 	found := ""

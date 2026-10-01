@@ -89,6 +89,11 @@ type Scan struct {
 	Scanner   string `json:"scanner"`
 	Rules     string `json:"rules,omitempty"`
 	Threshold string `json:"threshold"`
+	// Verdict — итог внешнего сканера, если он является источником решения
+	// сам по себе (например, CLEAN/DANGEROUS/UNWANTED у песочницы). Нельзя
+	// выводить состояние такого отчёта только из массива detections: API
+	// песочницы вправе вернуть DANGEROUS без структурированного списка находок.
+	Verdict string `json:"verdict,omitempty"`
 	// Completed=false — проверка НЕ состоялась. Это не «чисто»: шаг обязан в
 	// таком случае позвать DevSecOps, а отчёт — явно об этом сказать.
 	Completed  bool      `json:"completed"`
@@ -152,6 +157,7 @@ type Input struct {
 	Scanner   string
 	Rules     string
 	Threshold string
+	Verdict   string
 	Outcome   scanners.Outcome
 	Unpacked  Unpacked
 	RequestID int64
@@ -209,6 +215,7 @@ func Build(in Input) *Report {
 			Scanner:    in.Scanner,
 			Rules:      in.Rules,
 			Threshold:  threshold,
+			Verdict:    strings.ToUpper(strings.TrimSpace(in.Verdict)),
 			Completed:  in.Outcome.Available,
 			Detail:     in.Outcome.Detail,
 			DurationMs: duration,
@@ -252,6 +259,19 @@ func (r *Report) Verdict() string {
 	if !r.Scan.Completed {
 		return "Проверка не выполнена — решение принимает DevSecOps"
 	}
+	switch r.Scan.Verdict {
+	case "DANGEROUS":
+		return "Вердикт песочницы DANGEROUS — обнаружено опасное поведение, требуется решение DevSecOps"
+	case "UNWANTED":
+		return "Вердикт песочницы UNWANTED — обнаружено нежелательное содержимое"
+	case "CLEAN":
+		return "Вердикт песочницы CLEAN — вредоносного поведения не обнаружено"
+	default:
+		if r.Scan.Verdict != "" {
+			return fmt.Sprintf("Песочница вернула неизвестный вердикт %s — требуется решение DevSecOps",
+				r.Scan.Verdict)
+		}
+	}
 	if r.Summary.Blocking > 0 {
 		return fmt.Sprintf("Найдено срабатываний выше порога: %d — требуется решение DevSecOps",
 			r.Summary.Blocking)
@@ -268,6 +288,10 @@ func (r *Report) Verdict() string {
 func (r *Report) State() string {
 	switch {
 	case !r.Scan.Completed:
+		return "unavailable"
+	case r.Scan.Verdict == "DANGEROUS", r.Scan.Verdict == "UNWANTED":
+		return "findings"
+	case r.Scan.Verdict != "" && r.Scan.Verdict != "CLEAN":
 		return "unavailable"
 	case r.Summary.Blocking > 0:
 		return "findings"

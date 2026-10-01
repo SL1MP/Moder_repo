@@ -400,6 +400,9 @@ func TestRequestCard(t *testing.T) {
 	if len(pending) != 1 || pending[0] != "license" {
 		t.Fatalf("pending = %v, ожидался license", pending)
 	}
+	if pkg["waiting_for"] != "Ждёт юристов" || pkg["status_title"] != "Ждёт юристов" {
+		t.Fatalf("ожидание роли отображено неверно: %v", pkg)
+	}
 	if len(pkg["vulnerabilities"].([]any)) != 1 || len(pkg["code_findings"].([]any)) != 1 {
 		t.Fatalf("уязвимости и находки должны попадать в карточку: %v", pkg)
 	}
@@ -410,6 +413,29 @@ func TestRequestCard(t *testing.T) {
 	}
 	if payload["approved"] != false {
 		t.Fatalf("заявка не одобрена целиком: %v", payload["approved"])
+	}
+}
+
+func TestRequestCardNamesAllPendingRoles(t *testing.T) {
+	f := newReadFixture(t)
+	now := time.Now().UTC()
+	if _, err := f.repo.UpsertPipelineStep(context.Background(), domain.PipelineStep{
+		RequestItemID: f.itemID, StepCode: "sandbox_scan",
+		StepOrder: domain.StepOrder["sandbox_scan"], Result: "fail",
+		StartedAt: &now, FinishedAt: &now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.as(t, f.author, []string{"developer"},
+		fmt.Sprintf("/api/v1/requests/%d", f.requestID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	payload := decodeObject(t, rec)
+	pkg := payload["packages"].([]any)[0].(map[string]any)
+	if pkg["waiting_for"] != "Ждёт DevSecOps и юристов" ||
+		pkg["status_title"] != "Ждёт DevSecOps и юристов" {
+		t.Fatalf("совместное ожидание ролей потеряно: %v", pkg)
 	}
 }
 

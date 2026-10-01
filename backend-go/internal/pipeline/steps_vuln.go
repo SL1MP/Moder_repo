@@ -11,10 +11,9 @@ import (
 // --------------------------------------------------------------------------- шаг 5
 // VulnScanStep — проверка на уязвимости по снапшоту OSV.
 //
-// Два исхода приводят к DevSecOps, а не к отказу: устаревшая (или
-// отсутствующая) база — warn, и балл выше порога — fail. Оба считаются
-// непогашенной блокировкой (см. OpenResults), потому что решение по ним
-// принимает человек.
+// Шаг информационный: он сохраняет найденные уязвимости и явно предупреждает
+// об устаревшей/отсутствующей базе, но никогда не задерживает публикацию.
+// Обязательной проверкой безопасности остаётся песочница.
 type VulnScanStep struct{}
 
 func (VulnScanStep) Code() string { return "vuln_scan" }
@@ -117,64 +116,38 @@ func (VulnScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 		indexVersion = info.Version
 	}
 
-	// Решение DevSecOps важнее вердикта шага: иначе возобновление конвейера
-	// снова остановилось бы здесь по той же причине, и решение не сработало бы.
-	// Проверка сделана один раз в runner (см. Run), сюда приходит готовый
-	// Override.
-	if pc.SecurityOverride != nil {
-		return Pass(fmt.Sprintf("Публикация разрешена вручную (%s): %s.%s",
-			pc.SecurityOverride.DecidedBy, commentOr(pc.SecurityOverride.Comment),
-			suffixIf(summary, " Известные уязвимости: "+summary+"."))).
-			WithDetails(map[string]any{
-				"reason": "security_override", "decided_by": pc.SecurityOverride.DecidedBy,
-				"max_score": worst, "findings": summary, "index_version": indexVersion,
-			}), nil
-	}
-
 	threshold := pc.Config.VulnMaxScore
 	if stale {
-		// Молча одобрять на устаревших данных нельзя.
 		ageText := "снапшот не загружен"
 		if info != nil {
 			if age := info.AgeDays(pc.now()); age != nil {
 				ageText = fmt.Sprintf("%.1f дн.", *age)
 			}
 		}
-		return Warn(fmt.Sprintf(
-			"База уязвимостей устарела (%s, допустимо %d дн.) — автоматическое одобрение отключено.%s%s",
+		return Info(fmt.Sprintf(
+			"ВНИМАНИЕ: база уязвимостей устарела (%s, допустимо %d дн.). Проверка OSV информационная и публикацию не блокирует.%s%s",
 			ageText, maxDays,
 			suffixIf(summary, " Найдено: "+summary+"."),
 			suffixIf(scanError, " Проверка не выполнена: "+scanError+"."))).
 			WithDetails(map[string]any{
 				"reason": "stale_index", "index_version": indexVersion,
-				"findings": summary, "scan_error": scanError,
-			}).
-			WithStatus("awaiting_security", "awaiting_security").
-			WithNextAction("Дождитесь решения DevSecOps: решение по устаревшей базе принимается вручную.").
-			WithNotify(EventAwaitsSecurity, "devsecops"), nil
+				"findings": summary, "scan_error": scanError, "advisory": true,
+			}), nil
 	}
 
 	if worst > threshold {
-		// Отклонение на шаге 5: объект из карантинной зоны удаляется сразу.
-		if err := purgeArtifact(ctx, pc, artifact, false); err != nil {
-			return StepOutcome{}, err
-		}
 		fixed := collectFixed(findings)
 		advice := "(исправленных версий нет)"
 		if fixed != "" {
 			advice = fixed
 		}
-		return Fail(fmt.Sprintf(
-			"Найдены уязвимости с баллом выше порога %g: %s. Решение вынесено по снапшоту OSV %s.",
-			threshold, summary, indexVersion)).
+		return Info(fmt.Sprintf(
+			"ВНИМАНИЕ: найдены уязвимости с баллом выше порога %g: %s. Снапшот OSV: %s. Публикацию шаг не блокирует; исправленные версии: %s.",
+			threshold, summary, indexVersion, advice)).
 			WithDetails(map[string]any{
 				"max_score": worst, "threshold": threshold,
-				"index_version": indexVersion, "findings": summary,
-			}).
-			WithStatus("awaiting_security", "awaiting_security").
-			WithNextAction("Возьмите версию с исправлением "+advice+
-				" либо дождитесь решения DevSecOps.").
-			WithNotify(EventAwaitsSecurity, "devsecops"), nil
+				"index_version": indexVersion, "findings": summary, "advisory": true,
+			}), nil
 	}
 
 	return Pass(fmt.Sprintf("Уязвимостей выше порога %g не найдено%s. Снапшот OSV: %s.",

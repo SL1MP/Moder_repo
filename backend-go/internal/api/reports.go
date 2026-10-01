@@ -37,6 +37,7 @@ type reportView struct {
 	Rules            string    `json:"rules,omitempty"`
 	State            string    `json:"state"`
 	StateTitle       string    `json:"state_title"`
+	Verdict          string    `json:"verdict,omitempty"`
 	Threshold        string    `json:"threshold"`
 	FindingsTotal    int       `json:"findings_total"`
 	FindingsBlocking int       `json:"findings_blocking"`
@@ -60,9 +61,22 @@ var stateTitles = map[string]string{
 }
 
 func toReportView(r domain.ScanReport) reportView {
+	stateTitle := stateTitles[r.State]
+	verdict := ""
+	if r.Verdict != nil {
+		verdict = *r.Verdict
+		switch verdict {
+		case "DANGEROUS":
+			stateTitle = "Опасно"
+		case "UNWANTED":
+			stateTitle = "Нежелательное содержимое"
+		case "CLEAN":
+			stateTitle = "Чисто"
+		}
+	}
 	view := reportView{
 		StepCode: r.StepCode, StepTitle: domain.StepTitles[r.StepCode],
-		Scanner: r.Scanner, State: r.State, StateTitle: stateTitles[r.State],
+		Scanner: r.Scanner, State: r.State, StateTitle: stateTitle, Verdict: verdict,
 		Threshold: r.Threshold, FindingsTotal: r.FindingsTotal,
 		FindingsBlocking: r.FindingsBlocking, CreatedAt: r.CreatedAt,
 		JSONURL: fmt.Sprintf("/api/v1/request-items/%d/reports/%s.json", r.RequestItemID, r.StepCode),

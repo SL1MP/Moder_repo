@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -96,9 +97,9 @@ type npmVersion struct {
 
 func (p *Npm) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 	// Scoped-имя в пути экранируется: «@babel/core» -> «@babel%2fcore».
-	url := fmt.Sprintf("%s/%s", p.BaseURL, strings.ReplaceAll(ref.Name, "/", "%2f"))
+	metadataURL := fmt.Sprintf("%s/%s", p.BaseURL, strings.ReplaceAll(ref.Name, "/", "%2f"))
 	var payload npmResponse
-	err := getJSON(ctx, p.HTTP, url, "application/vnd.npm.install-v1+json, */*", &payload)
+	err := getJSON(ctx, p.HTTP, metadataURL, "application/vnd.npm.install-v1+json, */*", &payload)
 	if err != nil {
 		if err == ErrNotFound {
 			return Metadata{}, fmt.Errorf("%w: пакет %s@%s отсутствует в реестре npm",
@@ -134,6 +135,20 @@ func (p *Npm) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 	if len(candidates) == 0 {
 		candidates = append(candidates, npmLicenseCandidates(payload.License)...)
 		candidates = append(candidates, npmLicenseCandidates(payload.Licenses)...)
+	}
+	// Аббревиатурный npm-документ (`install-v1`) у некоторых прокси и для
+	// части старых пакетов не содержит license, хотя она есть в package.json и
+	// в полном документе конкретной версии. Запрашиваем точечный version
+	// endpoint только как fallback: это намного меньше полного документа со
+	// всей историей версий и работает одинаково для публичного и внутреннего
+	// npm registry.
+	if len(candidates) == 0 {
+		var detailed npmVersion
+		detailURL := metadataURL + "/" + url.PathEscape(ref.RawVersion)
+		if err := getJSON(ctx, p.HTTP, detailURL, "application/json", &detailed); err == nil {
+			candidates = append(candidates, npmLicenseCandidates(detailed.License)...)
+			candidates = append(candidates, npmLicenseCandidates(detailed.Licenses)...)
+		}
 	}
 	meta.LicenseRaw, meta.LicenseSPDX = normalizeLicenseCandidates(candidates)
 	return meta, nil

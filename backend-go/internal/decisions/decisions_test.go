@@ -190,7 +190,7 @@ func TestSecurityApprovalReachesSiblings(t *testing.T) {
 	ctx := context.Background()
 
 	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{
-		"vuln_scan": "fail", "sandbox_scan": "fail",
+		"vuln_scan": "info", "sandbox_scan": "fail",
 	})
 	svc, rec := newService(r)
 
@@ -247,11 +247,11 @@ func TestSecurityRejectionReachesSiblings(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{"vuln_scan": "fail"})
+	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{"sandbox_scan": "fail"})
 	svc, _ := newService(r)
 	actor, _ := r.GetOrCreateUser(ctx, "sec-"+testSlug(t), "DevSecOps")
 
-	res, err := svc.DecideSecurity(ctx, f.first, false, actor.ID, "Критическая уязвимость без исправления")
+	res, err := svc.DecideSecurity(ctx, f.first, false, actor.ID, "Песочница подтвердила опасное поведение")
 	if err != nil {
 		t.Fatalf("DecideSecurity: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestSecurityRejectionRequiresComment(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
 
-	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{"vuln_scan": "fail"})
+	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{"sandbox_scan": "fail"})
 	svc, _ := newService(r)
 
 	_, err := svc.DecideSecurity(context.Background(), f.first, false, 0, "   ")
@@ -432,7 +432,7 @@ func TestQuarantineReleaseWrongStatus(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
 
-	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{"sandbox_scan": "warn"})
 	svc, _ := newService(r)
 
 	_, err := svc.ReleaseQuarantine(context.Background(), f.first, true, "")
@@ -478,7 +478,7 @@ func TestSiblingsOnlyWaitingOnes(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{"vuln_scan": "warn"})
+	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{"sandbox_scan": "warn"})
 	// Соседняя заявка уже одобрена — трогать её нельзя.
 	if err := r.UpdateRequestItemStatus(ctx, f.second.ID, "approved", nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
@@ -509,7 +509,7 @@ func TestClearBlockerIgnoresClosedStep(t *testing.T) {
 	ctx := context.Background()
 
 	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{
-		"vuln_scan": "warn", "download": "pass",
+		"sandbox_scan": "warn", "download": "pass",
 	})
 	svc, _ := newService(r)
 	actor, _ := r.GetOrCreateUser(ctx, "sec5-"+testSlug(t), "DevSecOps")

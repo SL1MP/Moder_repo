@@ -241,6 +241,10 @@ func (LicenseStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 			if spdx != "" || raw != "" {
 				source := "registry"
 				pc.Version.LicenseSource = &source
+				if err := pc.Deps.Repo.SetDetectedLicense(
+					ctx, pc.Version.ID, spdx, raw, source); err != nil {
+					return StepOutcome{}, err
+				}
 			}
 		}
 	}
