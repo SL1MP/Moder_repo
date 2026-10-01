@@ -317,12 +317,67 @@ function PackageBlock({
           ) : null}
 
           <ScanReports itemId={item.id} />
+          <SBOMs
+            itemId={item.id}
+            refreshKey={item.steps.find((step) => step.code === 'sbom')?.finished_at ?? item.status}
+          />
 
           <Actions item={item} isSec={isSec} isLegal={isLegal} onChanged={onChanged} />
           <Discussion requestId={requestId} itemId={item.id} title="Обсуждение пакета" />
         </>
       ) : null}
     </div>
+  )
+}
+
+function SBOMs({ itemId, refreshKey }: { itemId: number; refreshKey: string | null }) {
+  const documents = useAsync(() => api.sboms(itemId), [itemId, refreshKey])
+  const [open, setOpen] = useState<{ title: string; url: string } | null>(null)
+
+  // Old requests and deployments without migration/API legitimately have no
+  // SBOM block; keep the rest of the request card usable.
+  if (documents.error || documents.loading) return null
+  const items = documents.data?.sboms ?? []
+  if (!items.length) return null
+
+  return (
+    <>
+      <h3 style={{ marginTop: 12 }}>SBOM (CycloneDX)</h3>
+      <table className="grid">
+        <thead>
+          <tr>
+            <th>Платформа</th>
+            <th>Файл</th>
+            <th>Версия CycloneDX</th>
+            <th>SHA-256</th>
+            <th>Документ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((doc) => (
+            <tr key={doc.filename}>
+              <td className="mono small">{doc.platform || 'пакет'}</td>
+              <td className="mono small">{doc.filename}</td>
+              <td>{doc.spec_version}</td>
+              <td className="mono small" title={doc.sha256}>
+                {doc.sha256.slice(0, 16)}…
+              </td>
+              <td>
+                <button
+                  className="ghost small"
+                  onClick={() => setOpen({ title: `SBOM: ${doc.platform || doc.filename}`, url: doc.download_url })}
+                >
+                  JSON
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {open ? (
+        <ReportViewer title={open.title} url={open.url} kind="json" onClose={() => setOpen(null)} />
+      ) : null}
+    </>
   )
 }
 

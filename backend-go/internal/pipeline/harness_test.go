@@ -26,6 +26,7 @@ import (
 	"moderation/internal/repo"
 	"moderation/internal/sandbox"
 	"moderation/internal/scanners"
+	"moderation/internal/sbom"
 	"moderation/internal/storage"
 )
 
@@ -70,6 +71,7 @@ func resetVersion(t *testing.T, packageVersionID int64) {
 	statements := []string{
 		// request_item удаляется каскадом вместе с pipeline_step и scan_report.
 		`DELETE FROM request_item WHERE package_version_id = $1`,
+		`DELETE FROM sbom_document WHERE package_version_id = $1`,
 		`DELETE FROM artifact WHERE package_version_id = $1`,
 		`DELETE FROM code_finding WHERE package_version_id = $1`,
 		`DELETE FROM vulnerability WHERE package_version_id = $1`,
@@ -399,6 +401,7 @@ func newEnv(t *testing.T, r *repo.Repo) *env {
 			VulnMaxScore:         70,
 			OSVMaxStalenessDays:  7,
 			SandboxEnabled:       true,
+			SBOMEnabled:          true,
 			BannerScanEnabled:    true,
 			SASTEnabled:          true,
 			SASTMinSeverity:      "medium",
@@ -412,6 +415,7 @@ func (e *env) deps() pipeline.Deps {
 	return pipeline.Deps{
 		Repo: e.repo, Storage: e.storage, Reports: e.reports, Artifacts: e.artifacts,
 		Index: e.index, Registry: e.registry, Sandbox: e.sandbox,
+		SBOM: sbom.DefaultGenerator{Now: func() time.Time { return e.now }},
 		Banner: e.banner, SAST: e.sast, Fetch: e.fetcher,
 		Now: func() time.Time { return e.now },
 	}

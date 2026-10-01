@@ -277,6 +277,24 @@ type Artifact struct {
 	Status           string
 }
 
+// SBOMDocument — CycloneDX-документ, построенный из уже проверенного
+// артефакта. Для обычного пакета документ один, для multi-platform Docker —
+// по одному на платформу: состав образов разных архитектур может отличаться.
+type SBOMDocument struct {
+	ID               int64
+	RequestItemID    int64
+	PackageVersionID int64
+	Manager          string
+	Platform         string
+	Filename         string
+	Format           string
+	SpecVersion      string
+	StorageKey       string
+	SizeBytes        int64
+	SHA256           string
+	CreatedAt        time.Time
+}
+
 type Notification struct {
 	ID            int64
 	UserID        int64

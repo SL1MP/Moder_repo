@@ -13,6 +13,7 @@ import (
 	"moderation/internal/repo"
 	"moderation/internal/sandbox"
 	"moderation/internal/scanners"
+	"moderation/internal/sbom"
 	"moderation/internal/storage"
 )
 
@@ -37,6 +38,8 @@ type Config struct {
 	// с явной пометкой, а не молча пропускается: «проверку не делали» обязано
 	// быть видно в карточке.
 	SandboxEnabled bool
+	// SBOMEnabled — формировать CycloneDX между проверками и публикацией.
+	SBOMEnabled bool
 
 	// BannerScanEnabled/SASTEnabled — выключатели СНЯТЫХ шагов сканирования
 	// содержимого (pipeline.RetiredSteps). Конвейер их не запускает; поля
@@ -91,6 +94,9 @@ type Deps struct {
 	// Sandbox — внешняя песочница шага sandbox_scan. nil означает «проверять
 	// нечем»: шаг позовёт DevSecOps, а не пропустит пакет.
 	Sandbox sandbox.Client
+	// SBOM строит документы из уже скачанных байтов. Повторно обращаться к
+	// внешнему реестру генератору не разрешается.
+	SBOM sbom.Generator
 	// Banner/SAST — сканеры СНЯТЫХ шагов (pipeline.RetiredSteps). Конвейер их
 	// не вызывает.
 	Banner scanners.Scanner
@@ -248,6 +254,9 @@ func (d Deps) Validate() error {
 	}
 	if d.Artifacts == nil {
 		missing = append(missing, "Artifacts (артефактори для публикации)")
+	}
+	if d.SBOM == nil {
+		missing = append(missing, "SBOM (генератор CycloneDX)")
 	}
 	if d.Fetch == nil {
 		missing = append(missing, "Fetch (скачивание артефакта)")

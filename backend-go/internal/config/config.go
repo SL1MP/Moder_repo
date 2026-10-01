@@ -65,6 +65,11 @@ type Config struct {
 	// сертификата обязана быть видимым решением, а не строчкой в скрипте.
 	SandboxInsecureTLS bool
 
+	// SBOM — CycloneDX для пакетов, прошедших модерацию. Для Docker генератор
+	// запускает Syft по локальному OCI layout отдельно для каждой платформы.
+	SBOMEnabled    bool
+	SBOMSyftBinary string
+
 	// Сканеры содержимого СНЯТЫХ шагов (pipeline.RetiredSteps): политические
 	// баннеры и SAST. Конвейер их не запускает — настройки оставлены вместе с
 	// самими шагами, чтобы возврат в строй не требовал ещё и восстановления
@@ -283,6 +288,8 @@ func Load(getenv func(string) string) (*Config, error) {
 		SandboxShortResult: boolOr(getenv("SANDBOX_SHORT_RESULT"), true),
 		SandboxTimeout:     secondsOr(getenv("SANDBOX_TIMEOUT_SECONDS"), 900),
 		SandboxInsecureTLS: boolOr(getenv("SANDBOX_INSECURE_TLS"), false),
+		SBOMEnabled:        boolOr(getenv("SBOM_ENABLED"), true),
+		SBOMSyftBinary:     valueOr(getenv("SBOM_SYFT_BINARY"), "syft"),
 
 		// Шаги сняты с конвейера: значения по умолчанию false, чтобы включённым
 		// оказался только тот шаг, который явно включили обратно.

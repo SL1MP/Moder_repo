@@ -12,6 +12,7 @@ import (
 	"moderation/internal/pipeline"
 	"moderation/internal/registry"
 	"moderation/internal/sandbox"
+	"moderation/internal/sbom"
 	"moderation/internal/storage"
 )
 
@@ -186,6 +187,7 @@ func pipelineConfig(cfg *config.Config) pipeline.Config {
 		MaxDockerArtifactSizeBytes: cfg.MaxDockerArtifactSizeBytes,
 
 		SandboxEnabled: cfg.SandboxEnabled,
+		SBOMEnabled:    cfg.SBOMEnabled,
 
 		// Снятые шаги: конвейер их не запускает, значения переносятся, чтобы
 		// возврат шага в строй не требовал ещё и правки сборки.
@@ -196,6 +198,10 @@ func pipelineConfig(cfg *config.Config) pipeline.Config {
 		ScanMaxUnpackedBytes: cfg.ScanMaxUnpackedBytes,
 		ScanMaxFiles:         cfg.ScanMaxFiles,
 	}
+}
+
+func newSBOMGenerator(cfg *config.Config) sbom.Generator {
+	return sbom.DefaultGenerator{SyftBinary: cfg.SBOMSyftBinary}
 }
 
 // storeProbeTimeout — сколько ждать ответа артефактори при проверке

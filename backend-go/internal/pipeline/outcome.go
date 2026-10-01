@@ -1,9 +1,9 @@
 // Package pipeline — конвейер проверок пакета. Порт
 // backend/app/pipeline/{steps,runner,blockers}.py на Go, см. docs/migration-to-go.md.
 //
-// Девять шагов по порядку: db_check, blacklist, quarantine, license, download,
-// vuln_scan, banner_scan, sast_scan, publish. Первый fail останавливает
-// конвейер.
+// Девять действующих шагов по порядку: db_check, blacklist, quarantine,
+// license, download, vuln_scan, sandbox_scan, sbom, publish. Снятые
+// banner_scan и sast_scan остаются только для чтения истории.
 //
 // Центральная механика — ПАРАЛЛЕЛЬНЫЕ СОГЛАСОВАНИЯ. Шаг, не пройденный
 // автоматически, конвейер не обязательно останавливает: пакет уходит дальше на

@@ -71,7 +71,8 @@ var StepCodes = []string{
 	"download",     // шаг 4
 	"vuln_scan",    // шаг 5 — уязвимости по снапшоту OSV
 	"sandbox_scan", // шаг 6 — динамический анализ в песочнице
-	"publish",      // шаг 7
+	"sbom",         // шаг 7 — CycloneDX SBOM проверенного артефакта
+	"publish",      // шаг 8
 }
 
 // RetiredStepCodes — шаги, снятые с конвейера, но оставшиеся в истории.
@@ -113,6 +114,7 @@ var StepTitles = map[string]string{
 	"download":     "Скачивание артефакта",
 	"vuln_scan":    "Проверка на уязвимости",
 	"sandbox_scan": "Проверка в песочнице",
+	"sbom":         "Формирование SBOM",
 	"publish":      "Выгрузка в артефактори",
 	// Снятые с конвейера — см. RetiredStepCodes.
 	"banner_scan": "Политические баннеры (шаг снят)",

@@ -109,6 +109,7 @@ func newServer(t *testing.T, r *repo.Repo, store storage.Store) http.Handler {
 	t.Helper()
 	return api.NewRouter(nil, api.Options{
 		Reports: &api.ReportsHandler{Repo: r, Storage: store},
+		SBOMs:   &api.SBOMsHandler{Repo: r, Storage: store},
 		// Маршруты отчётов закрыты проверкой токена, поэтому роутер
 		// собирается вместе с ней. Проверка того, что без токена они
 		// отвечают 401, — в auth_test.go.
@@ -117,6 +118,42 @@ func newServer(t *testing.T, r *repo.Repo, store storage.Store) http.Handler {
 			Cfg:  reportsAuthCfg,
 		},
 	})
+}
+
+func TestListAndDownloadSBOM(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	store := storage.NewMemory("test")
+	itemID, report := fixture(t, r, store, "clean")
+	body := []byte(`{"bomFormat":"CycloneDX","specVersion":"1.4","components":[]}`)
+	filename := "demo-1.0.0.cdx.json"
+	key := storage.SBOMKey(itemID, filename)
+	if _, err := store.Put(context.Background(), key, body, "application/json; charset=utf-8"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ReplaceSBOMDocuments(context.Background(), itemID, []domain.SBOMDocument{{
+		RequestItemID: itemID, PackageVersionID: report.PackageVersionID,
+		Manager: "pypi", Filename: filename, Format: "cyclonedx-json",
+		SpecVersion: "1.4", StorageKey: key, SizeBytes: int64(len(body)),
+		SHA256: strings.Repeat("a", 64),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	h := newServer(t, r, store)
+	list := get(t, h, "/api/v1/request-items/"+itoa(itemID)+"/sboms")
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), filename) {
+		t.Fatalf("список SBOM: код=%d тело=%s", list.Code, list.Body.String())
+	}
+	if strings.Contains(list.Body.String(), key) {
+		t.Error("внешний ответ раскрыл ключ SBOM в хранилище")
+	}
+	download := get(t, h, "/api/v1/request-items/"+itoa(itemID)+"/sboms/"+filename)
+	if download.Code != http.StatusOK || !strings.Contains(download.Body.String(), "CycloneDX") {
+		t.Fatalf("выдача SBOM: код=%d тело=%s", download.Code, download.Body.String())
+	}
+	if ct := download.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q", ct)
+	}
 }
 
 // reportsAuthCfg — доступ для тестов отчётов: включён локальный вход, поэтому

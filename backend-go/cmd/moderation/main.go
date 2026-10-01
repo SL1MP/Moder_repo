@@ -297,6 +297,7 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 		st = nil
 	} else {
 		options.Reports = &api.ReportsHandler{Repo: repo.New(pool), Storage: st.Reports}
+		options.SBOMs = &api.SBOMsHandler{Repo: repo.New(pool), Storage: st.Reports}
 		logger.Info("хранилище отчётов подключено",
 			"артефактори", cfg.ArtifactBaseURL, "репозиторий", cfg.ArtifactRepoReports)
 	}

@@ -235,6 +235,23 @@ export interface ScanReportList {
   reports: ScanReport[]
 }
 
+export interface SBOMDocument {
+  manager: string
+  platform?: string
+  filename: string
+  format: 'cyclonedx-json'
+  spec_version: string
+  size_bytes: number
+  sha256: string
+  created_at: string
+  download_url: string
+}
+
+export interface SBOMList {
+  request_item_id: number
+  sboms: SBOMDocument[]
+}
+
 export interface RequestItem {
   id: number
   package_version_id: number
@@ -581,6 +598,8 @@ export const api = {
    */
   scanReports: (itemId: number) =>
     request<ScanReportList>(`/request-items/${itemId}/reports`),
+
+  sboms: (itemId: number) => request<SBOMList>(`/request-items/${itemId}/sboms`),
 
   releaseQuarantine: (itemId: number, comment: string) =>
     request<RequestItem>(`/items/${itemId}/quarantine/release`, {

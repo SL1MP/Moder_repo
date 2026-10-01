@@ -99,6 +99,7 @@ var valueMigrations = map[string]string{
 	"sast_scan":   "backend-go/migrations/0004_step_codes_content_scans (или alembic 0004)",
 	// Шаг песочницы вместо снятых сканеров содержимого.
 	"sandbox_scan": "backend-go/migrations/0013_sandbox_step",
+	"sbom":         "backend-go/migrations/0020_sbom_documents",
 	// Менеджеры сверх четырёх, перенесённых прототипом.
 	"conan":     migrationManagers,
 	"docker":    migrationManagers,
@@ -162,6 +163,7 @@ var requiredColumns = []struct {
 var requiredTables = []struct{ table, migration string }{
 	{"code_finding", "backend-go/migrations/0003_code_findings (или alembic 0003)"},
 	{"scan_report", "backend-go/migrations/0005_scan_reports"},
+	{"sbom_document", "backend-go/migrations/0020_sbom_documents"},
 }
 
 // MissingSchemaObjects возвращает всё, чего код ждёт от базы, а в базе нет.

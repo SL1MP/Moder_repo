@@ -8,6 +8,7 @@ import (
 	"moderation/internal/artifactstore"
 	"moderation/internal/domain"
 	"moderation/internal/registry"
+	"moderation/internal/sbom"
 	"moderation/internal/storage"
 )
 
@@ -47,6 +48,18 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	}
 	if blockers := PendingBlockers(steps); len(blockers) > 0 {
 		return blockedOutcome(blockers), nil
+	}
+	// A point retry may start directly at publish and therefore bypass the
+	// preceding SBOM step. Do not publish a supported package without its
+	// document: restart from sbom will reuse the staged artifact, not redownload.
+	if pc.Config.SBOMEnabled && sbom.Supports(pc.Package.Manager) {
+		docs, err := pc.Deps.Repo.ListSBOMDocuments(ctx, pc.Item.ID)
+		if err != nil { return StepOutcome{}, err }
+		if len(docs) == 0 {
+			return Fail("Публикация остановлена: CycloneDX SBOM для этого прогона отсутствует.").
+				WithStatus("failed", "failed").
+				WithNextAction("Перезапустите проверку с шага «Формирование SBOM»."), nil
+		}
 	}
 
 	artifact, err := pc.Deps.Repo.CurrentArtifact(ctx, pc.Version.ID)

@@ -67,6 +67,13 @@ func ReportKey(itemID int64, kind, format string) string {
 	return fmt.Sprintf("reports/%d/%s.%s", itemID, kind, strings.TrimPrefix(format, "."))
 }
 
+// SBOMKey — постоянный ключ CycloneDX-документа. SBOM хранится вместе с
+// отчётами, а не в staging: после публикации исходный объект удаляется, но
+// документ должен оставаться доступным из карточки заявки.
+func SBOMKey(itemID int64, filename string) string {
+	return fmt.Sprintf("sbom/%d/%s", itemID, filename)
+}
+
 // ContentTypeFor — Content-Type по расширению файла отчёта. Браузер должен
 // открыть HTML-отчёт страницей, а не предложить скачать файл.
 func ContentTypeFor(format string) string {

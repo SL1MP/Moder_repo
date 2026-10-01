@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # --------------------------------------------------------------- сборка
+ARG SYFT_VERSION=v0.80.0
 FROM golang:1.25-alpine AS build
 
 # Прокси на этапе сборки передаётся build-аргументами (в образ не попадает) —
@@ -22,6 +23,11 @@ COPY . .
 # ни совпадение версий. -trimpath убирает пути сборочной машины,
 # -s -w выкидывают отладочные таблицы (образ меньше почти вдвое).
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/moderation ./cmd/moderation
+
+# Syft is copied from its official image rather than downloaded by curl during
+# the build. The version is pinned because its CycloneDX shape is an API for
+# downstream consumers.
+FROM anchore/syft:${SYFT_VERSION} AS syft
 
 # --------------------------------------------------------------- рантайм
 # debian-slim, а не alpine: semgrep ставится через pip и официально musl не
@@ -56,6 +62,7 @@ RUN useradd -u 10001 -m moderation \
 USER moderation
 
 COPY --from=build /out/moderation /usr/local/bin/moderation
+COPY --from=syft /syft /usr/local/bin/syft
 
 EXPOSE 8000
 ENTRYPOINT ["/usr/local/bin/moderation"]

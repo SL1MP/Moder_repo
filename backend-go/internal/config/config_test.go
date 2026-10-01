@@ -73,6 +73,8 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"sandbox_priority", cfg.SandboxPriority, 3},
 		{"sandbox_short_result", cfg.SandboxShortResult, true},
 		{"sandbox_timeout", cfg.SandboxTimeout, 900 * time.Second},
+		{"sbom_enabled", cfg.SBOMEnabled, true},
+		{"sbom_syft_binary", cfg.SBOMSyftBinary, "syft"},
 		{"oidc_client_id", cfg.OIDCClientID, "moderation-web"},
 		{"role_mapping_admin", cfg.RoleMappingAdmin, "moderation-admin"},
 		{"role_mapping_devsecops", cfg.RoleMappingDevSecOps, "moderation-devsecops"},

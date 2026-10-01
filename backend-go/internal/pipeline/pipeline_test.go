@@ -335,6 +335,17 @@ func TestGoldenPathPublishes(t *testing.T) {
 	if got, _ := e.reports.List(ctx, "reports/"); len(got) != 2 {
 		t.Errorf("файлов отчётов: %d, ожидалось 2 (один шаг сканирования × json+html)", len(got))
 	}
+	sboms, err := r.ListSBOMDocuments(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sboms) != 1 || sboms[0].Manager != "pypi" {
+		t.Fatalf("SBOM = %+v, ожидался один документ PyPI", sboms)
+	}
+	if body, err := e.reports.Get(ctx, sboms[0].StorageKey); err != nil ||
+		!strings.Contains(string(body), `"bomFormat": "CycloneDX"`) {
+		t.Errorf("CycloneDX SBOM не сохранён: body=%q err=%v", body, err)
+	}
 
 	artifact, err := r.CurrentArtifact(ctx, ver.ID)
 	if err != nil {
@@ -1018,6 +1029,28 @@ func TestSecurityOverrideUnblocksAllScanSteps(t *testing.T) {
 
 // --------------------------------------------------------------------- шаг 8
 
+func TestPublishRequiresSBOMWhenPointRetrySkipsItsStep(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	e := newEnv(t, r)
+	pkg, ver, item := setup(t, r, "pkg", "1.0.0")
+	pc := e.context(pkg, ver, item)
+	if outcome, err := (pipeline.DownloadStep{}).Run(ctx, pc); err != nil || outcome.Result != "pass" {
+		t.Fatalf("подготовка артефакта: outcome=%+v err=%v", outcome, err)
+	}
+	res, err := pipeline.Run(ctx, pc, "publish")
+	if err != nil { t.Fatal(err) }
+	if res.ItemStatus != "failed" || len(e.artifacts.published) != 0 {
+		t.Fatalf("публикация без SBOM: result=%+v published=%d", res, len(e.artifacts.published))
+	}
+	steps := stepsByCode(t, r, item.ID)
+	if !strings.Contains(stepMessage(steps["publish"]), "SBOM") {
+		t.Errorf("причина publish = %q", stepMessage(steps["publish"]))
+	}
+}
+
 func TestPublishBlockedByOpenLicense(t *testing.T) {
 	r, cleanup := mustRepo(t)
 	defer cleanup()
@@ -1154,7 +1187,7 @@ func TestResumeFromStepSkipsEarlier(t *testing.T) {
 			t.Errorf("шаг %s выполнен, хотя возобновление было с download", code)
 		}
 	}
-	// download, vuln_scan, sandbox_scan, publish.
+	// download, vuln_scan, sandbox_scan, sbom, publish.
 	if want := len(domain.StepCodes) - 4; len(steps) != want {
 		t.Errorf("шагов: %d, ожидалось %d (download..publish)", len(steps), want)
 	}

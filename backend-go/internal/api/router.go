@@ -24,6 +24,7 @@ const pingTimeout = 3 * time.Second
 // health, а не падать на старте.
 type Options struct {
 	Reports       *ReportsHandler
+	SBOMs         *SBOMsHandler
 	Packages      *PackagesHandler
 	Requests      *RequestsHandler
 	Licenses      *LicensesHandler
@@ -112,6 +113,13 @@ func NewRouter(pool *pgxpool.Pool, opts ...Options) http.Handler {
 				continue
 			}
 			MountReports(r, opt.Reports, opt.Auth.Auth)
+		}
+		if opt.SBOMs != nil {
+			if opt.Auth == nil {
+				defaultLogger.Print("маршруты SBOM НЕ подключены: не настроена проверка токенов")
+				continue
+			}
+			MountSBOMs(r, opt.SBOMs, opt.Auth.Auth)
 		}
 	}
 

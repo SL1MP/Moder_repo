@@ -25,6 +25,7 @@ var Steps = []Step{
 	DownloadStep{},
 	VulnScanStep{},
 	SandboxScanStep{},
+	SBOMStep{},
 	PublishStep{},
 }
 
