@@ -63,7 +63,7 @@ func TestDefaultsMatchPython(t *testing.T) {
 		// Менеджеры, добавленные миграцией 0014: репозиторий по умолчанию
 		// строится по тому же правилу, отдельной настройки не требуется.
 		{"artifact_repo_docker", cfg.ArtifactRepo("docker"), "docker-internal"},
-		{"artifact_repo_maven", cfg.ArtifactRepo("maven"), "maven-internal"},
+		{"artifact_repo_maven", cfg.ArtifactRepo("maven"), "maven-releases"},
 		{"artifact_repo_files", cfg.ArtifactRepo("files"), "files-internal"},
 		{"artifact_repo_staging", cfg.ArtifactRepoStaging, "moderation-staging"},
 		{"artifact_repo_reports", cfg.ArtifactRepoReports, "moderation-reports"},

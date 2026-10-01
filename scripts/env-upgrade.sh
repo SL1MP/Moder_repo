@@ -230,10 +230,9 @@ HTTPS_PROXY=$(old_or HTTPS_PROXY)
 NO_PROXY=$(old_or NO_PROXY "localhost,127.0.0.1,db,nexus,keycloak,api-go,web,nginx")
 
 # --- артефактори ------------------------------------------------------------
-# ВНИМАНИЕ при ARTIFACT_STORE=nexus: публикация реализована только для
-# pypi, npm, nuget и go. Для остальных восьми менеджеров шаг публикации
-# завершится ошибкой «не задан формат компонента Nexus» — уже ПОСЛЕ
-# скачивания и всех проверок.
+# Nexus использует компонентный API для пакетных форматов, OCI Registry API
+# для Docker и Conan v2 API для Conan. Имена hosted-репозиториев ниже должны
+# совпадать с фактически созданными в Nexus.
 ARTIFACT_STORE=$(old_or ARTIFACT_STORE nexus)
 ARTIFACT_BASE_URL=$(old_or ARTIFACT_BASE_URL)
 ARTIFACT_USER=$(old_or ARTIFACT_USER)
@@ -253,7 +252,7 @@ ARTIFACT_REPO_PYPI=$(old_or ARTIFACT_REPO_PYPI pypi-internal)
 ARTIFACT_REPO_NPM=$(old_or ARTIFACT_REPO_NPM npm-internal)
 ARTIFACT_REPO_GO=$(old_or ARTIFACT_REPO_GO go-internal)
 ARTIFACT_REPO_NUGET=$(old_or ARTIFACT_REPO_NUGET nuget-internal)
-ARTIFACT_REPO_MAVEN=$(old_or ARTIFACT_REPO_MAVEN maven-internal)
+ARTIFACT_REPO_MAVEN=$(old_or ARTIFACT_REPO_MAVEN maven-releases)
 ARTIFACT_REPO_DOCKER=$(old_or ARTIFACT_REPO_DOCKER docker-internal)
 ARTIFACT_REPO_CONAN=$(old_or ARTIFACT_REPO_CONAN conan-internal)
 ARTIFACT_REPO_LUAROCKS=$(old_or ARTIFACT_REPO_LUAROCKS luarocks-internal)
@@ -273,6 +272,7 @@ OSV_DB_TOKEN=$(old_or OSV_DB_TOKEN)
 OSV_DB_FILE=$(old_or OSV_DB_FILE)
 
 # --- регламентные задачи worker-go ------------------------------------------
+WORKER_CONCURRENCY=$(old_or WORKER_CONCURRENCY 2)
 MAINTENANCE_ENABLED=$(old_or MAINTENANCE_ENABLED true)
 QUARANTINE_SWEEP_INTERVAL_SECONDS=$(old_or QUARANTINE_SWEEP_INTERVAL_SECONDS 900)
 STAGING_CLEANUP_INTERVAL_SECONDS=$CLEANUP

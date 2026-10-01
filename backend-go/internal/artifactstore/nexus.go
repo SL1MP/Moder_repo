@@ -124,7 +124,8 @@ func (n *Nexus) Publish(ctx context.Context, t Target, data []byte) (string, err
 	}
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", rejected(n.Kind(), n.assetPath(t), resp.StatusCode, raw)
+		return "", rejected(n.Kind(), fmt.Sprintf("repository=%s, asset=%s", t.Repo, n.assetPath(t)),
+			resp.StatusCode, raw)
 	}
 	return fileURL, nil
 }
@@ -193,7 +194,8 @@ func (n *Nexus) publishMavenBundle(ctx context.Context, t Target, files []regist
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", rejected(n.Kind(), n.assetPath(first), resp.StatusCode, raw)
+		return "", rejected(n.Kind(), fmt.Sprintf("repository=%s, asset=%s", t.Repo, n.assetPath(first)),
+			resp.StatusCode, raw)
 	}
 	return n.ArtifactURL(first), nil
 }

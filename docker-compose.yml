@@ -233,7 +233,7 @@ services:
         NO_PROXY: ${NO_PROXY:-}
     image: moderation-backend-go:local
     restart: unless-stopped
-    command: ["worker"]
+    command: ["worker", "--concurrency=${WORKER_CONCURRENCY:-2}"]
     env_file: [.env]
     environment:
       <<: *proxy-env

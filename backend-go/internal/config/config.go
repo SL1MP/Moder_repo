@@ -583,12 +583,18 @@ func (c *Config) AcceptedIssuers() []string {
 
 // artifactRepos собирает карту «менеджер → репозиторий» по всем известным
 // менеджерам. Имя переменной — ARTIFACT_REPO_{МЕНЕДЖЕР} в верхнем регистре,
-// значение по умолчанию — «{менеджер}-internal».
+// значение по умолчанию — «{менеджер}-internal». Maven — исключение: штатный
+// hosted repository Nexus называется maven-releases (именно его создаёт
+// стандартная установка Nexus и показывает документация сервиса).
 func artifactRepos(getenv func(string) string) map[string]string {
 	repos := make(map[string]string, len(domain.ManagerCodes))
 	for _, manager := range domain.ManagerCodes {
 		key := "ARTIFACT_REPO_" + strings.ToUpper(manager)
-		repos[manager] = valueOr(getenv(key), manager+"-internal")
+		fallback := manager + "-internal"
+		if manager == "maven" {
+			fallback = "maven-releases"
+		}
+		repos[manager] = valueOr(getenv(key), fallback)
 	}
 	return repos
 }

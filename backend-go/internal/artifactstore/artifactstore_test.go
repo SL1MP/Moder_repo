@@ -338,6 +338,32 @@ func TestNexusPublishesMavenReleaseBundle(t *testing.T) {
 	}
 }
 
+func TestNexusMavenPublishErrorNamesRepository(t *testing.T) {
+	bundle, err := registry.PackBundle("maven", []registry.BundleFile{
+		{Name: "tool-1.0.0.pom", Data: []byte("pom")},
+	}, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindNexus},
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			if r.Method == http.MethodPost {
+				_, _ = w.Write([]byte(`{"status":"NOT_FOUND"}`))
+			}
+		})
+	publisher := store.(artifactstore.ReleaseBundlePublisher)
+	_, err = publisher.PublishReleaseBundle(context.Background(), artifactstore.Target{
+		Repo: "maven-releases", Manager: "maven", Name: "org.example:tool", Version: "1.0.0",
+	}, bundle)
+	if err == nil {
+		t.Fatal("Nexus 404 должен вернуть ошибку")
+	}
+	if !strings.Contains(err.Error(), "repository=maven-releases") {
+		t.Fatalf("ошибка не называет проблемный репозиторий: %v", err)
+	}
+}
+
 func TestNexusPublishesEveryPyPIDistribution(t *testing.T) {
 	files := []registry.BundleFile{
 		{Name: "demo-1.0.0.tar.gz", Data: []byte("sdist")},
