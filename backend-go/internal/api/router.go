@@ -50,6 +50,11 @@ func NewRouter(pool *pgxpool.Pool, opts ...Options) http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 
+	// Документация публична: без неё пользователь ещё не знает, как получить
+	// токен. Защищённые операции внутри спецификации всё равно помечены Bearer
+	// auth и вызываются из Swagger UI только после Authorize.
+	MountOpenAPI(r)
+
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

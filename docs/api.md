@@ -1,10 +1,21 @@
 # REST API
 
-Базовый префикс — `/api/v1`. Интерактивная документация: `/api/docs` (Swagger) и `/api/redoc`.
+Базовый префикс — `/api/v1`. Go backend публикует документацию без отдельного
+контейнера:
+
+- `/api/docs` — Swagger UI с возможностью выполнить запрос;
+- `/api/redoc` — справочник ReDoc;
+- `/api/openapi.json` — машиночитаемая спецификация OpenAPI 3.0.3.
+
+В Swagger нажмите **Authorize** и вставьте JWT без префикса `Bearer`: UI добавит
+его к запросу самостоятельно. Статические файлы Swagger UI и ReDoc загружаются
+с зафиксированных версий на `cdn.jsdelivr.net`; JSON-спецификация от CDN не
+зависит.
 
 ## Аутентификация
 
-Все эндпоинты, кроме `/api/v1/auth/config`, `/api/v1/auth/token`, `/health` и `/metrics`, требуют
+Все эндпоинты, кроме `/api/v1/auth/config`, `/api/v1/auth/token`, `/health`,
+`/metrics` и трёх маршрутов документации выше, требуют
 `Authorization: Bearer <token>`.
 
 Токен — либо OIDC-токен пользователя (Keycloak, Authorization Code + PKCE), либо токен сервисной
