@@ -377,6 +377,30 @@ func TestAdditionalManagerFileFormats(t *testing.T) {
 	}
 }
 
+func TestCompactLineFormatsInManifestFiles(t *testing.T) {
+	tests := []struct {
+		manager string
+		file    string
+		content string
+		name    string
+		version string
+	}{
+		{"maven", "pom.xml", "org.apache.commons:commons-lang3:3.14.0\n", "org.apache.commons:commons-lang3", "3.14.0"},
+		{"conan", "conanfile.txt", "zlib/1.3.1\n", "zlib", "1.3.1"},
+		{"luarocks", "moderation-test-1.0.0-1.rockspec", "luasocket@3.1.0-1\n", "luasocket", "3.1.0-1"},
+		{"terraform", ".terraform.lock.hcl", "hashicorp/null@3.2.2\n", "hashicorp/null", "3.2.2"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.manager, func(t *testing.T) {
+			deps := mustParse(t, tc.manager, tc.file, tc.content)
+			if len(deps) != 1 || deps[0].Name != tc.name || deps[0].Version != tc.version {
+				t.Fatalf("получено %#v, ожидалась зависимость %s %s", deps, tc.name, tc.version)
+			}
+		})
+	}
+}
+
 func TestPackagesLockJSON(t *testing.T) {
 	deps := mustParse(t, "nuget", "packages.lock.json", `{
       "version": 1,

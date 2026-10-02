@@ -9,6 +9,9 @@ import (
 func parseMaven(base string, content []byte) ([]RawDependency, error) {
 	switch base {
 	case "pom.xml":
+		if !strings.HasPrefix(strings.TrimSpace(string(content)), "<") {
+			return parseMavenCoordinates(content)
+		}
 		return parseMavenPOM(content)
 	case "build.gradle", "build.gradle.kts":
 		return parseGradleDependencies(content)
@@ -16,6 +19,28 @@ func parseMaven(base string, content []byte) ([]RawDependency, error) {
 	return nil, invalidf(
 		"Файл «%s» не поддерживается для maven. Поддерживаются: pom.xml, build.gradle, build.gradle.kts",
 		base)
+}
+
+// parseMavenCoordinates — сокращённый тестовый формат: одна координата
+// groupId:artifactId:version на строку, даже если файл называется pom.xml.
+func parseMavenCoordinates(content []byte) ([]RawDependency, error) {
+	var out []RawDependency
+	for _, line := range compactLines(content) {
+		parts := strings.Split(line, ":")
+		if len(parts) != 3 || strings.TrimSpace(parts[0]) == "" ||
+			strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+			return nil, invalidf(
+				"Не удалось разобрать строку pom.xml: «%s». Ожидается groupId:artifactId:version",
+				line)
+		}
+		out = append(out, direct(
+			strings.TrimSpace(parts[0])+":"+strings.TrimSpace(parts[1]),
+			strings.TrimSpace(parts[2])))
+	}
+	if len(out) == 0 {
+		return nil, invalidf("В pom.xml не найдено зависимостей")
+	}
+	return dedupe(out, nameVersionKey), nil
 }
 
 func parseMavenPOM(content []byte) ([]RawDependency, error) {

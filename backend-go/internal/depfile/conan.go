@@ -21,6 +21,9 @@ func parseConan(base string, content []byte) ([]RawDependency, error) {
 }
 
 func parseConanFileTXT(content []byte) ([]RawDependency, error) {
+	if !strings.Contains(string(content), "[") {
+		return parseConanCoordinates(content)
+	}
 	inRequires := false
 	var out []RawDependency
 	for _, raw := range strings.Split(string(content), "\n") {
@@ -41,6 +44,28 @@ func parseConanFileTXT(content []byte) ([]RawDependency, error) {
 	}
 	if len(out) == 0 {
 		return nil, invalidf("В conanfile.txt не найдено зависимостей в секции [requires]")
+	}
+	return dedupe(out, lowerNameVersionKey), nil
+}
+
+// parseConanCoordinates — сокращённый вид name/version, по одной записи на
+// строку. Допускает recipe revision и user/channel, но в заявку передаёт
+// только имя и версию: их же принимает плагин общего Conan-канала.
+func parseConanCoordinates(content []byte) ([]RawDependency, error) {
+	var out []RawDependency
+	for _, line := range compactLines(content) {
+		ref := strings.SplitN(line, "#", 2)[0]
+		ref = strings.SplitN(ref, "@", 2)[0]
+		parts := strings.Split(ref, "/")
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return nil, invalidf(
+				"Не удалось разобрать строку conanfile.txt: «%s». Ожидается name/version",
+				line)
+		}
+		out = append(out, direct(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])))
+	}
+	if len(out) == 0 {
+		return nil, invalidf("В conanfile.txt не найдено зависимостей")
 	}
 	return dedupe(out, lowerNameVersionKey), nil
 }
