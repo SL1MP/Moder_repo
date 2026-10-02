@@ -65,8 +65,15 @@ func parsePackagesLockJSON(content []byte) ([]RawDependency, error) {
 	return dedupe(out, lowerNameVersionKey), nil
 }
 
-// parsePackagesConfig — <package id="..." version="..." />.
+// parsePackagesConfig принимает официальный XML NuGet
+// (<package id="..." version="..." />), а также компактный построчный вид
+// Id@version. Второй формат нужен для файлов, которые формируют внутренние
+// скрипты компании: расширение у них packages.config, но XML-обёртки нет.
 func parsePackagesConfig(content []byte) ([]RawDependency, error) {
+	if !strings.HasPrefix(strings.TrimSpace(string(content)), "<") {
+		return parsePackagesConfigLines(content)
+	}
+
 	var out []RawDependency
 	err := walkXML(content, "packages.config",
 		func(tag string) bool { return tag == "package" },
@@ -82,6 +89,34 @@ func parsePackagesConfig(content []byte) ([]RawDependency, error) {
 		return nil, invalidf("В packages.config не найдено элементов <package>")
 	}
 	return out, nil
+}
+
+func parsePackagesConfigLines(content []byte) ([]RawDependency, error) {
+	var out []RawDependency
+	for _, raw := range strings.Split(string(content), "\n") {
+		line := strings.TrimSpace(strings.SplitN(raw, "#", 2)[0])
+		if line == "" {
+			continue
+		}
+		idx := strings.LastIndex(line, "@")
+		if idx <= 0 || idx == len(line)-1 {
+			return nil, invalidf(
+				"Не удалось разобрать строку packages.config: «%s». Ожидается Id@version",
+				line)
+		}
+		name := strings.TrimSpace(line[:idx])
+		version := strings.TrimSpace(line[idx+1:])
+		if !exactNuGetVersion.MatchString(version) {
+			out = append(out, unpinned(name,
+				"«"+name+"»: «"+version+"» — не точная версия; укажите её явно"))
+			continue
+		}
+		out = append(out, direct(name, version))
+	}
+	if len(out) == 0 {
+		return nil, invalidf("В packages.config не найдено зависимостей")
+	}
+	return dedupe(out, lowerNameVersionKey), nil
 }
 
 // parseCsproj — <PackageReference Include="..." Version="..." />, а также

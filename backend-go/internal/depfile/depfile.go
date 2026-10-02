@@ -1,5 +1,5 @@
 // Package depfile — разбор файлов зависимостей: requirements.txt, go.sum,
-// package-lock.json и остальные. Порт backend/app/managers/parsers/.
+// package-lock.json, pom.xml, Dockerfile и остальные.
 //
 // Что здесь важно понимать. Разбор НЕ раскрывает граф зависимостей: он читает
 // то, что уже написано в файле. Lock-файлы (poetry.lock, package-lock.json,
@@ -59,6 +59,18 @@ func Parse(manager, filename string, content []byte) ([]RawDependency, error) {
 		return parseGo(base, content)
 	case "nuget":
 		return parseDotNet(base, content)
+	case "maven":
+		return parseMaven(base, content)
+	case "docker":
+		return parseDocker(base, content)
+	case "conan":
+		return parseConan(base, content)
+	case "luarocks":
+		return parseLuaRocks(base, content)
+	case "terraform":
+		return parseTerraform(base, content)
+	case "php":
+		return parsePHP(base, content)
 	}
 	return nil, invalidf("менеджер %q не поддерживается", manager)
 }

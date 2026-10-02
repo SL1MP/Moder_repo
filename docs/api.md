@@ -98,7 +98,11 @@ curl -sS -X POST http://localhost:8080/api/v1/requests \
 
 Поддерживаемые файлы: `requirements*.txt`, `poetry.lock`, `pyproject.toml` (pypi);
 `package-lock.json`, `yarn.lock`, `package.json` (npm); `go.mod`, `go.sum` (go);
-`packages.lock.json`, `packages.config`, `*.csproj` (nuget).
+`packages.lock.json`, `packages.config`, `*.csproj` (nuget); `pom.xml` (maven);
+`conanfile.txt` (conan); `Dockerfile` (docker); `*.rockspec` (luarocks);
+`.terraform.lock.hcl` (terraform); `composer.json` (php/composer).
+
+Малые файлы для ручной проверки находятся в `testdata/dependency-files/`.
 
 Парсер различает прямые и транзитивные зависимости там, где формат их различает
 (`// indirect` в go.mod, `"dev": true` в package-lock.json). `go.sum`, `poetry.lock` и `yarn.lock`

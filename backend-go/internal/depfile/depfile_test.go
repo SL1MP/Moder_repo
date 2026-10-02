@@ -324,6 +324,59 @@ func TestPackagesConfig(t *testing.T) {
 	}
 }
 
+func TestPackagesConfigLineFormat(t *testing.T) {
+	deps := mustParse(t, "nuget", "packages.config", `
+ET.Standard.Library@1.6.1
+System.ComponentModel.TypeConverter@4.3.0
+`)
+	if len(deps) != 2 {
+		t.Fatalf("записей %d: %v", len(deps), names(deps))
+	}
+	if d, _ := find(deps, "ET.Standard.Library"); d.Version != "1.6.1" || d.Kind != KindDirect {
+		t.Errorf("построчная зависимость разобрана неверно: %+v", d)
+	}
+}
+
+func TestAdditionalManagerFileFormats(t *testing.T) {
+	tests := []struct {
+		manager string
+		file    string
+		content string
+		name    string
+		version string
+	}{
+		{
+			manager: "maven", file: "build.gradle.kts",
+			content: `dependencies { implementation("org.apache.commons:commons-lang3:3.14.0") }`,
+			name: "org.apache.commons:commons-lang3", version: "3.14.0",
+		},
+		{
+			manager: "conan", file: "conanfile.py",
+			content: `def requirements(self): self.requires("zlib/1.3.1")`,
+			name: "zlib", version: "1.3.1",
+		},
+		{
+			manager: "conan", file: "conan.lock",
+			content: `{"requires":["zlib/1.3.1#revision"]}`,
+			name: "zlib", version: "1.3.1",
+		},
+		{
+			manager: "terraform", file: "providers.tf",
+			content: `source = "hashicorp/null"\nversion = "= 3.2.2"`,
+			name: "hashicorp/null", version: "3.2.2",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.manager+"/"+tc.file, func(t *testing.T) {
+			deps := mustParse(t, tc.manager, tc.file, tc.content)
+			if len(deps) != 1 || deps[0].Name != tc.name || deps[0].Version != tc.version {
+				t.Fatalf("получено %#v, ожидалась зависимость %s %s", deps, tc.name, tc.version)
+			}
+		})
+	}
+}
+
 func TestPackagesLockJSON(t *testing.T) {
 	deps := mustParse(t, "nuget", "packages.lock.json", `{
       "version": 1,
