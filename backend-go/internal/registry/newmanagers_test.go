@@ -522,6 +522,32 @@ func TestTerraformNormalizesAPIBaseAndSendsProtocolHeaders(t *testing.T) {
 	}
 }
 
+func TestTerraformUsesDiscoveredProviderAPI(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://terraform.test/.well-known/terraform.json": `{
+			"providers.v1":"https://providers.terraform.test/provider-api/v1/"}`,
+		"https://providers.terraform.test/provider-api/v1/keycloak/keycloak/versions": `{
+			"versions":[{"version":"5.9.0","platforms":[{"os":"linux","arch":"amd64"}]}]}`,
+	}}
+	plugin := pluginWith(t, "terraform", f)
+	ref, err := registry.ParseEntry(plugin, "keycloak/keycloak@5.9.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.FetchMetadata(context.Background(), ref); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, requested := range f.requested {
+		if requested == "https://providers.terraform.test/provider-api/v1/keycloak/keycloak/versions" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("discovered providers.v1 не использован: %v", f.requested)
+	}
+}
+
 // TestTerraformPlatformInEntry — платформу можно указать в записи, и тогда
 // скачивается именно её дистрибутив.
 func TestTerraformPlatformInEntry(t *testing.T) {

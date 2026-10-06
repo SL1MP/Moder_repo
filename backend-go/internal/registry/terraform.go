@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -163,6 +164,10 @@ type terraformMirrorIndex struct {
 	Versions map[string]struct{} `json:"versions"`
 }
 
+type terraformDiscovery struct {
+	ProvidersV1 string `json:"providers.v1"`
+}
+
 // terraformVersionInfo — ответ о самой версии; из него берём дату публикации.
 type terraformVersionInfo struct {
 	Version     string `json:"version"`
@@ -189,16 +194,45 @@ func terraformAPIBase(value string) string {
 	return strings.TrimRight(base, "/")
 }
 
+// providerAPIBase выполняет обязательное service discovery Terraform. Адрес
+// веб-интерфейса registry.terraform.io не обязан совпадать с хостом Provider
+// Registry API: актуальный endpoint объявляется в /.well-known/terraform.json.
+// Старые настройки с готовым /v1/providers продолжают работать без discovery.
+func (p *Terraform) providerAPIBase(ctx context.Context) string {
+	raw := strings.TrimRight(strings.TrimSpace(p.BaseURL), "/")
+	switch {
+	case strings.HasSuffix(raw, "/v1/providers"):
+		return raw
+	case strings.HasSuffix(raw, "/v1"):
+		return raw + "/providers"
+	}
+
+	var discovery terraformDiscovery
+	if err := getJSONWithHeaders(ctx, p.HTTP, raw+"/.well-known/terraform.json",
+		"application/json", terraformRegistryHeaders, &discovery); err == nil &&
+		strings.TrimSpace(discovery.ProvidersV1) != "" {
+		baseURL, baseErr := url.Parse(raw + "/")
+		providersURL, providersErr := url.Parse(strings.TrimSpace(discovery.ProvidersV1))
+		if baseErr == nil && providersErr == nil {
+			return strings.TrimRight(baseURL.ResolveReference(providersURL).String(), "/")
+		}
+	}
+	// Не все корпоративные зеркала реализуют service discovery. Сохраняем
+	// совместимость с прежней настройкой, но уже после корректной попытки
+	// определить endpoint протоколом Terraform.
+	return terraformAPIBase(raw) + "/v1/providers"
+}
+
 func (p *Terraform) versionPlatforms(ctx context.Context, ref Ref) (string, []terraformPlatform, error) {
 	version, requestedPlatform := splitTerraformVersion(ref.Version)
-	base := terraformAPIBase(p.BaseURL)
+	base := p.providerAPIBase(ctx)
+	versionsURL := fmt.Sprintf("%s/%s/versions", base, ref.Name)
 	var response terraformVersions
-	if err := getJSONWithHeaders(ctx, p.HTTP,
-		fmt.Sprintf("%s/v1/providers/%s/versions", base, ref.Name),
+	if err := getJSONWithHeaders(ctx, p.HTTP, versionsURL,
 		"application/json", terraformRegistryHeaders, &response); err != nil {
 		if err == ErrNotFound {
-			return "", nil, fmt.Errorf("%w: провайдер %s не найден в реестре terraform",
-				ErrNotFound, ref.DisplayName)
+			return "", nil, fmt.Errorf("%w: провайдер %s не найден по адресу %s",
+				ErrNotFound, ref.DisplayName, versionsURL)
 		}
 		return "", nil, err
 	}
@@ -246,11 +280,11 @@ func (p *Terraform) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error
 	if err != nil {
 		return Metadata{}, err
 	}
-	base := terraformAPIBase(p.BaseURL)
+	base := p.providerAPIBase(ctx)
 	meta := Metadata{
 		Name:             ref.Name,
 		Version:          ref.Version,
-		ArtifactURL:      fmt.Sprintf("%s/v1/providers/%s/%s", base, ref.Name, version),
+		ArtifactURL:      fmt.Sprintf("%s/%s/%s", base, ref.Name, version),
 		ArtifactFilename: fmt.Sprintf("terraform-provider-%s_%s.terraform-release.tgz",
 			providerShortName(ref.Name), version),
 	}
@@ -260,7 +294,7 @@ func (p *Terraform) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error
 	// пометкой, а пакет всё равно проверится.
 	var info terraformVersionInfo
 	if err := getJSONWithHeaders(ctx, p.HTTP,
-		fmt.Sprintf("%s/v1/providers/%s/%s", base, ref.Name, version),
+		fmt.Sprintf("%s/%s/%s", base, ref.Name, version),
 		"application/json", terraformRegistryHeaders, &info); err == nil {
 		meta.PublishedAt = parseTime(info.PublishedAt)
 	}
@@ -277,7 +311,7 @@ func (p *Terraform) Download(ctx context.Context, ref Ref, limit int64) ([]byte,
 	if err != nil {
 		return nil, "", err
 	}
-	base := terraformAPIBase(p.BaseURL)
+	base := p.providerAPIBase(ctx)
 	files := make([]BundleFile, 0, len(platforms)+2)
 	mirror := terraformMirrorVersion{Archives: make(map[string]terraformMirrorArchive, len(platforms))}
 	usedNames := map[string]bool{}
@@ -285,7 +319,7 @@ func (p *Terraform) Download(ctx context.Context, ref Ref, limit int64) ([]byte,
 	for _, platform := range platforms {
 		platformKey := platform.OS + "_" + platform.Arch
 		var dist terraformDownload
-		endpoint := fmt.Sprintf("%s/v1/providers/%s/%s/download/%s/%s",
+		endpoint := fmt.Sprintf("%s/%s/%s/download/%s/%s",
 			base, ref.Name, version, platform.OS, platform.Arch)
 		if err := getJSONWithHeaders(ctx, p.HTTP, endpoint, "application/json",
 			terraformRegistryHeaders, &dist); err != nil {
