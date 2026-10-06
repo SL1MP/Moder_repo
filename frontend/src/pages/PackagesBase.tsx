@@ -132,7 +132,28 @@ export default function PackagesBase({ me }: { me: Me }) {
             </thead>
             <tbody>
               {data.items.map((pkg) => (
-                <tr key={pkg.id}>
+                <PackageRow key={pkg.id} pkg={pkg} selected={selected === pkg.id}
+                  onToggle={() => setSelected(selected === pkg.id ? null : pkg.id)}
+                  me={me} onChanged={reload} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+function PackageRow({ pkg, selected, onToggle, me, onChanged }: {
+  pkg: PackageVersion
+  selected: boolean
+  onToggle: () => void
+  me: Me
+  onChanged: () => void
+}) {
+  return (
+    <>
+      <tr className={selected ? 'selected-row' : ''}>
                   <td className="mono">{pkg.name}</td>
                   <td className="mono">{pkg.version}</td>
                   <td>
@@ -156,24 +177,20 @@ export default function PackagesBase({ me }: { me: Me }) {
                   <td>
                     <button
                       className="ghost small"
-                      onClick={() => setSelected(selected === pkg.id ? null : pkg.id)}
+                      onClick={onToggle}
                     >
-                      {selected === pkg.id ? 'скрыть' : 'детали'}
+                      {selected ? 'скрыть' : 'детали'}
                     </button>
                   </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-
-      {selected ? <PackageDetails id={selected} me={me} onChanged={reload} /> : null}
+      </tr>
+      {selected ? <tr className="details-row"><td colSpan={9}>
+        <PackageDetails id={pkg.id} me={me} onChanged={onChanged} embedded />
+      </td></tr> : null}
     </>
   )
 }
 
-function PackageDetails({ id, me, onChanged }: { id: number; me: Me; onChanged: () => void }) {
+function PackageDetails({ id, me, onChanged, embedded = false }: { id: number; me: Me; onChanged: () => void; embedded?: boolean }) {
   const { data, error, reload } = useAsync(() => api.packageById(id), [id])
   const [reason, setReason] = useState('')
   const isSec = me.roles.includes('devsecops') || me.roles.includes('admin')
@@ -182,7 +199,7 @@ function PackageDetails({ id, me, onChanged }: { id: number; me: Me; onChanged: 
   if (!data) return <Loader />
 
   return (
-    <div className="card">
+    <div className={embedded ? 'package-details' : 'card'}>
       <div className="row between">
         <h2 className="mono">
           {data.name} {data.version} <Badge value={data.status} />
@@ -261,7 +278,7 @@ function Artifacts({ pkg }: { pkg: PackageVersion }) {
             <th>sha256</th>
             <th>Размер</th>
             <th>URL в артефактори</th>
-            <th>MinIO</th>
+            <th>Промежуточная зона</th>
           </tr>
         </thead>
         <tbody>

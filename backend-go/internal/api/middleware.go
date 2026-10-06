@@ -63,9 +63,9 @@ func CurrentUser(ctx context.Context) (*domain.User, bool) {
 
 // Authenticate проверяет Bearer-токен и заводит/обновляет учётку.
 //
-// Синхронизация учётки на каждом запросе — поведение python-версии: роли
-// живут в каталоге, а не у нас, и пользователь, которому только что выдали
-// группу, должен получить права без похода к администратору сервиса.
+// Профиль синхронизируется на каждом запросе, но роли обычных пользователей
+// принадлежат приложению и не перезаписываются claims из Keycloak. Роли из
+// токена остаются авторитетными только для сервисных учёток.
 func (a *Auth) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
@@ -139,7 +139,7 @@ func RequireRoles(roles ...string) func(http.Handler) http.Handler {
 
 // RequireAnyRole — нужна хотя бы одна роль сервиса. Добавлять пакеты может
 // любая роль, но учётка вообще без ролей — это чаще всего не «нет прав», а
-// незаданный маппинг групп, и сообщение обязано на это указывать.
+// неназначенный доступ, и сообщение обязано на это указывать.
 // Порт deps.require_any_role.
 func RequireAnyRole(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,8 +150,8 @@ func RequireAnyRole(next http.Handler) http.Handler {
 		}
 		if len(user.Roles) == 0 {
 			writeError(w, r, errForbidden(
-				"У учётной записи нет ни одной роли сервиса. Проверьте членство в группах каталога "+
-					"и переменные ROLE_MAPPING_*"))
+				"У учётной записи нет ни одной роли сервиса. Обратитесь к администратору: "+
+					"роль назначается на экране «Настройка → Пользователи и роли»"))
 			return
 		}
 		next.ServeHTTP(w, r)

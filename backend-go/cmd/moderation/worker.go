@@ -80,6 +80,7 @@ func runWorker(args []string, logger *slog.Logger) int {
 		return 1
 	}
 	defer pool.Close()
+	applyStoredSettings(ctx, pool, cfg, logger)
 
 	w, err := newPipelineWorker(cfg, pool, logger)
 	if err != nil {

@@ -86,6 +86,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	applyStoredSettings(ctx, pool, cfg, logger)
 
 	options, blacklist, _ := buildOptions(cfg, pool, logger)
 	_ = blacklist // политики попадают в конвейер вместе с переносом шагов 0-3
@@ -314,10 +315,11 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 				if err != nil {
 					return ""
 				}
+				baseURL, repoName := cfg.ArtifactInstallLocation(manager)
 				return plugin.InstallCommand(registry.Ref{
 					Manager: manager, Name: name, DisplayName: displayName,
 					Version: version, RawVersion: rawVersion,
-				}, cfg.ArtifactBaseURL, cfg.ArtifactRepo(manager))
+				}, baseURL, repoName)
 			},
 			OnAuditError: func(err error) {
 				logger.Error("аудит создания заявки не записан", "error", err)

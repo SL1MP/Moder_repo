@@ -93,6 +93,7 @@ func runScan(args []string, logger *slog.Logger) int {
 		return 1
 	}
 	defer pool.Close()
+	applyStoredSettings(ctx, pool, cfg, logger)
 	r := repo.New(pool)
 
 	// Диагностика идёт до подключения к хранилищу: она отвечает на вопрос

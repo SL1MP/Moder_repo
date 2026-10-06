@@ -299,7 +299,7 @@ curl -sS -X POST http://localhost:8080/api/v1/requests \
 | Временная зона | `ARTIFACT_REPO_STAGING`, `ARTIFACT_REPO_REPORTS` | где пакет лежит, пока идут проверки, и где живут отчёты |
 | Песочница | `SANDBOX_URL`, `SANDBOX_TOKEN`, `SANDBOX_PRIORITY` | динамическая проверка архива, шаг `sandbox_scan` |
 | Уязвимости | `OSV_DB_SOURCE`, `OSV_PYPI_SNAPSHOT_PATH`, `OSV_NPM_SNAPSHOT_PATH`, `OSV_SYNC_INTERVAL_SECONDS`, `OSV_MAX_STALENESS_DAYS` | локальные снапшоты PyPI/npm, без сети к osv.dev |
-| Доступ | `OIDC_*`, `ROLE_MAPPING_*`, `LOCAL_AUTH_ENABLED` | SSO и маппинг групп каталога в роли |
+| Доступ | `OIDC_*`, `LOCAL_AUTH_ENABLED` | SSO/локальный вход; роли назначаются в самом сервисе |
 | GitLab | `GITLAB_*`, `FERNET_KEY` | чтение файлов зависимостей, шифрование токенов |
 | Лимиты | `MAX_UPLOAD_SIZE_BYTES`, `MAX_PACKAGES_PER_REQUEST`, `RATE_LIMIT_REQUESTS_PER_MINUTE` | защита от перегрузки |
 
@@ -337,7 +337,8 @@ curl -sS -X POST http://localhost:8080/api/v1/requests \
 Добавлять пакеты может любая роль. Права проверяются в API, не только в UI. Каждое действие пишется
 в аудит-лог: кто, что, когда, старое/новое значение, источник (UI / REST API / фоновая задача / CLI).
 
-Fallback-вход логин/пароль — только для сервисных учёток, флаг `LOCAL_AUTH_ENABLED` (в prod `false`):
+Вход логин/пароль для локальных пользователей и сервисных учёток включается
+флагом `LOCAL_AUTH_ENABLED` (в prod по умолчанию `false`):
 
 ```bash
 make cli ARGS="create-service-account ci-bot --roles developer"
@@ -375,6 +376,23 @@ make rescan                                          # перепроверит�
 make reload                                          # перечитать blacklist и лицензии
 make import-list FILE=./package_list.txt MANAGER=pypi   # одноразовый импорт при внедрении
 ```
+
+### Настройка через web
+
+Администратор может менять несекретные адреса, имена репозиториев, пороги и
+таймауты на странице **«Настройка → Конфигурация и состояние»**. Значения
+хранятся в таблице `app_setting`, имеют приоритет над `.env` и применяются
+после перезапуска `api-go` и `worker-go`; пересборка образов не нужна.
+
+Секреты (`DATABASE_URL`, токены, пароли, ключ подписи) остаются в `.env` или
+секрет-хранилище и в API не возвращаются. Внутренний адрес Nexus задаётся в
+`ARTIFACT_BASE_URL`, а адрес для браузера и команд установки — отдельно в
+`ARTIFACT_PUBLIC_BASE_URL`; это не даёт ссылкам вида `http://nexus:8081/...`
+попасть разработчику.
+
+На вкладке **«Пользователи и роли»** роли назначаются внутри сервиса. Можно
+создать локального пользователя или заранее подготовить профиль OIDC; при
+следующем входе claims Keycloak не перезапишут выданные приложением роли.
 
 ## Документация
 

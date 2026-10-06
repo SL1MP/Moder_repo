@@ -75,6 +75,10 @@ func MountAdmin(r chi.Router, h *AdminHandler, a *Auth) {
 	r.Group(func(sub chi.Router) {
 		sub.Use(a.Authenticate)
 		sub.Use(RequireRoles("admin"))
+		sub.Put("/api/v1/settings", h.UpdateSettings)
+		sub.Get("/api/v1/admin/users", h.Users)
+		sub.Post("/api/v1/admin/users", h.CreateUser)
+		sub.Patch("/api/v1/admin/users/{userID}", h.UpdateUser)
 		sub.Post("/api/v1/admin/reload", h.Reload)
 		sub.Get("/api/v1/admin/audit", h.Audit)
 		if h.Sweep != nil {
@@ -161,7 +165,21 @@ func (h *AdminHandler) Settings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errInternal("Конфигурация не подключена к сервису"))
 		return
 	}
-	writeJSON(w, http.StatusOK, h.Cfg.Catalog())
+	settings := h.Cfg.Catalog()
+	if h.Repo != nil {
+		overrides, err := h.Repo.AppSettings(r.Context())
+		if err != nil {
+			writeError(w, r, errInternal("Web-настройки не прочитаны").Because(err))
+			return
+		}
+		for i := range settings {
+			if value, ok := overrides[settings[i].Env]; ok {
+				settings[i].Value = value
+				settings[i].Overridden = true
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, settings)
 }
 
 // PoliciesState — GET /api/v1/settings/policies

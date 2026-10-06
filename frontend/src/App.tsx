@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
 import { Alert, Loader } from './components/ui'
 import { api, ApiError, configureApi, type AuthConfig, type Me } from './lib/api'
@@ -22,6 +22,7 @@ import QueueSecurity from './pages/QueueSecurity'
 import RequestCard from './pages/RequestCard'
 import RequestList from './pages/RequestList'
 import SettingsPage from './pages/SettingsPage'
+import Home from './pages/Home'
 
 export default function App() {
   const [config, setConfig] = useState<AuthConfig | null>(null)
@@ -140,7 +141,7 @@ export default function App() {
       <main className="content">
         {error ? <Alert kind="error">{error}</Alert> : null}
         <Routes>
-          <Route path="/" element={<Navigate to="/add" replace />} />
+          <Route path="/" element={<Home me={me} />} />
           <Route path="/add" element={<AddPackages me={me} config={config} />} />
           <Route path="/requests" element={<RequestList me={me} scope="mine" />} />
           <Route path="/requests/all" element={<RequestList me={me} scope="all" />} />
@@ -174,13 +175,12 @@ function Sidebar({
   return (
     <nav className="sidebar">
       <div className="brand">
-        {config.app_name}
-        <small>
-          {config.app_env === 'prod' ? 'production' : config.app_env} · единственный вход для пакетов
-        </small>
+        <span className="brand-mark">M</span>
+        <span>{config.app_name}<small>{config.app_env === 'prod' ? 'production' : config.app_env}</small></span>
       </div>
 
       <div className="nav-group">Работа с пакетами</div>
+      <NavItem to="/" label="Обзор" />
       <NavItem to="/add" label="Добавить пакеты" />
       <NavItem to="/requests" label="Мои заявки" />
       {isSec || isLegal || isAdmin ? <NavItem to="/requests/all" label="Все заявки" /> : null}
@@ -271,9 +271,9 @@ function Login({
       </div>
       {config.local_auth_enabled ? (
         <div className="card">
-          <h2>Сервисная учётная запись</h2>
+          <h2>Локальная учётная запись</h2>
           <p className="small muted">
-            Fallback-вход логин/пароль. В production отключён (<code>LOCAL_AUTH_ENABLED=false</code>).
+            Пользователь и роли управляются администратором внутри сервиса.
           </p>
           <form
             onSubmit={(event) => {

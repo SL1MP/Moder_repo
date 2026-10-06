@@ -23,8 +23,8 @@ import (
 // и так не видит), но делается явно, чтобы обе стороны считали одно и то же.
 const bcryptMaxBytes = 72
 
-// IssueLocalToken выпускает HS256-токен сервисной учётки. Возвращает токен и
-// срок жизни в секундах. Порт security.issue_local_token.
+// IssueLocalToken выпускает HS256-токен локальной или сервисной учётки.
+// Возвращает токен и срок жизни в секундах. Порт security.issue_local_token.
 func (v *Verifier) IssueLocalToken(user *domain.User) (string, int, error) {
 	if !v.settings.LocalAuthEnabled {
 		return "", 0, &Error{Message: "Локальная аутентификация отключена (LOCAL_AUTH_ENABLED=false)"}
@@ -32,14 +32,15 @@ func (v *Verifier) IssueLocalToken(user *domain.User) (string, int, error) {
 	ttl := int(v.settings.LocalTokenTTL / time.Second)
 	now := v.now()
 	payload := map[string]any{
-		"iss":      LocalIssuer,
-		"sub":      "local:" + user.Username,
-		"username": user.Username,
-		"email":    stringOrNil(user.Email),
-		"name":     stringOrNil(user.FullName),
-		"roles":    rolesOrEmpty(user.Roles),
-		"iat":      now.Unix(),
-		"exp":      now.Add(v.settings.LocalTokenTTL).Unix(),
+		"iss":        LocalIssuer,
+		"sub":        "local:" + user.Username,
+		"username":   user.Username,
+		"email":      stringOrNil(user.Email),
+		"name":       stringOrNil(user.FullName),
+		"roles":      rolesOrEmpty(user.Roles),
+		"is_service": user.IsService,
+		"iat":        now.Unix(),
+		"exp":        now.Add(v.settings.LocalTokenTTL).Unix(),
 	}
 	token, err := signHS256(payload, []byte(v.settings.LocalAuthSecret))
 	if err != nil {

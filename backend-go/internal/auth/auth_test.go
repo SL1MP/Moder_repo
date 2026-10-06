@@ -524,11 +524,34 @@ func TestLocalTokenRoundTrip(t *testing.T) {
 		t.Fatalf("роли берутся из токена: %v", claims.Roles)
 	}
 	if !claims.IsService {
-		t.Fatal("локальный токен — всегда сервисная учётка")
+		t.Fatal("токен сервисной учётки потерял признак is_service")
 	}
 	// За JWKS ходить незачем: локальный токен проверяется своим секретом.
 	if f.jwksHits.Load() != 0 {
 		t.Fatal("локальный токен не должен приводить к запросу в Keycloak")
+	}
+}
+
+func TestLocalHumanTokenIsNotServiceAccount(t *testing.T) {
+	s := newRSASigner(t, "key-1")
+	f := newFakeIssuer(t, s.jwk())
+	v := newTestVerifier(f, func(st *Settings) {
+		st.LocalAuthEnabled = true
+		st.LocalAuthSecret = "секрет-для-локального-пользователя"
+	})
+
+	user := testUser("local-user", "developer")
+	user.IsService = false
+	token, _, err := v.IssueLocalToken(user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := v.Decode(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.IsService {
+		t.Fatal("локальный пользователь ошибочно распознан как сервисная учётка")
 	}
 }
 

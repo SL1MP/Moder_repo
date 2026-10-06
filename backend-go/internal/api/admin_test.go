@@ -73,19 +73,73 @@ func newAdminFixture(t *testing.T) *adminFixture {
 }
 
 func (f *adminFixture) do(t *testing.T, role, method, path string) *httptest.ResponseRecorder {
+	return f.doBody(t, role, method, path, "{}")
+}
+
+func (f *adminFixture) doBody(
+	t *testing.T, role, method, path, body string,
+) *httptest.ResponseRecorder {
 	t.Helper()
 	acting := *f.user
 	acting.Roles = []string{role}
+	acting.IsService = true
 	token, _, err := f.verifier.IssueLocalToken(&acting)
 	if err != nil {
 		t.Fatalf("токен: %v", err)
 	}
-	req := httptest.NewRequest(method, path, strings.NewReader("{}"))
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	f.router.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestWebSettingsAreAdminOnlyAndPersisted(t *testing.T) {
+	f := newAdminFixture(t)
+	body := `{"values":{"ARTIFACT_PUBLIC_BASE_URL":"https://repo.example.test:8443"}}`
+	if rec := f.doBody(t, "developer", http.MethodPut, "/api/v1/settings", body); rec.Code != http.StatusForbidden {
+		t.Fatalf("разработчик изменил настройки: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec := f.doBody(t, "admin", http.MethodPut, "/api/v1/settings", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("настройка не сохранена: %d %s", rec.Code, rec.Body.String())
+	}
+	stored, err := f.repo.AppSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stored["ARTIFACT_PUBLIC_BASE_URL"]; got != "https://repo.example.test:8443" {
+		t.Fatalf("сохранено %q", got)
+	}
+
+	rec = f.do(t, "developer", http.MethodGet, "/api/v1/settings")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"overridden":true`) {
+		t.Fatalf("web override не виден в каталоге: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminCreatesLocalUserWithApplicationRoles(t *testing.T) {
+	f := newAdminFixture(t)
+	username := fmt.Sprintf("локальный-%d", time.Now().UnixNano())
+	body := fmt.Sprintf(`{"username":%q,"full_name":"Локальный пользователь",`+
+		`"roles":["developer"],"source":"local","password":"надёжный-пароль"}`, username)
+	rec := f.doBody(t, "admin", http.MethodPost, "/api/v1/admin/users", body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("пользователь не создан: %d %s", rec.Code, rec.Body.String())
+	}
+
+	created, err := f.repo.GetUserByUsername(context.Background(), username)
+	if err != nil || created == nil {
+		t.Fatalf("пользователь не найден: %v", err)
+	}
+	if created.IsService || !created.HasRole("developer") {
+		t.Fatalf("неверный тип или роли: %+v", created)
+	}
+	if !auth.VerifyPassword("надёжный-пароль", created.PasswordHash) {
+		t.Fatal("сохранённый пароль не проверяется")
+	}
 }
 
 // TestSettingsShowEnvNames — настройка показывается вместе с именем
@@ -336,6 +390,7 @@ func TestReloadKeepsWorkingRulesOnBrokenFile(t *testing.T) {
 	call := func() *httptest.ResponseRecorder {
 		acting := *user
 		acting.Roles = []string{"admin"}
+		acting.IsService = true
 		token, _, err := verifier.IssueLocalToken(&acting)
 		if err != nil {
 			t.Fatal(err)

@@ -109,6 +109,7 @@ func (f *createFixture) authorize(t *testing.T, req *http.Request, headers map[s
 	t.Helper()
 	acting := *f.user
 	acting.Roles = []string{"developer"}
+	acting.IsService = true
 	if role, ok := headers["role"]; ok {
 		if role == "" {
 			acting.Roles = nil

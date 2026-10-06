@@ -158,7 +158,15 @@ func findUser(ctx context.Context, tx pgx.Tx, claims UserClaims) (*domain.User, 
 }
 
 func insertUser(ctx context.Context, tx pgx.Tx, claims UserClaims, now time.Time) (*domain.User, error) {
-	roles, err := jsonOrEmptyList(claims.Roles)
+	// Keycloak подтверждает личность, но не управляет правами приложения.
+	// OIDC-пользователь впервые появляется без ролей; администратор назначает
+	// их в web-интерфейсе. Роли из локального токена оставляем для сервисных
+	// учёток и тестовых/CLI-сценариев.
+	rolesValue := []string{}
+	if claims.IsService {
+		rolesValue = claims.Roles
+	}
+	roles, err := jsonOrEmptyList(rolesValue)
 	if err != nil {
 		return nil, err
 	}
@@ -195,12 +203,12 @@ func updateUser(ctx context.Context, tx pgx.Tx, existing *domain.User, claims Us
 	if claims.FullName != "" {
 		fullName = &claims.FullName
 	}
-	// Роли берутся из каталога только если он их прислал. Если каталог не
-	// прислал ни одной, а в базе они есть, — оставляем как есть: иначе
-	// временный сбой маппера групп в Keycloak молча разжаловал бы всех
-	// пользователей сервиса.
+	// Роли OIDC-пользователей принадлежат сервису и меняются только через
+	// административный API. Keycloak здесь отвечает за аутентификацию, а не
+	// за авторизацию. Сервисным учёткам роли по-прежнему можно передавать в
+	// локальном токене: их выпускает сам сервис.
 	rolesValue := existing.Roles
-	if len(claims.Roles) > 0 {
+	if claims.IsService && len(claims.Roles) > 0 {
 		rolesValue = claims.Roles
 	}
 	roles, err := jsonOrEmptyList(rolesValue)
@@ -284,6 +292,120 @@ func (r *Repo) TouchLastLogin(ctx context.Context, userID int64, now time.Time) 
 		return fmt.Errorf("отметка времени входа: %w", err)
 	}
 	return nil
+}
+
+// ListUsers — пользователи приложения для административного экрана.
+func (r *Repo) ListUsers(ctx context.Context) ([]domain.User, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+userColumns+` FROM "user" ORDER BY username`)
+	if err != nil {
+		return nil, fmt.Errorf("чтение пользователей: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, fmt.Errorf("чтение пользователя: %w", err)
+		}
+		out = append(out, *u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("чтение пользователей: %w", err)
+	}
+	return out, nil
+}
+
+// GetUserByID — пользователь административного экрана. nil, если отсутствует.
+func (r *Repo) GetUserByID(ctx context.Context, id int64) (*domain.User, error) {
+	u, err := scanUser(r.pool.QueryRow(ctx,
+		`SELECT `+userColumns+` FROM "user" WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("чтение пользователя #%d: %w", id, err)
+	}
+	return u, nil
+}
+
+// CreateOIDCUser заранее создаёт учётку, к которой subject Keycloak
+// привяжется при первом входе по совпадающему username.
+func (r *Repo) CreateOIDCUser(
+	ctx context.Context, username, email, fullName string, roles []string, now time.Time,
+) (*domain.User, error) {
+	rawRoles, err := jsonOrEmptyList(roles)
+	if err != nil {
+		return nil, err
+	}
+	u, err := scanUser(r.pool.QueryRow(ctx, `
+		INSERT INTO "user" (subject, username, email, full_name, roles, is_service,
+		                    is_active, last_login_at, created_at, updated_at)
+		VALUES (NULL, $1, $2, $3, $4::jsonb, FALSE, TRUE, NULL, $5, $5)
+		RETURNING `+userColumns,
+		username, nullable(email), nullable(fullName), rawRoles, now))
+	if err != nil {
+		return nil, fmt.Errorf("создание OIDC-пользователя %q: %w", username, err)
+	}
+	return u, nil
+}
+
+// CreateLocalUser создаёт обычного пользователя приложения с локальным
+// паролем. Keycloak для такой учётки не требуется; роли всё равно хранятся
+// в той же таблице и управляются тем же административным экраном.
+func (r *Repo) CreateLocalUser(
+	ctx context.Context, username, email, fullName, passwordHash string,
+	roles []string, now time.Time,
+) (*domain.User, error) {
+	rawRoles, err := jsonOrEmptyList(roles)
+	if err != nil {
+		return nil, err
+	}
+	u, err := scanUser(r.pool.QueryRow(ctx, `
+		INSERT INTO "user" (subject, username, email, full_name, roles, is_service,
+		                    is_active, password_hash, last_login_at, created_at, updated_at)
+		VALUES (NULL, $1, $2, $3, $4::jsonb, FALSE, TRUE, $5, NULL, $6, $6)
+		RETURNING `+userColumns,
+		username, nullable(email), nullable(fullName), rawRoles, passwordHash, now))
+	if err != nil {
+		return nil, fmt.Errorf("создание локального пользователя %q: %w", username, err)
+	}
+	return u, nil
+}
+
+// UpdateUserAccess меняет только авторизацию. Идентичность OIDC-пользователя
+// продолжает приходить из Keycloak, локального — остаётся в приложении.
+func (r *Repo) UpdateUserAccess(
+	ctx context.Context, id int64, roles []string, active bool, now time.Time,
+) (*domain.User, error) {
+	rawRoles, err := jsonOrEmptyList(roles)
+	if err != nil {
+		return nil, err
+	}
+	u, err := scanUser(r.pool.QueryRow(ctx, `
+		UPDATE "user"
+		SET roles = $2::jsonb, is_active = $3, updated_at = $4
+		WHERE id = $1
+		RETURNING `+userColumns, id, rawRoles, active, now))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("обновление доступа пользователя #%d: %w", id, err)
+	}
+	return u, nil
+}
+
+// CountActiveUsersWithRole нужен предохранителю от удаления последнего
+// администратора через web.
+func (r *Repo) CountActiveUsersWithRole(ctx context.Context, role string) (int, error) {
+	var count int
+	if err := r.pool.QueryRow(ctx, `
+		SELECT count(*) FROM "user"
+		WHERE is_active = TRUE AND roles ? $1`, role).Scan(&count); err != nil {
+		return 0, fmt.Errorf("подсчёт пользователей с ролью %s: %w", role, err)
+	}
+	return count, nil
 }
 
 // SetGitlabTokens сохраняет или убирает подключение GitLab.

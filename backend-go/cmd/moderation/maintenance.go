@@ -222,6 +222,7 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 		return 1
 	}
 	defer pool.Close()
+	applyStoredSettings(ctx, pool, cfg, logger)
 
 	r := repo.New(pool)
 	q := queue.New(pool, staleAfter(cfg))

@@ -62,6 +62,7 @@ func openBootstrapEnv(logger *slog.Logger) (*bootstrapEnv, error) {
 		stop()
 		return nil, fmt.Errorf("не удалось подключиться к Postgres: %w", err)
 	}
+	applyStoredSettings(ctx, pool, cfg, logger)
 	r := repo.New(pool)
 	return &bootstrapEnv{
 		cfg: cfg, pool: pool, repo: r, ctx: ctx, stop: stop, logger: logger,

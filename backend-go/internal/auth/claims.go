@@ -2,10 +2,10 @@
 //
 // Порт backend/app/core/security.py. Основной способ входа — OIDC
 // (Authorization Code + PKCE) к Keycloak: SPA получает токен, сервис проверяет
-// подпись по JWKS издателя. Группы каталога маппятся в роли сервиса
-// переменными ROLE_MAPPING_*. Fallback-вход логин/пароль (HS256-токен нашей
-// подписи) — только сервисные учётки, включается LOCAL_AUTH_ENABLED, в prod
-// выключен.
+// подпись по JWKS издателя. Группы каталога разбираются для совместимости и
+// диагностики, но права обычного пользователя берутся из БД сервиса.
+// Fallback-вход логин/пароль (HS256-токен нашей подписи) — для локальных и
+// сервисных учёток, включается LOCAL_AUTH_ENABLED.
 //
 // Проверка подписи собрана на stdlib, без библиотеки JWT. Причина та же, по
 // которой в internal/storage руками написан SigV4: набор алгоритмов здесь
@@ -136,13 +136,19 @@ func claimsFromLocal(payload map[string]any) (Claims, error) {
 	if subject == "" {
 		return Claims{}, &Error{Message: "В локальном токене нет claim sub"}
 	}
+	isService, hasServiceFlag := payload["is_service"].(bool)
+	if !hasServiceFlag {
+		// Токены прежних версий выпускались только сервисным учёткам и не
+		// содержали этот claim. Сохраняем их совместимость до истечения TTL.
+		isService = true
+	}
 	return Claims{
 		Subject:   subject,
 		Username:  firstNonEmpty(str(payload["username"]), subject),
 		Email:     str(payload["email"]),
 		FullName:  str(payload["name"]),
 		Roles:     stringList(payload["roles"]),
-		IsService: true,
+		IsService: isService,
 		Raw:       payload,
 	}, nil
 }

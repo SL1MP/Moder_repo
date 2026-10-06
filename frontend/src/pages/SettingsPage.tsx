@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 import { Alert, Loader, formatTime, useAsync } from '../components/ui'
-import { api, type Me } from '../lib/api'
+import { api, type AdminUser, type Me, type SettingRow } from '../lib/api'
 
 export default function SettingsPage({ me }: { me: Me }) {
   const settings = useAsync(() => api.settings(), [])
@@ -9,6 +9,7 @@ export default function SettingsPage({ me }: { me: Me }) {
   const system = useAsync(() => api.systemStatus(), [])
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'general' | 'users'>('general')
   const isAdmin = me.roles.includes('admin')
   const isSec = me.roles.includes('devsecops') || isAdmin
 
@@ -25,9 +26,9 @@ export default function SettingsPage({ me }: { me: Me }) {
         <div>
           <h1>Настройка</h1>
           <p className="page-hint">
-            Только чтение. Все политики и адреса задаются переменными окружения и применяются при
-            старте: правка <code>.env</code> + рестарт. Blacklist и справочник лицензий — файлы
-            конфигурации, их можно перечитать без рестарта.
+            Адреса, пороги и интеграции можно сохранить здесь. Для применения достаточно
+            перезапустить <code>api-go</code> и <code>worker-go</code> — пересобирать образы не нужно.
+            Секреты остаются в защищённых переменных окружения.
           </p>
         </div>
         {isAdmin ? (
@@ -52,6 +53,19 @@ export default function SettingsPage({ me }: { me: Me }) {
         ) : null}
       </div>
 
+      <div className="settings-tabs">
+        <button className={activeTab === 'general' ? 'active' : ''} onClick={() => setActiveTab('general')}>
+          Конфигурация и состояние
+        </button>
+        {isAdmin ? (
+          <button className={activeTab === 'users' ? 'active' : ''} onClick={() => setActiveTab('users')}>
+            Пользователи и роли
+          </button>
+        ) : null}
+      </div>
+
+      {activeTab === 'users' && isAdmin ? <UsersPanel /> : <>
+
       {message ? <Alert kind="ok">{message}</Alert> : null}
       {error ? <Alert kind="error">{error}</Alert> : null}
       {settings.error ? <Alert kind="error">{settings.error}</Alert> : null}
@@ -70,20 +84,21 @@ export default function SettingsPage({ me }: { me: Me }) {
                 <th>Переменная</th>
                 <th>Значение</th>
                 <th>Описание</th>
+                <th />
               </tr>
             </thead>
             <tbody>
               {(rows ?? []).map((row) => (
                 <tr key={row.env}>
                   <td className="mono nowrap">{row.env}</td>
-                  <td className="mono small">
-                    {row.secret ? (
-                      <span className="muted">{String(row.value)}</span>
-                    ) : (
-                      String(row.value ?? '—') || <span className="muted">пусто</span>
-                    )}
-                  </td>
+                  <SettingValue row={row} isAdmin={isAdmin} onSaved={(text) => {
+                    setMessage(text)
+                    settings.reload()
+                  }} onError={setError} />
                   <td className="small dim">{row.description}</td>
+                  <td className="small nowrap">
+                    {row.overridden ? <span className="badge info">web</span> : <span className="muted">.env</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -160,7 +175,152 @@ export default function SettingsPage({ me }: { me: Me }) {
           </div>
         </div>
       ) : null}
+      </>}
     </>
+  )
+}
+
+function SettingValue({ row, isAdmin, onSaved, onError }: {
+  row: SettingRow
+  isAdmin: boolean
+  onSaved: (message: string) => void
+  onError: (message: string) => void
+}) {
+  const [value, setValue] = useState(String(row.value ?? ''))
+  const [busy, setBusy] = useState(false)
+
+  if (row.secret || !row.editable || !isAdmin) {
+    return <td className="mono small"><span className={row.secret ? 'muted' : ''}>{String(row.value ?? '—') || 'пусто'}</span></td>
+  }
+  return (
+    <td className="setting-value">
+      <div className="row nowrap">
+        <input className="mono" value={value} onChange={(event) => setValue(event.target.value)} />
+        <button className="small" disabled={busy || value === String(row.value ?? '')} onClick={() => {
+          setBusy(true)
+          onError('')
+          api.saveSettings({ [row.env]: value })
+            .then((result) => onSaved(result.message))
+            .catch((exc: Error) => onError(exc.message))
+            .finally(() => setBusy(false))
+        }}>{busy ? '…' : 'сохранить'}</button>
+      </div>
+    </td>
+  )
+}
+
+function UsersPanel() {
+  const users = useAsync(() => api.adminUsers(), [])
+  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [source, setSource] = useState<'local' | 'oidc'>('local')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  return (
+    <>
+      <div className="card">
+        <div className="row between">
+          <div>
+            <h2>Пользователи приложения</h2>
+            <p className="page-hint">
+              Keycloak подтверждает личность. Роли, активность и доступ к модерации хранятся здесь.
+              OIDC-пользователь также появится автоматически после первого входа.
+            </p>
+          </div>
+          <span className="badge info">{users.data?.items.length ?? 0} учётных записей</span>
+        </div>
+        {message ? <Alert kind="ok">{message}</Alert> : null}
+        {error ? <Alert kind="error">{error}</Alert> : null}
+        {users.error ? <Alert kind="error">{users.error}</Alert> : null}
+        {users.loading ? <Loader /> : null}
+        <div className="user-list">
+          {(users.data?.items ?? []).map((user) => (
+            <UserAccessRow key={user.id} user={user} roles={users.data?.roles ?? []}
+              onSaved={() => { setMessage(`Доступ ${user.username} обновлён`); users.reload() }}
+              onError={setError} />
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Добавить пользователя</h2>
+        <p className="small dim">
+          Локальный пользователь входит без Keycloak. Для OIDC логин должен совпадать с{' '}
+          <code>preferred_username</code>; пароль тогда хранится только в Keycloak.
+        </p>
+        <div className="grid cols-3">
+          <label><span>Логин</span><input className="wide" value={username} onChange={(e) => setUsername(e.target.value)} /></label>
+          <label><span>Имя</span><input className="wide" value={fullName} onChange={(e) => setFullName(e.target.value)} /></label>
+          <label><span>Email</span><input className="wide" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+          <label>
+            <span>Источник</span>
+            <select className="wide" value={source} onChange={(e) => setSource(e.target.value as 'local' | 'oidc')}>
+              <option value="local">Локальный</option>
+              <option value="oidc">Keycloak / OIDC</option>
+            </select>
+          </label>
+          {source === 'local' ? (
+            <label>
+              <span>Начальный пароль</span>
+              <input className="wide" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </label>
+          ) : null}
+        </div>
+        <button className="primary" disabled={!username.trim() || (source === 'local' && password.length < 8)} onClick={() => {
+          setError(null)
+          api.createAdminUser({
+            username: username.trim(),
+            email: email.trim(),
+            full_name: fullName.trim(),
+            roles: ['developer'],
+            source,
+            password: source === 'local' ? password : undefined,
+          })
+            .then(() => {
+              setUsername(''); setEmail(''); setFullName(''); setPassword('')
+              setMessage(`${source === 'local' ? 'Локальный' : 'OIDC'} пользователь создан с ролью разработчика`)
+              users.reload()
+            })
+            .catch((exc: Error) => setError(exc.message))
+        }}>+ Пользователь</button>
+      </div>
+    </>
+  )
+}
+
+function UserAccessRow({ user, roles, onSaved, onError }: {
+  user: AdminUser
+  roles: string[]
+  onSaved: () => void
+  onError: (message: string) => void
+}) {
+  const [selected, setSelected] = useState(user.roles)
+  const [active, setActive] = useState(user.is_active)
+  const [busy, setBusy] = useState(false)
+  return (
+    <div className="user-row">
+      <div className="user-identity">
+        <span className="avatar">{user.display_name.slice(0, 2).toUpperCase()}</span>
+        <div><strong>{user.display_name}</strong><small>{user.username} · {user.email ?? 'без email'}</small></div>
+      </div>
+      <span className="badge mono">{user.source}</span>
+      <div className="role-checks">
+        {roles.map((role) => <label key={role} className="row">
+          <input type="checkbox" checked={selected.includes(role)} onChange={(event) => {
+            setSelected(event.target.checked ? [...selected, role] : selected.filter((item) => item !== role))
+          }} /><span>{role}</span>
+        </label>)}
+      </div>
+      <label className="row active-toggle"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /><span>активен</span></label>
+      <button className="small" disabled={busy} onClick={() => {
+        setBusy(true); onError('')
+        api.updateAdminUser(user.id, { roles: selected, is_active: active })
+          .then(onSaved).catch((exc: Error) => onError(exc.message)).finally(() => setBusy(false))
+      }}>{busy ? '…' : 'сохранить'}</button>
+    </div>
   )
 }
 
@@ -206,9 +366,9 @@ function QueueCard({
       {message ? <Alert kind="info">{message}</Alert> : null}
       {!alive ? (
         <Alert kind="warn">
-          Celery-worker не отвечает: {String(worker.detail)}. Пакеты не остановятся — их подхватит
+          Worker очереди не отвечает: {String(worker.detail)}. Пакеты не остановятся — их подхватит
           сторож в процессе API, но проверки будут идти медленнее. Поднимите контейнер{' '}
-          <code>worker</code>.
+          <code>worker-go</code>.
         </Alert>
       ) : null}
       {stuck > 0 ? (
@@ -218,7 +378,7 @@ function QueueCard({
         </Alert>
       ) : null}
       <dl className="kv">
-        <dt>Celery worker</dt>
+        <dt>Go worker</dt>
         <dd>
           <span className={alive ? 'badge pass' : 'badge fail'}>
             {alive ? 'разбирает очередь' : 'не отвечает'}
@@ -264,8 +424,8 @@ function VulnIndexCard({ info, isSec }: { info: Record<string, unknown>; isSec: 
       {message ? <Alert kind="info">{message}</Alert> : null}
       {stale ? (
         <Alert kind="warn">
-          Снапшот устарел или не загружен — автоматическое одобрение отключено: шаг 5 даёт{' '}
-          <code>warn</code> и требует решения DevSecOps.
+          Снапшот устарел или не загружен: шаг OSV даст предупреждение, но сам по себе не заблокирует
+          публикацию. Песочница остаётся обязательной там, где она применима.
         </Alert>
       ) : null}
       <dl className="kv">

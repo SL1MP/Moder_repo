@@ -488,6 +488,22 @@ export interface SettingRow {
   description: string
   value: unknown
   secret: boolean
+  editable: boolean
+  overridden: boolean
+  restart_required: boolean
+}
+
+export interface AdminUser {
+  id: number
+  username: string
+  email: string | null
+  full_name: string | null
+  display_name: string
+  roles: string[]
+  source: 'oidc' | 'local' | 'service'
+  is_active: boolean
+  last_login_at: string | null
+  created_at: string
 }
 
 export interface AuditRow {
@@ -656,6 +672,15 @@ export const api = {
     }),
 
   settings: () => request<SettingRow[]>('/settings'),
+  saveSettings: (values: Record<string, string>) =>
+    request<{ saved: string[]; restart_required: boolean; message: string }>('/settings', {
+      method: 'PUT', body: JSON.stringify({ values }),
+    }),
+  adminUsers: () => request<{ items: AdminUser[]; roles: string[] }>('/admin/users'),
+  createAdminUser: (body: { username: string; email?: string; full_name?: string; roles: string[]; source: 'local' | 'oidc'; password?: string }) =>
+    request<AdminUser>('/admin/users', { method: 'POST', body: JSON.stringify(body) }),
+  updateAdminUser: (id: number, body: { roles: string[]; is_active: boolean }) =>
+    request<AdminUser>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   policies: () => request<Record<string, any>>('/settings/policies'),
   reloadConfig: () => request<Record<string, any>>('/admin/reload', { method: 'POST' }),
   systemStatus: () => request<Record<string, any>>('/system/status'),

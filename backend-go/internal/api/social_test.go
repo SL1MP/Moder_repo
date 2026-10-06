@@ -120,6 +120,7 @@ func (f *socialFixture) do(t *testing.T, user *domain.User, roles []string, meth
 	t.Helper()
 	acting := *user
 	acting.Roles = roles
+	acting.IsService = true
 	token, _, err := f.verifier.IssueLocalToken(&acting)
 	if err != nil {
 		t.Fatalf("выпуск токена: %v", err)
@@ -299,7 +300,8 @@ func TestCommentEditedOutsideWindowIsMarked(t *testing.T) {
 		Comments: late,
 	})
 	token, _, _ := f.verifier.IssueLocalToken(&domain.User{
-		ID: f.author.ID, Username: f.author.Username, Roles: []string{"developer"}, IsActive: true})
+		ID: f.author.ID, Username: f.author.Username, Roles: []string{"developer"},
+		IsService: true, IsActive: true})
 	req := httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/api/v1/comments/%d", commentID),
 		strings.NewReader(`{"body":"переписал позже"}`))
 	req.Header.Set("Authorization", "Bearer "+token)

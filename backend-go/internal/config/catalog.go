@@ -26,6 +26,14 @@ type Setting struct {
 	// Secret — значение скрыто. Поле нужно интерфейсу, чтобы показать такие
 	// строки иначе, а не выводить слово «задано» как обычное значение.
 	Secret bool `json:"secret"`
+	// Editable — настройку можно сохранить через web. Секреты намеренно не
+	// редактируются этим маршрутом.
+	Editable bool `json:"editable"`
+	// Overridden — значение пришло из БД, а не из .env.
+	Overridden bool `json:"overridden"`
+	// RestartRequired — новое значение применится после restart api-go и
+	// worker-go; пересборка образов не требуется.
+	RestartRequired bool `json:"restart_required"`
 }
 
 // Catalog — действующие настройки, по разделам в порядке объявления.
@@ -38,7 +46,7 @@ func (c *Config) Catalog() []Setting {
 	}
 	seconds := func(d time.Duration) any { return int(d.Seconds()) }
 
-	return []Setting{
+	settings := []Setting{
 		{Env: "APP_ENV", Section: "Общие", Description: "dev | prod", Value: c.AppEnv},
 		{Env: "APP_NAME", Section: "Общие", Description: "Заголовок в интерфейсе", Value: c.AppName},
 
@@ -50,7 +58,10 @@ func (c *Config) Catalog() []Setting {
 		{Env: "ARTIFACT_STORE", Section: "Артефактори",
 			Description: "nexus | generic — у них разные протоколы выгрузки", Value: c.ArtifactStore},
 		{Env: "ARTIFACT_BASE_URL", Section: "Артефактори",
-			Description: "Адрес артефактори", Value: c.ArtifactBaseURL},
+			Description: "Внутренний адрес артефактори для контейнеров", Value: c.ArtifactBaseURL},
+		{Env: "ARTIFACT_PUBLIC_BASE_URL", Section: "Артефактори",
+			Description: "Публичный адрес Nexus/Artifactory для ссылок и команд установки",
+			Value:       c.ArtifactPublicBaseURL},
 		{Env: "ARTIFACT_DOCKER_REGISTRY_URL", Section: "Артефактори",
 			Description: "Внутренний префикс hosted Docker repository Nexus",
 			Value:       c.ArtifactDockerRegistryURL},
@@ -111,15 +122,16 @@ func (c *Config) Catalog() []Setting {
 			Description: "Issuer OIDC (Keycloak)", Value: c.OIDCIssuer},
 		{Env: "OIDC_CLIENT_ID", Section: "Доступ", Description: "client_id SPA", Value: c.OIDCClientID},
 		{Env: "ROLE_MAPPING_ADMIN", Section: "Доступ",
-			Description: "Группа каталога → роль admin", Value: c.RoleMappingAdmin},
+			Description: "Legacy bootstrap: роли OIDC-пользователей теперь назначаются в сервисе",
+			Value:       c.RoleMappingAdmin},
 		{Env: "ROLE_MAPPING_DEVSECOPS", Section: "Доступ",
-			Description: "Группа каталога → роль devsecops", Value: c.RoleMappingDevSecOps},
+			Description: "Legacy bootstrap: группа каталога → роль devsecops", Value: c.RoleMappingDevSecOps},
 		{Env: "ROLE_MAPPING_LEGAL", Section: "Доступ",
-			Description: "Группа каталога → роль legal", Value: c.RoleMappingLegal},
+			Description: "Legacy bootstrap: группа каталога → роль legal", Value: c.RoleMappingLegal},
 		{Env: "ROLE_MAPPING_DEVELOPER", Section: "Доступ",
-			Description: "Группа каталога → роль developer", Value: c.RoleMappingDeveloper},
+			Description: "Legacy bootstrap: группа каталога → роль developer", Value: c.RoleMappingDeveloper},
 		{Env: "LOCAL_AUTH_ENABLED", Section: "Доступ",
-			Description: "Вход логин/пароль для сервисных учёток (в prod false)",
+			Description: "Вход локальных пользователей и сервисных учёток",
 			Value:       c.LocalAuthEnabled},
 		{Env: "LOCAL_AUTH_SECRET", Section: "Доступ",
 			Description: "Ключ подписи локальных токенов",
@@ -170,6 +182,11 @@ func (c *Config) Catalog() []Setting {
 			Description: "Неудач подряд, после которых реестр перестаёт опрашиваться",
 			Value:       c.RegistryBreakerThreshold},
 	}
+	for i := range settings {
+		settings[i].Editable = IsWebEditable(settings[i].Env)
+		settings[i].RestartRequired = settings[i].Editable
+	}
+	return settings
 }
 
 // CatalogSections — разделы каталога в порядке появления. Интерфейс группирует

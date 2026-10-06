@@ -197,7 +197,7 @@ func (h *PackagesHandler) versionSummary(r *http.Request, row *repo.VersionRow) 
 		"max_vuln_score":   v.MaxVulnScore,
 		"status_reason":    v.StatusReason,
 		"vulnerabilities":  vulnerabilityViews(vulns, true),
-		"artifacts":        artifactViews(artifacts),
+		"artifacts":        h.artifactViews(artifacts),
 	}
 	// Команда установки имеет смысл только у одобренного пакета: у остального
 	// она вела бы в репозиторий, где артефакта нет.
@@ -248,12 +248,20 @@ func vulnerabilityViews(vulns []domain.Vulnerability, full bool) []map[string]an
 	return out
 }
 
-func artifactViews(artifacts []domain.Artifact) []map[string]any {
+func (h *PackagesHandler) artifactViews(artifacts []domain.Artifact) []map[string]any {
 	out := make([]map[string]any, 0, len(artifacts))
 	for _, a := range artifacts {
+		var publicURL *string
+		if a.NexusURL != nil {
+			value := *a.NexusURL
+			if h.Cfg != nil {
+				value = h.Cfg.PublicArtifactURL(value)
+			}
+			publicURL = &value
+		}
 		out = append(out, map[string]any{
 			"filename":      a.Filename,
-			"nexus_url":     a.NexusURL,
+			"nexus_url":     publicURL,
 			"sha256":        a.SHA256,
 			"size_bytes":    a.SizeBytes,
 			"s3_key":        a.StagingPath,

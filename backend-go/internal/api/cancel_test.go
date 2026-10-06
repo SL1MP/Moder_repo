@@ -19,6 +19,7 @@ func (f *readFixture) post(t *testing.T, user *domain.User, roles []string, path
 	t.Helper()
 	acting := *user
 	acting.Roles = roles
+	acting.IsService = true
 	token, _, err := f.verifier.IssueLocalToken(&acting)
 	if err != nil {
 		t.Fatalf("выпуск токена: %v", err)

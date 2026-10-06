@@ -149,6 +149,7 @@ func (f *decisionFixture) do(t *testing.T, role, method, path, body string) *htt
 	t.Helper()
 	acting := *f.user
 	acting.Roles = []string{role}
+	acting.IsService = true
 	token, _, err := f.verifier.IssueLocalToken(&acting)
 	if err != nil {
 		t.Fatalf("токен: %v", err)

@@ -136,6 +136,7 @@ func (f *readFixture) as(t *testing.T, user *domain.User, roles []string, path s
 	t.Helper()
 	acting := *user
 	acting.Roles = roles
+	acting.IsService = true
 	token, _, err := f.verifier.IssueLocalToken(&acting)
 	if err != nil {
 		t.Fatalf("выпуск токена: %v", err)

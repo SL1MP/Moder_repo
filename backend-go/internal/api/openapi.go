@@ -371,8 +371,12 @@ func openAPIRoutes() []openAPIRoute {
 		{Method: "POST", Path: "/api/v1/gitlab/requests", OperationID: "createRequestFromGitLab", Summary: "Создать заявку из файла GitLab", Tag: "GitLab", SuccessCode: "202", Body: genericJSONBody("Проект, путь, ref и параметры раскрытия")},
 
 		{Method: "GET", Path: "/api/v1/settings", OperationID: "getSettings", Summary: "Получить действующие настройки", Tag: "Администрирование"},
+		{Method: "PUT", Path: "/api/v1/settings", OperationID: "updateSettings", Summary: "Сохранить web-настройки", Tag: "Администрирование", Roles: []string{"admin"}, Body: genericJSONBody("Карта values: имя настройки → значение")},
 		{Method: "GET", Path: "/api/v1/settings/policies", OperationID: "getPolicyState", Summary: "Получить состояние политик", Tag: "Администрирование"},
 		{Method: "GET", Path: "/api/v1/system/status", OperationID: "getSystemStatus", Summary: "Получить состояние компонентов", Tag: "Администрирование"},
+		{Method: "GET", Path: "/api/v1/admin/users", OperationID: "listUsers", Summary: "Получить пользователей и роли приложения", Tag: "Администрирование", Roles: []string{"admin"}},
+		{Method: "POST", Path: "/api/v1/admin/users", OperationID: "createUser", Summary: "Заранее создать OIDC-пользователя", Tag: "Администрирование", Roles: []string{"admin"}, Body: genericJSONBody("Логин, профиль и роли")},
+		{Method: "PATCH", Path: "/api/v1/admin/users/{userID}", OperationID: "updateUserAccess", Summary: "Изменить роли и активность пользователя", Tag: "Администрирование", Roles: []string{"admin"}, Body: genericJSONBody("Роли и активность")},
 		{Method: "POST", Path: "/api/v1/admin/reload", OperationID: "reloadPolicies", Summary: "Перезагрузить политики", Tag: "Администрирование", Roles: []string{"admin"}},
 		{Method: "GET", Path: "/api/v1/admin/audit", OperationID: "getAuditLog", Summary: "Получить аудит", Tag: "Администрирование", Roles: []string{"admin"}, Query: []openAPIParam{stringQuery("entity_type", "Тип сущности"), stringQuery("entity_id", "ID сущности"), stringQuery("action", "Действие"), stringQuery("actor", "Исполнитель"), integerQuery("limit", "Размер страницы"), integerQuery("offset", "Смещение")}},
 		{Method: "POST", Path: "/api/v1/admin/queue-sweep", OperationID: "sweepQueue", Summary: "Запустить сторож очереди", Tag: "Администрирование", Roles: []string{"admin"}},

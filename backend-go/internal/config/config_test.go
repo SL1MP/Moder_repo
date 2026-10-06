@@ -54,6 +54,7 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"max_upload_size_bytes", cfg.MaxUploadSizeBytes, int64(5 * 1024 * 1024)},
 		{"max_packages_per_request", cfg.MaxPackagesPerRequest, 200},
 		{"artifact_base_url", cfg.ArtifactBaseURL, "http://nexus:8081"},
+		{"artifact_public_base_url", cfg.ArtifactPublicBaseURL, ""},
 		{"artifact_docker_registry_url", cfg.ArtifactDockerRegistryURL, ""},
 		{"artifact_docker_public_url", cfg.ArtifactDockerPublicURL, ""},
 		{"artifact_repo_pypi", cfg.ArtifactRepo("pypi"), "pypi-internal"},
@@ -126,6 +127,31 @@ func TestDockerInstallLocationUsesPublicRegistryPrefix(t *testing.T) {
 	base, repo = cfg.ArtifactInstallLocation("pypi")
 	if base != "http://nexus:8081" || repo != "pypi-internal" {
 		t.Fatalf("PyPI install location = (%q, %q)", base, repo)
+	}
+}
+
+func TestPublicArtifactURLAndWebOverrides(t *testing.T) {
+	cfg, err := Load(func(key string) string {
+		if key == "DATABASE_URL" {
+			return "postgres://localhost/x"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.ApplyOverrides(map[string]string{
+		"ARTIFACT_PUBLIC_BASE_URL": "https://packages.example",
+		"QUARANTINE_DAYS":          "21",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.QuarantineDays != 21 {
+		t.Fatalf("quarantine = %d", cfg.QuarantineDays)
+	}
+	got := cfg.PublicArtifactURL("http://nexus:8081/repository/pypi-internal/simple")
+	if got != "https://packages.example/repository/pypi-internal/simple" {
+		t.Fatalf("public URL = %q", got)
 	}
 }
 
@@ -357,5 +383,41 @@ func TestStagingCleanupAcceptsFormerEnvNames(t *testing.T) {
 				t.Errorf("срок жизни файла %v, ожидался %v", cfg.StagingOrphanTTL, tc.wantTTL)
 			}
 		})
+	}
+}
+
+func TestApplyWebOverrides(t *testing.T) {
+	cfg, err := Load(func(key string) string {
+		values := map[string]string{
+			"DATABASE_URL":       "postgres://localhost/moderation",
+			"ARTIFACT_BASE_URL":  "http://nexus:8081",
+			"LOCAL_AUTH_ENABLED": "false",
+		}
+		return values[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = cfg.ApplyOverrides(map[string]string{
+		"ARTIFACT_PUBLIC_BASE_URL": "https://repo.example.test:8443",
+		"QUARANTINE_DAYS":          "21",
+		"LOCAL_AUTH_ENABLED":       "true",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ArtifactPublicBaseURL != "https://repo.example.test:8443" ||
+		cfg.QuarantineDays != 21 || !cfg.LocalAuthEnabled {
+		t.Fatalf("override применён неверно: %+v", cfg)
+	}
+	got := cfg.PublicArtifactURL("http://nexus:8081/repository/pypi-internal/simple")
+	if got != "https://repo.example.test:8443/repository/pypi-internal/simple" {
+		t.Fatalf("публичный URL: %q", got)
+	}
+}
+
+func TestWebOverridesRejectSecrets(t *testing.T) {
+	if err := ValidateOverrides(map[string]string{"ARTIFACT_TOKEN": "secret"}); err == nil {
+		t.Fatal("секрет разрешено сохранить через web")
 	}
 }

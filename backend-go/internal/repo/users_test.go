@@ -16,7 +16,7 @@ import (
 // (уникальность логина и subject, NOT NULL на roles), и на моке она
 // «работает» ровно до первого прода.
 
-func TestSyncUserCreatesAndUpdates(t *testing.T) {
+func TestSyncUserOIDCRolesAreManagedInsideService(t *testing.T) {
 	r, closePool := mustPool(t)
 	defer closePool()
 	ctx := context.Background()
@@ -39,14 +39,20 @@ func TestSyncUserCreatesAndUpdates(t *testing.T) {
 	if !created.IsActive {
 		t.Fatal("новая учётка должна быть активной")
 	}
-	if len(created.Roles) != 1 || created.Roles[0] != "legal" {
-		t.Fatalf("роли: %v", created.Roles)
+	if len(created.Roles) != 0 {
+		t.Fatalf("роли Keycloak не должны выдаваться приложению автоматически: %v", created.Roles)
 	}
 	if created.LastLoginAt == nil {
 		t.Fatal("время входа должно проставляться")
 	}
 
-	// Повторный вход с новой ролью: роль меняется, учётка та же.
+	// Администратор назначает роли внутри приложения.
+	created, err = r.UpdateUserAccess(ctx, created.ID, []string{"developer"}, true, now)
+	if err != nil {
+		t.Fatalf("назначение роли: %v", err)
+	}
+
+	// Повторный вход с ролями в claims: роль в приложении не меняется.
 	claims.Roles = []string{"admin", "devsecops"}
 	updated, err := r.SyncUser(ctx, claims, now.Add(time.Hour))
 	if err != nil {
@@ -55,8 +61,8 @@ func TestSyncUserCreatesAndUpdates(t *testing.T) {
 	if updated.ID != created.ID {
 		t.Fatalf("должна обновляться та же учётка: было %d, стало %d", created.ID, updated.ID)
 	}
-	if strings.Join(updated.Roles, ",") != "admin,devsecops" {
-		t.Fatalf("роли из каталога должны применяться: %v", updated.Roles)
+	if strings.Join(updated.Roles, ",") != "developer" {
+		t.Fatalf("Keycloak перезаписал роли приложения: %v", updated.Roles)
 	}
 }
 
@@ -71,8 +77,12 @@ func TestSyncUserKeepsRolesWhenClaimsEmpty(t *testing.T) {
 
 	username := uniqueName(t)
 	claims := UserClaims{Subject: username + "-sub", Username: username, Roles: []string{"devsecops"}}
-	if _, err := r.SyncUser(ctx, claims, now); err != nil {
+	created, err := r.SyncUser(ctx, claims, now)
+	if err != nil {
 		t.Fatalf("первый вход: %v", err)
+	}
+	if _, err := r.UpdateUserAccess(ctx, created.ID, []string{"devsecops"}, true, now); err != nil {
+		t.Fatalf("назначение роли: %v", err)
 	}
 
 	claims.Roles = nil
@@ -82,6 +92,23 @@ func TestSyncUserKeepsRolesWhenClaimsEmpty(t *testing.T) {
 	}
 	if len(after.Roles) != 1 || after.Roles[0] != "devsecops" {
 		t.Fatalf("роли не должны сбрасываться пустыми claims: %v", after.Roles)
+	}
+}
+
+func TestSyncServiceUserAcceptsRolesFromLocalToken(t *testing.T) {
+	r, closePool := mustPool(t)
+	defer closePool()
+	ctx := context.Background()
+	username := uniqueName(t)
+	user, err := r.SyncUser(ctx, UserClaims{
+		Subject: "local:" + username, Username: username,
+		Roles: []string{"admin"}, IsService: true,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !user.HasRole("admin") {
+		t.Fatalf("роль сервисной учётки потеряна: %v", user.Roles)
 	}
 }
 

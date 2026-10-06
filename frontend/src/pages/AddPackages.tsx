@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 
 import { Alert, Badge, Copyable, DependencyTreeView, Empty, Loader, useAsync } from '../components/ui'
 import {
@@ -25,9 +25,11 @@ const MODES: { key: Mode; title: string; hint: string }[] = [
 ]
 
 export default function AddPackages({ me, config }: { me: Me; config: AuthConfig }) {
+  const [params, setParams] = useSearchParams()
   const [mode, setMode] = useState<Mode>('check')
   const managers = useAsync(() => api.managers(), [])
-  const [manager, setManager] = useState<Manager>('pypi')
+  const requestedManager = params.get('manager') as Manager | null
+  const [manager, setManager] = useState<Manager>(requestedManager ?? 'pypi')
   const current = managers.data?.find((m) => m.code === manager)
   // Мостик «не нашли → добавить»: ByCheck кладёт сюда ненайденные записи,
   // ByList подхватывает их как черновик заявки при переключении вкладки.
@@ -51,7 +53,11 @@ export default function AddPackages({ me, config }: { me: Me; config: AuthConfig
         <div className="row">
           <label style={{ margin: 0 }}>
             <span>Пакетный менеджер</span>
-            <select value={manager} onChange={(e) => setManager(e.target.value as Manager)}>
+            <select value={manager} onChange={(e) => {
+              const next = e.target.value as Manager
+              setManager(next)
+              setParams({ manager: next }, { replace: true })
+            }}>
               {(managers.data ?? []).map((m) => (
                 <option key={m.code} value={m.code}>
                   {m.title}

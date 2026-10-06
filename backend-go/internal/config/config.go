@@ -95,6 +95,10 @@ type Config struct {
 	// установки одобренного пакета — её показывает карточка пакета и карточка
 	// заявки.
 	ArtifactBaseURL string
+	// ArtifactPublicBaseURL — адрес того же Nexus/Artifactory из браузера и
+	// рабочих станций разработчиков. Внутреннее имя docker-сервиса
+	// (http://nexus:8081) никогда не должно попадать в команды установки.
+	ArtifactPublicBaseURL string
 	// ArtifactDockerRegistryURL — внутренний префикс Docker Registry Nexus,
 	// куда worker делает push. ArtifactDockerPublicURL — тот же repository с
 	// точки зрения разработчика; используется в готовой команде docker pull.
@@ -170,7 +174,7 @@ type Config struct {
 	RoleMappingLegal     string
 	RoleMappingDeveloper string
 
-	// Fallback-вход логин/пароль — только сервисные учётки, в prod выключен.
+	// Локальный вход по логину/паролю для пользователей и сервисных учёток.
 	LocalAuthEnabled  bool
 	LocalAuthSecret   string
 	LocalAuthTokenTTL time.Duration
@@ -308,6 +312,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		OSVMaxStalenessDays: intOr(getenv("OSV_MAX_STALENESS_DAYS"), 3),
 
 		ArtifactBaseURL:           valueOr(getenv("ARTIFACT_BASE_URL"), "http://nexus:8081"),
+		ArtifactPublicBaseURL:     strings.TrimRight(strings.TrimSpace(getenv("ARTIFACT_PUBLIC_BASE_URL")), "/"),
 		ArtifactDockerRegistryURL: strings.TrimRight(strings.TrimSpace(getenv("ARTIFACT_DOCKER_REGISTRY_URL")), "/"),
 		ArtifactDockerPublicURL:   strings.TrimRight(strings.TrimSpace(getenv("ARTIFACT_DOCKER_PUBLIC_URL")), "/"),
 		ArtifactRepos:             artifactRepos(getenv),
@@ -619,7 +624,29 @@ func (c *Config) ArtifactInstallLocation(manager string) (baseURL, repo string) 
 	if manager == "docker" && c.ArtifactDockerPublicURL != "" {
 		return c.ArtifactDockerPublicURL, ""
 	}
-	return c.ArtifactBaseURL, c.ArtifactRepo(manager)
+	baseURL = c.ArtifactPublicBaseURL
+	if baseURL == "" {
+		baseURL = c.ArtifactBaseURL
+	}
+	return baseURL, c.ArtifactRepo(manager)
+}
+
+// PublicArtifactURL заменяет внутренний origin артефактори на внешний.
+// Путь сохраняется байт-в-байт, поэтому уже опубликованные nexus_url не нужно
+// переписывать в базе после смены адреса.
+func (c *Config) PublicArtifactURL(raw string) string {
+	public := strings.TrimRight(c.ArtifactPublicBaseURL, "/")
+	internal := strings.TrimRight(c.ArtifactBaseURL, "/")
+	if raw == "" || public == "" || internal == "" || public == internal {
+		return raw
+	}
+	if raw == internal {
+		return public
+	}
+	if strings.HasPrefix(raw, internal+"/") {
+		return public + strings.TrimPrefix(raw, internal)
+	}
+	return raw
 }
 
 // RoleForGroup — роль сервиса по группе каталога. Пустая строка — группа не

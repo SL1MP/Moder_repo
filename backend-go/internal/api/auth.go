@@ -87,8 +87,8 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// LocalLogin — POST /api/v1/auth/token. Fallback-вход только для сервисных
-// учёток, в prod выключен флагом LOCAL_AUTH_ENABLED.
+// LocalLogin — POST /api/v1/auth/token. Вход локальных пользователей и
+// сервисных учёток, включаемый флагом LOCAL_AUTH_ENABLED.
 func (h *AuthHandler) LocalLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.Cfg.LocalAuthEnabled {
 		writeError(w, r, errUnauthorized(

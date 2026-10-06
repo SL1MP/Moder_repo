@@ -22,7 +22,7 @@
 учётки:
 
 ```bash
-# Сервисная учётка (только при LOCAL_AUTH_ENABLED=true)
+# Локальная или сервисная учётка (только при LOCAL_AUTH_ENABLED=true)
 TOKEN=$(curl -sS -X POST http://localhost:8080/api/v1/auth/token \
   -H 'Content-Type: application/json' \
   -d '{"username":"ci-bot","password":"..."}' | jq -r .access_token)
