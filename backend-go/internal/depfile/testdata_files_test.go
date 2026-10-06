@@ -13,7 +13,10 @@ func TestSmallDependencyFiles(t *testing.T) {
 	if !ok {
 		t.Fatal("не удалось определить путь теста")
 	}
-	root := filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..", "..", "testdata", "dependency-files"))
+	// Фикстуры лежат внутри backend-go: Dockerfile собирается с контекстом
+	// ./backend-go и не может увидеть корневой ../testdata. Поэтому тест должен
+	// быть самодостаточным как при `go test` из клона, так и в build-образе.
+	root := filepath.Join(filepath.Dir(source), "testdata", "dependency-files")
 
 	tests := []struct {
 		manager string

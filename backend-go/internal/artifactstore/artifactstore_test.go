@@ -331,12 +331,16 @@ func TestNexusPublishesMavenReleaseBundle(t *testing.T) {
 	if fields["maven2.groupId"] != "org.example" || fields["maven2.artifactId"] != "tool" {
 		t.Fatalf("Maven coordinates = %#v", fields)
 	}
-	for _, file := range files[:4] {
-		if uploaded[file.Name] != string(file.Data) {
-			t.Errorf("Maven asset %s не опубликован", file.Name)
+	// PackBundle сортирует переданный slice, поэтому ожидания нельзя привязывать
+	// к позициям files[:4]. Проверяем ровно то же правило, что использует
+	// production-код перед публикацией.
+	for _, file := range files {
+		if registry.AllowedMavenAsset(file.Name) {
+			if uploaded[file.Name] != string(file.Data) {
+				t.Errorf("Maven asset %s не опубликован", file.Name)
+			}
+			continue
 		}
-	}
-	for _, file := range files[4:] {
 		if _, exists := uploaded[file.Name]; exists {
 			t.Errorf("исключённый Maven asset %s отправлен в Nexus", file.Name)
 		}

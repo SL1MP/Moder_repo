@@ -1,0 +1,6 @@
+{
+  "name": "example/moderation-file-test",
+  "require": {
+    "psr/log": "3.0.0"
+  }
+}
