@@ -1,6 +1,8 @@
 package registry
 
 import (
+	"net/url"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -21,8 +23,12 @@ var spdxAliases = map[string]string{
 	"apache 2.0":                  "Apache-2.0",
 	"apache-2.0":                  "Apache-2.0",
 	"apache license 2.0":          "Apache-2.0",
+	"apache license version 2.0":  "Apache-2.0",
+	"apache license v2.0":         "Apache-2.0",
 	"apache software license":     "Apache-2.0",
+	"apache software license 2.0": "Apache-2.0",
 	"apache license, version 2.0": "Apache-2.0",
+	"the apache software license, version 2.0": "Apache-2.0",
 	"bsd":                         "BSD-3-Clause",
 	"bsd license":                 "BSD-3-Clause",
 	"bsd-3-clause":                "BSD-3-Clause",
@@ -50,6 +56,9 @@ var spdxAliases = map[string]string{
 	"zlib":                        "Zlib",
 	"artistic-2.0":                "Artistic-2.0",
 	"ms-pl":                       "MS-PL",
+	"microsoft public license":    "MS-PL",
+	"boost software license 1.0":  "BSL-1.0",
+	"business source license 1.1": "BUSL-1.1",
 	"proprietary":                 "LicenseRef-Proprietary",
 }
 
@@ -118,6 +127,9 @@ func NormalizeSPDX(value string) string {
 			return alias.spdx
 		}
 	}
+	if fromURL := spdxFromLicenseURL(text); fromURL != "" {
+		return fromURL
+	}
 	if canonical, ok := spdxAliases[lowered]; ok {
 		return canonical
 	}
@@ -128,6 +140,40 @@ func NormalizeSPDX(value string) string {
 	}
 	if spdxIDRe.MatchString(text) {
 		return text
+	}
+	return ""
+}
+
+// spdxFromLicenseURL разбирает стандартные URL, которыми NuGet и другие
+// реестры заменяют licenseExpression. Самый частый случай —
+// https://licenses.nuget.org/Apache-2.0. До этого URL сохранялся как raw, но
+// никогда не нормализовался, поэтому пакет без причины уходил юристам.
+func spdxFromLicenseURL(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "licenses.nuget.org" && host != "spdx.org" && host != "www.spdx.org" {
+		return ""
+	}
+	candidate, err := url.PathUnescape(path.Base(strings.TrimRight(parsed.Path, "/")))
+	if err != nil {
+		return ""
+	}
+	candidate = strings.TrimSuffix(candidate, ".html")
+	if candidate == "" || strings.EqualFold(candidate, "licenses") {
+		return ""
+	}
+	// Здесь не зовём NormalizeSPDX повторно, чтобы URL с неожиданным путём не
+	// мог зациклить нормализацию. SPDX-выражения в licenses.nuget.org уже
+	// каноничны; одиночные распространённые имена дополнительно проходят alias.
+	if canonical, ok := spdxAliases[strings.ToLower(candidate)]; ok {
+		return canonical
+	}
+	if spdxIDRe.MatchString(candidate) ||
+		(spdxOperatorRe.MatchString(candidate) && looksLikeExpression(candidate)) {
+		return candidate
 	}
 	return ""
 }

@@ -164,6 +164,20 @@ func (n *Nexus) publishMavenBundle(ctx context.Context, t Target, files []regist
 	if n.cfg.DryRun {
 		return "", fmt.Errorf("публикация вызвана в режиме dry-run: это ошибка вызывающего кода")
 	}
+	// Bundle мог быть сформирован старой версией worker-go и пережить
+	// обновление в staging. Поэтому фильтр применяется повторно прямо перед
+	// Nexus: сервис не отправляет source/javadoc, подписи и checksum даже из
+	// такого сохранённого bundle.
+	filtered := make([]registry.BundleFile, 0, len(files))
+	for _, file := range files {
+		if registry.AllowedMavenAsset(file.Name) {
+			filtered = append(filtered, file)
+		}
+	}
+	files = filtered
+	if len(files) == 0 {
+		return "", fmt.Errorf("Maven bundle не содержит разрешённых артефактов")
+	}
 	missing := make([]registry.BundleFile, 0, len(files))
 	for _, file := range files {
 		part := t

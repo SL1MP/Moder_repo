@@ -273,6 +273,15 @@ func TestNexusPublishesMavenReleaseBundle(t *testing.T) {
 		{Name: "tool-2.2.21.jar", Data: []byte("jar")},
 		{Name: "tool-2.2.21-gradle80.jar", Data: []byte("gradle")},
 		{Name: "tool-2.2.21.module", Data: []byte("module")},
+		// Старый staging bundle мог сохранить эти файлы до обновления фильтра.
+		// Последний рубеж перед Nexus обязан удалить их повторно.
+		{Name: "tool-2.2.21-sources.jar", Data: []byte("sources")},
+		{Name: "tool-2.2.21-javadoc.jar", Data: []byte("javadoc")},
+		{Name: "tool-2.2.21.jar.md5", Data: []byte("md5")},
+		{Name: "tool-2.2.21.jar.sha1", Data: []byte("sha1")},
+		{Name: "tool-2.2.21.jar.sha256", Data: []byte("sha256")},
+		{Name: "tool-2.2.21.jar.sha512", Data: []byte("sha512")},
+		{Name: "tool-2.2.21.jar.asc", Data: []byte("signature")},
 	}
 	bundle, err := registry.PackBundle("maven", files, 1<<20)
 	if err != nil {
@@ -322,9 +331,14 @@ func TestNexusPublishesMavenReleaseBundle(t *testing.T) {
 	if fields["maven2.groupId"] != "org.example" || fields["maven2.artifactId"] != "tool" {
 		t.Fatalf("Maven coordinates = %#v", fields)
 	}
-	for _, file := range files {
+	for _, file := range files[:4] {
 		if uploaded[file.Name] != string(file.Data) {
 			t.Errorf("Maven asset %s не опубликован", file.Name)
+		}
+	}
+	for _, file := range files[4:] {
+		if _, exists := uploaded[file.Name]; exists {
+			t.Errorf("исключённый Maven asset %s отправлен в Nexus", file.Name)
 		}
 	}
 	foundClassifier := false

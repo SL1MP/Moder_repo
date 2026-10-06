@@ -88,6 +88,12 @@ func (g *Generic) PublishReleaseBundle(ctx context.Context, t Target, data []byt
 	}
 	firstURL := ""
 	for _, file := range files {
+		// Bundle may have been downloaded by an older worker and still contain
+		// Maven sidecars or classifiers that must never reach the release repo.
+		// Keep the publication boundary defensive as well as the downloader.
+		if t.Manager == "maven" && !registry.AllowedMavenAsset(file.Name) {
+			continue
+		}
 		part := t
 		part.Filename = file.Name
 		switch t.Manager {
@@ -110,6 +116,9 @@ func (g *Generic) PublishReleaseBundle(ctx context.Context, t Target, data []byt
 		if firstURL == "" {
 			firstURL = published
 		}
+	}
+	if firstURL == "" {
+		return "", fmt.Errorf("bundle %s не содержит разрешённых для публикации артефактов", t.Manager)
 	}
 	return firstURL, nil
 }

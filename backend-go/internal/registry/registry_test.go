@@ -543,6 +543,33 @@ func TestNuGetCatalogEntryAsLink(t *testing.T) {
 	}
 }
 
+// Старые NuGet-пакеты и некоторые корпоративные прокси не отдают
+// licenseExpression, но сохраняют стандартную ссылку licenses.nuget.org.
+// Такая ссылка содержит полноценное SPDX-выражение и не должна отправлять
+// MIT/Apache-пакет к юристу как «лицензия не определена».
+func TestNuGetLicenseFromLicenseURL(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://nuget.test/v3/registration5-semver1/pkg/1.0.0.json": `{
+		  "catalogEntry": {
+		    "published": "2020-01-01T00:00:00Z",
+		    "licenseUrl": "https://licenses.nuget.org/Apache-2.0"
+		  }
+		}`,
+	}}
+	p := pluginFor(t, "nuget", f)
+	ref, _ := registry.ParseEntry(p, "Pkg@1.0.0")
+	meta, err := p.FetchMetadata(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.LicenseSPDX != "Apache-2.0" {
+		t.Errorf("LicenseSPDX = %q, ожидалась Apache-2.0 из licenseUrl", meta.LicenseSPDX)
+	}
+	if !strings.Contains(meta.LicenseRaw, "licenses.nuget.org") {
+		t.Errorf("исходная ссылка лицензии потеряна: %q", meta.LicenseRaw)
+	}
+}
+
 // --------------------------------------------------------------------- команды установки
 
 func TestInstallCommands(t *testing.T) {
@@ -591,6 +618,9 @@ func TestNormalizeSPDX(t *testing.T) {
 		"mit license":                 "MIT",
 		"Apache License, Version 2.0": "Apache-2.0",
 		"https://www.apache.org/licenses/LICENSE-2.0.txt": "Apache-2.0",
+		"Apache License Version 2.0":                    "Apache-2.0",
+		"https://licenses.nuget.org/Apache-2.0":         "Apache-2.0",
+		"https://spdx.org/licenses/MIT.html":             "MIT",
 		"BSD":               "BSD-3-Clause",
 		"MIT OR Apache-2.0": "MIT OR Apache-2.0", // составное оставляем как есть
 		"":                  "",

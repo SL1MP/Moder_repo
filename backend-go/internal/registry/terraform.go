@@ -133,14 +133,34 @@ type terraformVersionInfo struct {
 	Source      string `json:"source"`
 }
 
+var terraformRegistryHeaders = map[string]string{
+	// Provider Registry Protocol требует, чтобы клиент сообщал версию
+	// Terraform. Публичный registry.terraform.io обычно прощает отсутствие
+	// заголовка, но зеркала и WAF нередко отвечают на такой запрос ложным 404.
+	"X-Terraform-Version": "1.9.8",
+	"User-Agent":          "Terraform/1.9.8 moderation-service/1.0",
+}
+
+// terraformAPIBase принимает и адрес сервиса, и адрес API из старых .env:
+// https://registry.terraform.io, .../v1 или .../v1/providers. Без
+// нормализации последний вариант превращался в /v1/providers/v1/providers/…
+// и любая существующая версия выглядела отсутствующей.
+func terraformAPIBase(value string) string {
+	base := strings.TrimRight(strings.TrimSpace(value), "/")
+	base = strings.TrimSuffix(base, "/v1/providers")
+	base = strings.TrimSuffix(base, "/v1")
+	return strings.TrimRight(base, "/")
+}
+
 func (p *Terraform) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 	version, _ := splitTerraformVersion(ref.Version)
 	osName, arch := p.platform(ref.Version)
-	base := strings.TrimRight(p.BaseURL, "/")
+	base := terraformAPIBase(p.BaseURL)
 
 	url := fmt.Sprintf("%s/v1/providers/%s/%s/download/%s/%s", base, ref.Name, version, osName, arch)
 	var dist terraformDownload
-	if err := getJSON(ctx, p.HTTP, url, "application/json", &dist); err != nil {
+	if err := getJSONWithHeaders(ctx, p.HTTP, url, "application/json",
+		terraformRegistryHeaders, &dist); err != nil {
 		if err == ErrNotFound {
 			return Metadata{}, fmt.Errorf(
 				"%w: провайдера %s версии %s под %s_%s нет в реестре terraform",
@@ -173,9 +193,9 @@ func (p *Terraform) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error
 	// Недоступность этого запроса не валит шаг: карантин будет пропущен с
 	// пометкой, а пакет всё равно проверится.
 	var info terraformVersionInfo
-	if err := getJSON(ctx, p.HTTP,
+	if err := getJSONWithHeaders(ctx, p.HTTP,
 		fmt.Sprintf("%s/v1/providers/%s/%s", base, ref.Name, version),
-		"application/json", &info); err == nil {
+		"application/json", terraformRegistryHeaders, &info); err == nil {
 		meta.PublishedAt = parseTime(info.PublishedAt)
 	}
 	return meta, nil

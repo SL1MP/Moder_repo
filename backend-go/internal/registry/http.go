@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -50,7 +51,15 @@ func doer(h Doer) Doer {
 // «такой версии нет» (ошибка пользователя) от «реестр недоступен» (повод
 // повторить), и делать это по типу ошибки, а не по тексту.
 func getJSON(ctx context.Context, h Doer, url, accept string, dst any) error {
-	body, err := getBytes(ctx, h, url, accept)
+	return getJSONWithHeaders(ctx, h, url, accept, nil, dst)
+}
+
+// getJSONWithHeaders нужен протоколам, у которых реестр требует не только
+// Accept. Например, Terraform Registry ожидает X-Terraform-Version и может
+// отвечать 404 на запрос клиента, который не похож на Terraform CLI.
+func getJSONWithHeaders(ctx context.Context, h Doer, url, accept string,
+	headers map[string]string, dst any) error {
+	body, err := getBytesWithHeaders(ctx, h, url, accept, headers)
 	if err != nil {
 		return err
 	}
@@ -61,13 +70,23 @@ func getJSON(ctx context.Context, h Doer, url, accept string, dst any) error {
 }
 
 func getBytes(ctx context.Context, h Doer, url, accept string) ([]byte, error) {
-	return getBytesWithLimit(ctx, h, url, accept, maxRegistryResponseBytes)
+	return getBytesWithHeaders(ctx, h, url, accept, nil)
+}
+
+func getBytesWithHeaders(ctx context.Context, h Doer, url, accept string,
+	headers map[string]string) ([]byte, error) {
+	return getBytesWithLimitAndHeaders(ctx, h, url, accept, maxRegistryResponseBytes, headers)
 }
 
 // getBytesWithLimit читает бинарный ответ с явным пределом. Метаданные обычно
 // ограничены 64 MiB, но файлы Conan recipe (прежде всего conan_sources.tgz)
 // могут быть крупнее и должны подчиняться общему лимиту артефакта заявки.
 func getBytesWithLimit(ctx context.Context, h Doer, url, accept string, limit int64) ([]byte, error) {
+	return getBytesWithLimitAndHeaders(ctx, h, url, accept, limit, nil)
+}
+
+func getBytesWithLimitAndHeaders(ctx context.Context, h Doer, url, accept string,
+	limit int64, headers map[string]string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("сборка запроса к реестру: %w", err)
@@ -76,6 +95,11 @@ func getBytesWithLimit(ctx context.Context, h Doer, url, accept string, limit in
 		req.Header.Set("Accept", accept)
 	}
 	req.Header.Set("User-Agent", registryUserAgent)
+	for name, value := range headers {
+		if strings.TrimSpace(value) != "" {
+			req.Header.Set(name, value)
+		}
+	}
 	resp, err := doer(h).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("запрос к реестру (%s): %w", url, err)

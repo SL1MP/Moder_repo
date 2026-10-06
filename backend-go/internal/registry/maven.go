@@ -227,7 +227,7 @@ func (p *Maven) Download(ctx context.Context, ref Ref, limit int64) ([]byte, str
 
 	candidates := map[string]bool{pomName: true}
 	for name := range listed {
-		if allowedMavenAsset(name) {
+		if AllowedMavenAsset(name) {
 			candidates[name] = true
 		}
 	}
@@ -263,7 +263,7 @@ func (p *Maven) Download(ctx context.Context, ref Ref, limit int64) ([]byte, str
 		bodies[name] = body
 		if strings.HasSuffix(strings.ToLower(name), ".module") {
 			for _, variant := range mavenModuleFiles(body) {
-				if allowedMavenAsset(variant) && !candidates[variant] {
+				if AllowedMavenAsset(variant) && !candidates[variant] {
 					candidates[variant] = true
 					queue = append(queue, variant)
 				}
@@ -310,7 +310,11 @@ func mavenListingNames(body []byte) []string {
 	return names
 }
 
-func allowedMavenAsset(name string) bool {
+// AllowedMavenAsset — единая белая таблица файлов Maven-релиза. Она
+// экспортирована намеренно: и скачивание, и последний рубеж перед публикацией
+// в Nexus обязаны применять одно правило, чтобы checksum/source/javadoc не
+// проскочили из старого staging bundle после обновления сервиса.
+func AllowedMavenAsset(name string) bool {
 	lower := strings.ToLower(path.Base(strings.TrimSpace(name)))
 	if lower == "" || lower != strings.ToLower(strings.TrimSpace(name)) {
 		return false

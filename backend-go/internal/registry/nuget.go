@@ -105,20 +105,25 @@ func (p *NuGet) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 			p.BaseURL, ref.Name, ref.Version, ref.Name, ref.Version)
 	}
 
+	_, spdxLicense := normalizeLicenseCandidates([]string{
+		entry.LicenseExpression,
+		entry.LicenseURL,
+	})
+	rawLicense := strings.TrimSpace(entry.LicenseExpression)
+	if rawLicense == "" {
+		rawLicense = strings.TrimSpace(entry.LicenseURL)
+	}
 	meta := Metadata{
 		Name:             ref.Name,
 		Version:          ref.Version,
 		PublishedAt:      parseTime(entry.Published),
 		ArtifactURL:      content,
 		ArtifactFilename: fmt.Sprintf("%s.%s.nupkg", ref.Name, ref.Version),
-		LicenseSPDX:      NormalizeSPDX(entry.LicenseExpression),
+		LicenseSPDX:      spdxLicense,
+		LicenseRaw:       rawLicense,
 		// NuGet отдаёт хеш только внутри манифеста .nupkg — sha256 считаем
 		// сами по скачанному артефакту.
 		Yanked: entry.Listed != nil && !*entry.Listed,
-	}
-	meta.LicenseRaw = entry.LicenseExpression
-	if meta.LicenseRaw == "" {
-		meta.LicenseRaw = entry.LicenseURL
 	}
 	return meta, nil
 }

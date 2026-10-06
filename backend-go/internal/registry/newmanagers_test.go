@@ -219,6 +219,26 @@ func TestMavenLicenseInheritedFromParent(t *testing.T) {
 	}
 }
 
+// Точный сценарий с commons-lang3 из пользовательской заявки: лицензия
+// находится в commons-parent, а не обязана повторяться в POM дочернего
+// артефакта.
+func TestMavenCommonsLangLicenseInheritedFromParent(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://maven.test/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.pom": `
+			<project><parent><groupId>org.apache.commons</groupId>
+			<artifactId>commons-parent</artifactId><version>64</version></parent></project>`,
+		"https://maven.test/org/apache/commons/commons-parent/64/commons-parent-64.pom": `
+			<project><licenses><license>
+			<name>Apache License Version 2.0</name>
+			<url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+			</license></licenses></project>`,
+	}}
+	meta := metaFor(t, "maven", "org.apache.commons:commons-lang3:3.14.0", f)
+	if meta.LicenseSPDX != "Apache-2.0" {
+		t.Errorf("лицензия commons-lang3 = %q, ожидалась Apache-2.0", meta.LicenseSPDX)
+	}
+}
+
 func TestMavenSkipsRateLimitedSource(t *testing.T) {
 	blocked := "https://central.test/com/example/lib/1.0.0/lib-1.0.0.pom"
 	f := &fakeRegistry{
@@ -482,6 +502,28 @@ func TestTerraformMetadata(t *testing.T) {
 	}
 	if meta.PublishedAt == nil || meta.PublishedAt.Format("2006-01-02") != "2023-11-20" {
 		t.Errorf("дата публикации = %v", meta.PublishedAt)
+	}
+}
+
+func TestTerraformNormalizesAPIBaseAndSendsProtocolHeaders(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://terraform.test/v1/providers/hashicorp/null/3.2.2/download/linux/amd64": `{
+			"download_url":"https://releases.test/null.zip","shasum":"deadbeef"}`,
+	}}
+	r := registry.New(registry.Config{
+		TerraformURL: "https://terraform.test/v1/providers/", HTTP: f,
+	})
+	p, _ := r.Get("terraform")
+	ref, _ := registry.ParseEntry(p, "hashicorp/null@3.2.2")
+	if _, err := p.FetchMetadata(context.Background(), ref); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.requested) == 0 || strings.Contains(f.requested[0], "/v1/providers/v1/providers/") {
+		t.Fatalf("адрес Terraform API не нормализован: %v", f.requested)
+	}
+	if len(f.seenHeaders) == 0 || f.seenHeaders[0].Get("X-Terraform-Version") == "" ||
+		!strings.HasPrefix(f.seenHeaders[0].Get("User-Agent"), "Terraform/") {
+		t.Fatalf("заголовки Terraform Registry не переданы: %#v", f.seenHeaders)
 	}
 }
 
