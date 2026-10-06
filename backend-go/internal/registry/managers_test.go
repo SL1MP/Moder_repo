@@ -227,11 +227,12 @@ func TestFilesMetadataCarriesDeclaredChecksum(t *testing.T) {
 }
 
 // TestDownloaderManagers — менеджеры с составным релизом забирают артефакты
-// сами. Maven и PyPI собирают все файлы версии, Conan — recipe revision.
+// сами. Maven, PyPI и Terraform собирают все файлы версии, Conan — recipe revision.
 // Плагин, случайно потерявший Downloader, скачал бы только один файл.
 func TestDownloaderManagers(t *testing.T) {
 	want := map[string]bool{
 		"docker": true, "git": true, "conan": true, "maven": true, "pypi": true,
+		"terraform": true,
 	}
 	for _, plugin := range newAll(nil).Plugins() {
 		_, ok := plugin.(registry.Downloader)
