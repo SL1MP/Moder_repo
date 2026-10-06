@@ -132,7 +132,8 @@ func (n *Nexus) Publish(ctx context.Context, t Target, data []byte) (string, err
 
 // PublishReleaseBundle раскладывает transport bundle в реальные компоненты.
 // PyPI API принимает по одному distribution за запрос, Maven — все assets
-// одной GAV-координаты одним multipart-компонентом.
+// одной GAV-координаты одним multipart-компонентом, Terraform раскладывается
+// в raw hosted как статическое network mirror.
 func (n *Nexus) PublishReleaseBundle(ctx context.Context, t Target, data []byte) (string, error) {
 	files, err := registry.UnpackBundle(data, t.Manager, 2*1024*1024*1024)
 	if err != nil {
@@ -155,6 +156,8 @@ func (n *Nexus) PublishReleaseBundle(ctx context.Context, t Target, data []byte)
 		return firstURL, nil
 	case "maven":
 		return n.publishMavenBundle(ctx, t, files)
+	case "terraform":
+		return publishTerraformBundle(ctx, n, t, files)
 	default:
 		return "", fmt.Errorf("transport bundle менеджера %s не поддержан Nexus", t.Manager)
 	}

@@ -281,7 +281,7 @@ func publishArtifact(
 		return url, publishByUpload, nil
 	}
 
-	if target.Manager == "maven" || target.Manager == "pypi" {
+	if target.Manager == "maven" || target.Manager == "pypi" || target.Manager == "terraform" {
 		expectedSuffix := "." + target.Manager + "-release.tgz"
 		if !strings.HasSuffix(artifact.Filename, expectedSuffix) {
 			return "", "", fmt.Errorf(

@@ -431,6 +431,55 @@ func TestNexusPublishesEveryPyPIDistribution(t *testing.T) {
 	}
 }
 
+func TestNexusPublishesTerraformNetworkMirror(t *testing.T) {
+	versionJSON := []byte(`{"archives":{` +
+		`"linux_amd64":{"url":"5.9.0/terraform-provider-keycloak_5.9.0_linux_amd64.zip",` +
+		`"hashes":["zh:aaaa"]},` +
+		`"windows_amd64":{"url":"5.9.0/terraform-provider-keycloak_5.9.0_windows_amd64.zip",` +
+		`"hashes":["zh:bbbb"]}}}`)
+	bundle, err := registry.PackBundle("terraform", []registry.BundleFile{
+		{Name: "index.json", Data: []byte(`{"versions":{"5.9.0":{}}}`)},
+		{Name: "5.9.0.json", Data: versionJSON},
+		{Name: "terraform-provider-keycloak_5.9.0_linux_amd64.zip", Data: []byte("linux")},
+		{Name: "terraform-provider-keycloak_5.9.0_windows_amd64.zip", Data: []byte("windows")},
+	}, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploaded := map[string][]byte{}
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindNexus},
+		func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet, http.MethodHead:
+				w.WriteHeader(http.StatusNotFound)
+			case http.MethodPut:
+				body, _ := io.ReadAll(r.Body)
+				uploaded[r.URL.Path] = body
+				w.WriteHeader(http.StatusCreated)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		})
+	publisher := store.(artifactstore.ReleaseBundlePublisher)
+	url, err := publisher.PublishReleaseBundle(context.Background(), artifactstore.Target{
+		Repo: "terraform-internal", Manager: "terraform", Name: "keycloak/keycloak", Version: "5.9.0",
+	}, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := "/repository/terraform-internal/registry.terraform.io/keycloak/keycloak/"
+	for _, suffix := range []string{"index.json", "5.9.0.json",
+		"5.9.0/terraform-provider-keycloak_5.9.0_linux_amd64.zip",
+		"5.9.0/terraform-provider-keycloak_5.9.0_windows_amd64.zip"} {
+		if _, ok := uploaded[root+suffix]; !ok {
+			t.Errorf("в Nexus не опубликован %s", root+suffix)
+		}
+	}
+	if !strings.HasSuffix(url, root+"5.9.0.json") {
+		t.Errorf("URL опубликованной версии = %s", url)
+	}
+}
+
 func TestNexusPublishesCompleteConanRecipeBundle(t *testing.T) {
 	const revision = "fedcba9876543210fedcba9876543210"
 	want := map[string]string{

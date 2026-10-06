@@ -23,7 +23,7 @@ import (
 //
 // Плагин, не реализующий Downloader, скачивается обычным путём: Metadata даёт
 // ArtifactURL, шаг делает GET. Так работают менеджеры, у которых релиз — один
-// файл (npm, nuget, php, luarocks, terraform, files). Maven и PyPI реализуют
+// файл (npm, nuget, php, luarocks, files). Maven, PyPI и Terraform реализуют
 // Downloader, потому что целиком переносят многофайловый релиз.
 type Downloader interface {
 	// Download возвращает байты артефакта и имя файла под ним.

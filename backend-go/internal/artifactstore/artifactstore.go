@@ -107,8 +107,8 @@ type OCIPublisher interface {
 	PublishOCI(ctx context.Context, t Target, layoutTarGz []byte) (string, error)
 }
 
-// ReleaseBundlePublisher публикует многофайловый релиз (Maven/PyPI) как
-// набор нативных ассетов. Transport bundle существует только в staging.
+// ReleaseBundlePublisher публикует многофайловый релиз (Maven/PyPI/Terraform)
+// как набор нативных ассетов. Transport bundle существует только в staging.
 type ReleaseBundlePublisher interface {
 	PublishReleaseBundle(ctx context.Context, t Target, bundleTarGz []byte) (string, error)
 }

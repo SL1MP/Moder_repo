@@ -481,23 +481,18 @@ func TestConanRejectsUserChannel(t *testing.T) {
 	}
 }
 
-// TestTerraformMetadata — дистрибутив и его sha256 берутся под конкретную
-// платформу: у платформ разные байты, и сумма одной ничего не говорит о другой.
+// TestTerraformMetadata — существование версии проверяется по обязательному
+// списку versions/platforms, а не по одному платформенному download URL.
 func TestTerraformMetadata(t *testing.T) {
 	f := &fakeRegistry{responses: map[string]string{
-		"https://terraform.test/v1/providers/hashicorp/aws/5.31.0/download/linux/amd64": `
-			{"os":"linux","arch":"amd64","filename":"terraform-provider-aws_5.31.0_linux_amd64.zip",
-			 "download_url":"https://releases.test/aws_5.31.0_linux_amd64.zip",
-			 "shasum":"deadbeef"}`,
+		"https://terraform.test/v1/providers/hashicorp/aws/versions": `
+			{"versions":[{"version":"5.31.0","platforms":[{"os":"linux","arch":"amd64"}]}]}`,
 		"https://terraform.test/v1/providers/hashicorp/aws/5.31.0": `
 			{"version":"5.31.0","published_at":"2023-11-20T12:00:00Z"}`,
 	}}
 
 	meta := metaFor(t, "terraform", "hashicorp/aws@5.31.0", f)
-	if meta.ChecksumAlgo != "sha256" || meta.Checksum != "deadbeef" {
-		t.Errorf("контрольная сумма = %s/%q", meta.ChecksumAlgo, meta.Checksum)
-	}
-	if meta.ArtifactFilename != "terraform-provider-aws_5.31.0_linux_amd64.zip" {
+	if meta.ArtifactFilename != "terraform-provider-aws_5.31.0.terraform-release.tgz" {
 		t.Errorf("имя файла = %q", meta.ArtifactFilename)
 	}
 	if meta.PublishedAt == nil || meta.PublishedAt.Format("2006-01-02") != "2023-11-20" {
@@ -507,8 +502,8 @@ func TestTerraformMetadata(t *testing.T) {
 
 func TestTerraformNormalizesAPIBaseAndSendsProtocolHeaders(t *testing.T) {
 	f := &fakeRegistry{responses: map[string]string{
-		"https://terraform.test/v1/providers/hashicorp/null/3.2.2/download/linux/amd64": `{
-			"download_url":"https://releases.test/null.zip","shasum":"deadbeef"}`,
+		"https://terraform.test/v1/providers/hashicorp/null/versions": `{
+			"versions":[{"version":"3.2.2","platforms":[{"os":"linux","arch":"amd64"}]}]}`,
 	}}
 	r := registry.New(registry.Config{
 		TerraformURL: "https://terraform.test/v1/providers/", HTTP: f,
@@ -531,12 +526,67 @@ func TestTerraformNormalizesAPIBaseAndSendsProtocolHeaders(t *testing.T) {
 // скачивается именно её дистрибутив.
 func TestTerraformPlatformInEntry(t *testing.T) {
 	f := &fakeRegistry{responses: map[string]string{
-		"https://terraform.test/v1/providers/hashicorp/aws/5.31.0/download/darwin/arm64": `
-			{"download_url":"https://releases.test/aws_darwin_arm64.zip","shasum":"cafe"}`,
+		"https://terraform.test/v1/providers/hashicorp/aws/versions": `
+			{"versions":[{"version":"5.31.0","platforms":[
+				{"os":"linux","arch":"amd64"},{"os":"darwin","arch":"arm64"}]}]}`,
 	}}
 	meta := metaFor(t, "terraform", "hashicorp/aws@5.31.0:darwin_arm64", f)
-	if !strings.Contains(meta.ArtifactURL, "darwin_arm64") {
-		t.Errorf("скачивается не та платформа: %s", meta.ArtifactURL)
+	if meta.ArtifactFilename != "terraform-provider-aws_5.31.0.terraform-release.tgz" {
+		t.Errorf("не сформирован многофайловый релиз: %s", meta.ArtifactFilename)
+	}
+}
+
+func TestTerraformDownloadsEveryPlatformAndMirrorMetadata(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://terraform.test/v1/providers/hashicorp/aws/versions": `
+			{"versions":[{"version":"5.31.0","platforms":[
+				{"os":"linux","arch":"amd64"},{"os":"windows","arch":"amd64"}]}]}`,
+		"https://terraform.test/v1/providers/hashicorp/aws/5.31.0/download/linux/amd64": `
+			{"filename":"terraform-provider-aws_5.31.0_linux_amd64.zip",
+			 "download_url":"https://releases.test/aws-linux.zip"}`,
+		"https://terraform.test/v1/providers/hashicorp/aws/5.31.0/download/windows/amd64": `
+			{"filename":"terraform-provider-aws_5.31.0_windows_amd64.zip",
+			 "download_url":"https://releases.test/aws-windows.zip"}`,
+		"https://releases.test/aws-linux.zip":   "linux zip",
+		"https://releases.test/aws-windows.zip": "windows zip",
+	}}
+	plugin := pluginWith(t, "terraform", f)
+	ref, err := registry.ParseEntry(plugin, "hashicorp/aws@5.31.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloader, ok := plugin.(registry.ReleaseBundleDownloader)
+	if !ok {
+		t.Fatal("Terraform не реализует ReleaseBundleDownloader")
+	}
+	bundle, filename, err := downloader.Download(context.Background(), ref, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filename != "terraform-provider-aws_5.31.0.terraform-release.tgz" {
+		t.Fatalf("имя bundle = %q", filename)
+	}
+	files, err := registry.UnpackBundle(bundle, "terraform", 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, file := range files {
+		found[file.Name] = true
+		if file.Name == "5.31.0.json" {
+			body := string(file.Data)
+			if !strings.Contains(body, `"linux_amd64"`) || !strings.Contains(body, `"windows_amd64"`) ||
+				!strings.Contains(body, `"zh:`) {
+				t.Errorf("version mirror metadata неполны: %s", body)
+			}
+		}
+	}
+	for _, name := range []string{"index.json", "5.31.0.json",
+		"terraform-provider-aws_5.31.0_linux_amd64.zip",
+		"terraform-provider-aws_5.31.0_windows_amd64.zip"} {
+		if !found[name] {
+			t.Errorf("в Terraform bundle нет %s", name)
+		}
 	}
 }
 

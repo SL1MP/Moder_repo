@@ -2,8 +2,12 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -19,10 +23,10 @@ var (
 // бинарного дистрибутива, и проверять в нём нечего, кроме текста. Провайдер —
 // исполняемый файл на каждую платформу, и вот он модерации подлежит.
 //
-// Платформа — часть записи, потому что дистрибутивы у платформ РАЗНЫЕ БАЙТЫ с
-// разными контрольными суммами. Решение по linux_amd64 ничего не говорит о
-// windows_amd64, и делать вид, что говорит, нельзя. По умолчанию берётся
-// linux_amd64 — то, что реально исполняется на серверах сборки.
+// Платформу в записи оставляем для обратной совместимости и явной проверки её
+// наличия. Скачивание и публикация при этом всегда охватывают ВСЕ платформы
+// версии: внутренний network mirror должен быть пригоден разработчикам на
+// Linux, Windows и macOS, а не только машине worker-go.
 type Terraform struct {
 	// BaseURL — реестр Terraform или внутреннее зеркало.
 	BaseURL string
@@ -126,6 +130,39 @@ type terraformDownload struct {
 	SHASum      string   `json:"shasum"`
 }
 
+// terraformVersions — обязательный ответ Provider Registry Protocol. Именно
+// список versions/platforms является источником истины о существовании версии;
+// проверка одного /download/linux/amd64 давала ложный «не найден» для реально
+// опубликованных провайдеров.
+type terraformVersions struct {
+	Versions []struct {
+		Version   string `json:"version"`
+		Protocols []string `json:"protocols"`
+		Platforms []struct {
+			OS   string `json:"os"`
+			Arch string `json:"arch"`
+		} `json:"platforms"`
+	} `json:"versions"`
+}
+
+type terraformPlatform struct {
+	OS   string
+	Arch string
+}
+
+type terraformMirrorVersion struct {
+	Archives map[string]terraformMirrorArchive `json:"archives"`
+}
+
+type terraformMirrorArchive struct {
+	URL    string   `json:"url"`
+	Hashes []string `json:"hashes"`
+}
+
+type terraformMirrorIndex struct {
+	Versions map[string]struct{} `json:"versions"`
+}
+
 // terraformVersionInfo — ответ о самой версии; из него берём дату публикации.
 type terraformVersionInfo struct {
 	Version     string `json:"version"`
@@ -152,41 +189,70 @@ func terraformAPIBase(value string) string {
 	return strings.TrimRight(base, "/")
 }
 
-func (p *Terraform) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
-	version, _ := splitTerraformVersion(ref.Version)
-	osName, arch := p.platform(ref.Version)
+func (p *Terraform) versionPlatforms(ctx context.Context, ref Ref) (string, []terraformPlatform, error) {
+	version, requestedPlatform := splitTerraformVersion(ref.Version)
 	base := terraformAPIBase(p.BaseURL)
-
-	url := fmt.Sprintf("%s/v1/providers/%s/%s/download/%s/%s", base, ref.Name, version, osName, arch)
-	var dist terraformDownload
-	if err := getJSONWithHeaders(ctx, p.HTTP, url, "application/json",
-		terraformRegistryHeaders, &dist); err != nil {
+	var response terraformVersions
+	if err := getJSONWithHeaders(ctx, p.HTTP,
+		fmt.Sprintf("%s/v1/providers/%s/versions", base, ref.Name),
+		"application/json", terraformRegistryHeaders, &response); err != nil {
 		if err == ErrNotFound {
-			return Metadata{}, fmt.Errorf(
-				"%w: провайдера %s версии %s под %s_%s нет в реестре terraform",
-				ErrNotFound, ref.DisplayName, version, osName, arch)
+			return "", nil, fmt.Errorf("%w: провайдер %s не найден в реестре terraform",
+				ErrNotFound, ref.DisplayName)
 		}
+		return "", nil, err
+	}
+	var platforms []terraformPlatform
+	for _, candidate := range response.Versions {
+		if strings.TrimPrefix(candidate.Version, "v") != version {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, platform := range candidate.Platforms {
+			key := platform.OS + "_" + platform.Arch
+			if platform.OS == "" || platform.Arch == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			platforms = append(platforms, terraformPlatform{OS: platform.OS, Arch: platform.Arch})
+		}
+		break
+	}
+	if len(platforms) == 0 {
+		return "", nil, fmt.Errorf("%w: провайдера %s версии %s нет в реестре terraform",
+			ErrNotFound, ref.DisplayName, version)
+	}
+	sort.Slice(platforms, func(i, j int) bool {
+		return platforms[i].OS+"_"+platforms[i].Arch < platforms[j].OS+"_"+platforms[j].Arch
+	})
+	if requestedPlatform != "" {
+		found := false
+		for _, platform := range platforms {
+			if platform.OS+"_"+platform.Arch == requestedPlatform {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "", nil, fmt.Errorf("%w: провайдера %s версии %s под %s нет в реестре terraform",
+				ErrNotFound, ref.DisplayName, version, requestedPlatform)
+		}
+	}
+	return version, platforms, nil
+}
+
+func (p *Terraform) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
+	version, _, err := p.versionPlatforms(ctx, ref)
+	if err != nil {
 		return Metadata{}, err
 	}
-	if dist.DownloadURL == "" {
-		return Metadata{}, fmt.Errorf(
-			"реестр terraform не сообщил ссылку на дистрибутив %s %s под %s_%s",
-			ref.DisplayName, version, osName, arch)
-	}
-
-	filename := dist.Filename
-	if filename == "" {
-		filename = fmt.Sprintf("terraform-provider-%s_%s_%s_%s.zip",
-			providerShortName(ref.Name), version, osName, arch)
-	}
+	base := terraformAPIBase(p.BaseURL)
 	meta := Metadata{
 		Name:             ref.Name,
 		Version:          ref.Version,
-		ArtifactURL:      dist.DownloadURL,
-		ArtifactFilename: filename,
-	}
-	if dist.SHASum != "" {
-		meta.Checksum, meta.ChecksumAlgo = dist.SHASum, "sha256"
+		ArtifactURL:      fmt.Sprintf("%s/v1/providers/%s/%s", base, ref.Name, version),
+		ArtifactFilename: fmt.Sprintf("terraform-provider-%s_%s.terraform-release.tgz",
+			providerShortName(ref.Name), version),
 	}
 
 	// Дата публикации — отдельным запросом: в ответе о дистрибутиве её нет.
@@ -201,6 +267,91 @@ func (p *Terraform) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error
 	return meta, nil
 }
 
+func (*Terraform) ReleaseBundle() {}
+
+// Download собирает статическое network mirror: архивы всех платформ и два
+// JSON-файла протокола зеркала. В staging это один transport bundle; при
+// публикации он раскладывается обратно в реальные файлы.
+func (p *Terraform) Download(ctx context.Context, ref Ref, limit int64) ([]byte, string, error) {
+	version, platforms, err := p.versionPlatforms(ctx, ref)
+	if err != nil {
+		return nil, "", err
+	}
+	base := terraformAPIBase(p.BaseURL)
+	files := make([]BundleFile, 0, len(platforms)+2)
+	mirror := terraformMirrorVersion{Archives: make(map[string]terraformMirrorArchive, len(platforms))}
+	usedNames := map[string]bool{}
+
+	for _, platform := range platforms {
+		platformKey := platform.OS + "_" + platform.Arch
+		var dist terraformDownload
+		endpoint := fmt.Sprintf("%s/v1/providers/%s/%s/download/%s/%s",
+			base, ref.Name, version, platform.OS, platform.Arch)
+		if err := getJSONWithHeaders(ctx, p.HTTP, endpoint, "application/json",
+			terraformRegistryHeaders, &dist); err != nil {
+			return nil, "", fmt.Errorf("метаданные дистрибутива Terraform %s: %w", platformKey, err)
+		}
+		if dist.DownloadURL == "" {
+			return nil, "", fmt.Errorf("реестр terraform не сообщил download_url для %s", platformKey)
+		}
+		filename := safeFilename(dist.Filename)
+		if dist.Filename == "" {
+			filename = fmt.Sprintf("terraform-provider-%s_%s_%s_%s.zip",
+				providerShortName(ref.Name), version, platform.OS, platform.Arch)
+		}
+		if usedNames[filename] {
+			return nil, "", fmt.Errorf("реестр terraform вернул одинаковое имя %s для нескольких платформ", filename)
+		}
+		remaining := remainingLimit(limit, bundleFilesMap(files))
+		if limit > 0 && remaining <= 0 {
+			return nil, "", fmt.Errorf("Terraform-релиз больше допустимого предела %d байт", limit)
+		}
+		body, err := getBytesWithLimitAndHeaders(ctx, p.HTTP, dist.DownloadURL,
+			"application/octet-stream", remaining, terraformRegistryHeaders)
+		if err != nil {
+			return nil, "", fmt.Errorf("скачивание Terraform %s: %w", platformKey, err)
+		}
+		digest := sha256.Sum256(body)
+		actual := hex.EncodeToString(digest[:])
+		if dist.SHASum != "" && !strings.EqualFold(strings.TrimSpace(dist.SHASum), actual) {
+			return nil, "", fmt.Errorf("sha256 Terraform %s не совпала: ожидалось %s, получено %s",
+				platformKey, dist.SHASum, actual)
+		}
+		usedNames[filename] = true
+		files = append(files, BundleFile{Name: filename, Data: body})
+		mirror.Archives[platformKey] = terraformMirrorArchive{
+			URL: version + "/" + filename, Hashes: []string{"zh:" + actual},
+		}
+	}
+
+	versionJSON, err := json.Marshal(mirror)
+	if err != nil {
+		return nil, "", err
+	}
+	indexJSON, err := json.Marshal(terraformMirrorIndex{Versions: map[string]struct{}{version: {}}})
+	if err != nil {
+		return nil, "", err
+	}
+	files = append(files,
+		BundleFile{Name: version + ".json", Data: versionJSON},
+		BundleFile{Name: "index.json", Data: indexJSON},
+	)
+	bundle, err := PackBundle("terraform", files, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	return bundle, fmt.Sprintf("terraform-provider-%s_%s.terraform-release.tgz",
+		providerShortName(ref.Name), version), nil
+}
+
+func bundleFilesMap(files []BundleFile) map[string][]byte {
+	out := make(map[string][]byte, len(files))
+	for _, file := range files {
+		out[file.Name] = file.Data
+	}
+	return out
+}
+
 // providerShortName — «aws» из «hashicorp/aws».
 func providerShortName(name string) string {
 	if idx := strings.LastIndex(name, "/"); idx >= 0 {
@@ -212,12 +363,12 @@ func providerShortName(name string) string {
 func (p *Terraform) InstallCommand(ref Ref, baseURL, repo string) string {
 	version, _ := splitTerraformVersion(ref.Version)
 	return fmt.Sprintf(
-		"укажите зеркало %s/repository/%s в ~/.terraformrc (provider_installation → network_mirror) "+
+		"укажите зеркало %s/repository/%s/ в ~/.terraformrc (provider_installation → network_mirror) "+
 			"и требование source = \"%s\", version = \"%s\"",
 		strings.TrimRight(baseURL, "/"), repo, ref.DisplayName, version)
 }
 
 func (p *Terraform) ArtifactPath(ref Ref, filename string) string {
 	version, _ := splitTerraformVersion(ref.Version)
-	return fmt.Sprintf("%s/%s/%s", ref.Name, version, filename)
+	return fmt.Sprintf("registry.terraform.io/%s/%s/%s", ref.Name, version, filename)
 }

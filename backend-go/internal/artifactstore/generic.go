@@ -86,6 +86,9 @@ func (g *Generic) PublishReleaseBundle(ctx context.Context, t Target, data []byt
 	if err != nil {
 		return "", err
 	}
+	if t.Manager == "terraform" {
+		return publishTerraformBundle(ctx, g, t, files)
+	}
 	firstURL := ""
 	for _, file := range files {
 		// Bundle may have been downloaded by an older worker and still contain
