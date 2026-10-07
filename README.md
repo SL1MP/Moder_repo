@@ -59,8 +59,10 @@ make logs                 # логи api-go и worker-go
 docker compose run --rm migrate-go schema   # схема базы против кода: чего не хватает
 ```
 
-Для входа логином/паролем (без Keycloak) учётки заводятся с паролем:
-`docker compose run --rm migrate-go bootstrap --demo --service-password '<пароль>'`.
+При пустой базе сервис создаёт локального администратора из
+`ADMIN_USERNAME`/`ADMIN_PASSWORD` (по умолчанию `admin/admin`; перед первым
+запуском задайте безопасный пароль). Остальные локальные учётки создаются на
+странице «Настройка → Пользователи и роли».
 
 После старта:
 
@@ -84,12 +86,19 @@ Keycloak проксируется nginx'ом на том же origin, что и 
 Keycloak наружу не нужны — достаточно того же 443, на котором работает сервис:
 
 ```ini
-OIDC_PUBLIC_ISSUER=https://<ваш-хост>/realms/moderation   # без порта
+OIDC_ISSUER=http://keycloak:8080/realms/moderation
+OIDC_PUBLIC_ISSUER=https://<ваш-хост>/realms/moderation
+OIDC_CLIENT_ID=moderation-web
+OIDC_PUBLIC_BASE_URL=https://<ваш-хост>
 ```
 
-`OIDC_ISSUER` при этом остаётся внутренним (`http://keycloak:8080/realms/moderation`):
-по нему api берёт JWKS внутри сети compose. Сервис принимает оба issuer'а
-(`backend/app/core/config.py::accepted_issuers`), подпись у токена одна и та же.
+Эти значения только впервые заполняют OIDC-настройку в Postgres. Затем issuer,
+client id/secret, публичный адрес и текст кнопки меняются на странице
+«Настройка → OIDC / Keycloak» и применяются сразу. Предпочтителен один canonical
+issuer, доступный и backend, и браузеру. Для встроенного compose-профиля
+поддерживается прежняя пара адресов: discovery/JWKS и обмен code идут через
+внутренний `OIDC_ISSUER`, а браузер и проверка claim `iss` используют
+`OIDC_PUBLIC_ISSUER`.
 
 Админконсоль Keycloak: `https://<ваш-хост>/admin` (или напрямую
 `http://<хост>:8081` — этот порт остаётся для локальной отладки).
@@ -138,10 +147,9 @@ make ps                   # убедиться, что всё Up
 ### Развёртывание на хосте, доступном по имени
 
 Локально всё работает по HTTP на `localhost`. Как только сервис выставляется под
-настоящим именем, **HTTPS становится обязательным, а не желательным**: SPA считает
-PKCE-challenge через `window.crypto.subtle`, а этот API браузер даёт только в secure
-context — по HTTPS либо на `localhost`. По HTTP на внешнем имени вход через SSO падает
-с `Cannot read properties of undefined (reading 'digest')`.
+настоящим именем, используйте HTTPS: access/refresh-сессии и OIDC callback нельзя
+передавать по открытому каналу. PKCE/state/nonce теперь создаёт и проверяет backend,
+а браузер не получает токены Keycloak.
 
 Порядок такой:
 
@@ -158,6 +166,7 @@ make certs DOMAIN=service.example.com
 #    TLS_COMMON_NAME=service.example.com
 #    KEYCLOAK_TLS_PORT=8443
 #    OIDC_PUBLIC_ISSUER=https://service.example.com:8443/realms/moderation
+#    OIDC_PUBLIC_BASE_URL=https://service.example.com
 
 # 3. Поднять с общим сертификатом для nginx и Keycloak
 docker compose -f docker-compose.yml -f docker-compose.override.yml \
@@ -169,10 +178,9 @@ make bootstrap
 
 Что здесь важно и неочевидно:
 
-* **`OIDC_ISSUER` менять не нужно.** Он внутренний (`http://keycloak:8080/...`), api ходит
-  по нему внутри сети compose. Браузерный адрес задаётся отдельно — `OIDC_PUBLIC_ISSUER`.
-  Сервис принимает оба issuer'а, потому что Keycloak кладёт в claim `iss` тот адрес, по
-  которому к нему обратились.
+* Для встроенного Keycloak `OIDC_ISSUER` остаётся внутренним, а
+  `OIDC_PUBLIC_ISSUER` — браузерным. Для внешнего корпоративного IdP обычно
+  достаточно одного публичного issuer, доступного контейнеру API.
 * **После правки `PUBLIC_BASE_URL` пересоберите Keycloak.** Внешний адрес попадает в
   `redirectUris` клиента на сборке образа; без пересборки Keycloak отклонит редирект
   после логина: `docker compose --profile sso up -d --build keycloak`.

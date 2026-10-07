@@ -109,6 +109,18 @@ func parseJWT(token string) (*jwt, error) {
 	}, nil
 }
 
+// PeekIssuer читает непроверенный iss только для выбора проверяющего ключа.
+// Доверять этому значению нельзя; Decode после выбора обязательно проверяет и
+// подпись, и допустимый issuer. Такой же безопасный выбор уже используется
+// внутри Verifier.Decode для разделения HS256 и OIDC/JWKS.
+func PeekIssuer(token string) (string, error) {
+	parsed, err := parseJWT(token)
+	if err != nil {
+		return "", err
+	}
+	return parsed.issuer, nil
+}
+
 // verifySignature проверяет подпись ключом key. Допустимые alg передаются
 // явно вызывающим: для токена издателя и для локального токена наборы разные.
 func (t *jwt) verifySignature(key any, allowed []string) error {

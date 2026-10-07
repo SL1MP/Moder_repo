@@ -95,15 +95,14 @@ func TestSyncUserKeepsRolesWhenClaimsEmpty(t *testing.T) {
 	}
 }
 
-func TestSyncServiceUserAcceptsRolesFromLocalToken(t *testing.T) {
+func TestLocalUserKeepsApplicationRoles(t *testing.T) {
 	r, closePool := mustPool(t)
 	defer closePool()
 	ctx := context.Background()
 	username := uniqueName(t)
-	user, err := r.SyncUser(ctx, UserClaims{
-		Subject: "local:" + username, Username: username,
-		Roles: []string{"admin"}, IsService: true,
-	}, time.Now().UTC())
+	hash := "test-hash"
+	user, err := r.CreateLocalUser(ctx, username, "", "", hash,
+		[]string{"admin"}, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,10 +139,10 @@ func TestSyncUserKeepsProfileWhenClaimsEmpty(t *testing.T) {
 	}
 }
 
-// Учётку, заведённую локально (без subject), первый вход через SSO обязан
-// привязать к каталогу — иначе получится вторая учётка с тем же логином, и
-// уникальность логина этого просто не даст: вход сломается.
-func TestSyncUserAttachesSubjectToLocalAccount(t *testing.T) {
+// Как в OakShield, совпадение логина не связывает локальную учётку с OIDC:
+// такая привязка позволила бы внешнему каталогу захватить локальную запись.
+// Конфликт должен быть разобран администратором явно.
+func TestSyncUserDoesNotAttachOIDCToLocalAccount(t *testing.T) {
 	r, closePool := mustPool(t)
 	defer closePool()
 	ctx := context.Background()
@@ -158,17 +157,15 @@ func TestSyncUserAttachesSubjectToLocalAccount(t *testing.T) {
 		t.Fatalf("у локальной учётки не должно быть subject: %v", *local.Subject)
 	}
 
-	linked, err := r.SyncUser(ctx, UserClaims{
+	_, err = r.SyncUser(ctx, UserClaims{
 		Subject: username + "-sub", Username: username, Roles: []string{"legal"},
 	}, now)
-	if err != nil {
-		t.Fatalf("вход через SSO: %v", err)
+	if err == nil {
+		t.Fatal("OIDC-вход не должен молча связываться с локальной учёткой по логину")
 	}
-	if linked.ID != local.ID {
-		t.Fatalf("должна быть та же учётка: было %d, стало %d", local.ID, linked.ID)
-	}
-	if linked.Subject == nil || *linked.Subject != username+"-sub" {
-		t.Fatalf("subject должен привязаться: %+v", linked.Subject)
+	unchanged, readErr := r.GetUserByID(ctx, local.ID)
+	if readErr != nil || unchanged.Subject != nil || unchanged.Source != "local" {
+		t.Fatalf("локальная учётка была изменена: user=%+v err=%v", unchanged, readErr)
 	}
 }
 

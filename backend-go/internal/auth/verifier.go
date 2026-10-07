@@ -64,7 +64,8 @@ func NewVerifier(settings Settings, client Doer, now func() time.Time) *Verifier
 // непонятно, чьим ключом проверять. Подделать этим ничего нельзя: локальный
 // issuer ведёт к проверке нашим секретом, любой другой — к проверке ключом
 // Keycloak, и подписать токен подделыватель не может ни в том, ни в другом
-// случае. Заодно локальный путь закрыт флагом LOCAL_AUTH_ENABLED.
+// случае. LOCAL_AUTH_ENABLED ограничивает только password-login: внутренний
+// JWT используется также после OIDC callback и потому проверяется всегда.
 func (v *Verifier) Decode(ctx context.Context, token string) (Claims, error) {
 	parsed, err := parseJWT(token)
 	if err != nil {
@@ -72,9 +73,6 @@ func (v *Verifier) Decode(ctx context.Context, token string) (Claims, error) {
 	}
 
 	if parsed.issuer == LocalIssuer {
-		if !v.settings.LocalAuthEnabled {
-			return Claims{}, &Error{Message: "Локальная аутентификация отключена (LOCAL_AUTH_ENABLED=false)"}
-		}
 		if err := parsed.verifySignature([]byte(v.settings.LocalAuthSecret), []string{algHS256}); err != nil {
 			return Claims{}, err
 		}

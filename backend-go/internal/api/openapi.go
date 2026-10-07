@@ -169,7 +169,7 @@ func buildOpenAPI() map[string]any {
 			"securitySchemes": map[string]any{
 				"bearerAuth": map[string]any{
 					"type": "http", "scheme": "bearer", "bearerFormat": "JWT",
-					"description": "OIDC JWT или токен локальной сервисной учётки",
+					"description": "Внутренний access JWT приложения, JWT доверенного OIDC-провайдера либо персональный dso_pat_ токен",
 				},
 			},
 			"schemas": openAPISchemas(),
@@ -194,7 +194,7 @@ func operationFor(route openAPIRoute) map[string]any {
 			code: map[string]any{"description": successDescription(code), "content": response},
 			"default": map[string]any{
 				"description": "Ошибка",
-				"content": jsonResponseSchema(refSchema("ErrorEnvelope")),
+				"content":     jsonResponseSchema(refSchema("ErrorEnvelope")),
 			},
 		},
 	}
@@ -294,7 +294,7 @@ func boolQuery(name, description string) openAPIParam {
 }
 
 func openAPIRoutes() []openAPIRoute {
-	loginBody := jsonBody(refSchema("LoginRequest"), "Локальный вход сервисной учётки")
+	loginBody := jsonBody(refSchema("LoginRequest"), "Вход локального пользователя")
 	createRequestBody := map[string]any{
 		"required": true,
 		"content": map[string]any{
@@ -302,11 +302,11 @@ func openAPIRoutes() []openAPIRoute {
 			"multipart/form-data": map[string]any{"schema": map[string]any{
 				"type": "object", "required": []string{"manager", "file"},
 				"properties": map[string]any{
-					"manager": map[string]any{"type": "string"},
-					"file": map[string]any{"type": "string", "format": "binary"},
-					"reason": map[string]any{"type": "string"},
+					"manager":            map[string]any{"type": "string"},
+					"file":               map[string]any{"type": "string", "format": "binary"},
+					"reason":             map[string]any{"type": "string"},
 					"include_transitive": map[string]any{"type": "boolean", "default": false},
-					"resolve_depth": map[string]any{"type": "integer", "minimum": 1},
+					"resolve_depth":      map[string]any{"type": "integer", "minimum": 1},
 				},
 			}},
 		},
@@ -320,8 +320,15 @@ func openAPIRoutes() []openAPIRoute {
 		{Method: "GET", Path: "/metrics", OperationID: "metrics", Summary: "Получить метрики Prometheus", Tag: "Система", Public: true, Response: map[string]any{"text/plain": map[string]any{"schema": map[string]any{"type": "string"}}}},
 
 		{Method: "GET", Path: "/api/v1/auth/config", OperationID: "getAuthConfig", Summary: "Получить настройки входа", Tag: "Аутентификация", Public: true},
-		{Method: "POST", Path: "/api/v1/auth/token", OperationID: "createLocalToken", Summary: "Войти локальной сервисной учёткой", Tag: "Аутентификация", Public: true, Body: loginBody, Response: jsonResponseSchema(refSchema("TokenResponse"))},
+		{Method: "POST", Path: "/api/v1/auth/token", OperationID: "createLocalToken", Summary: "Войти локальным пользователем", Tag: "Аутентификация", Public: true, Body: loginBody, Response: jsonResponseSchema(refSchema("TokenResponse"))},
+		{Method: "POST", Path: "/api/v1/auth/refresh", OperationID: "refreshSession", Summary: "Атомарно обновить сессию", Tag: "Аутентификация", Public: true, Body: jsonBody(refSchema("RefreshRequest"), "Одноразовый refresh-токен"), Response: jsonResponseSchema(refSchema("TokenResponse"))},
+		{Method: "GET", Path: "/api/v1/auth/oidc/login", OperationID: "startOIDCLogin", Summary: "Начать серверный OIDC+PKCE вход", Tag: "Аутентификация", Public: true, SuccessCode: "302"},
+		{Method: "GET", Path: "/api/v1/auth/oidc/callback", OperationID: "finishOIDCLogin", Summary: "Проверить OIDC callback и создать сессию", Tag: "Аутентификация", Public: true, SuccessCode: "302", Query: []openAPIParam{{Name: "code", Description: "Authorization code", Required: true, Schema: map[string]any{"type": "string"}}, {Name: "state", Description: "CSRF state", Required: true, Schema: map[string]any{"type": "string"}}}},
 		{Method: "GET", Path: "/api/v1/auth/me", OperationID: "getCurrentUser", Summary: "Получить текущего пользователя", Tag: "Аутентификация"},
+		{Method: "POST", Path: "/api/v1/auth/me/password", OperationID: "changePassword", Summary: "Сменить локальный пароль", Tag: "Аутентификация", Body: jsonBody(refSchema("ChangePasswordRequest"), "Текущий и новый пароль")},
+		{Method: "GET", Path: "/api/v1/auth/me/tokens", OperationID: "listPersonalTokens", Summary: "Получить персональные API-токены", Tag: "Аутентификация"},
+		{Method: "POST", Path: "/api/v1/auth/me/tokens", OperationID: "createPersonalToken", Summary: "Выпустить dso_pat_ токен", Tag: "Аутентификация", SuccessCode: "201", Body: jsonBody(refSchema("CreateAPITokenRequest"), "Имя и срок PAT")},
+		{Method: "DELETE", Path: "/api/v1/auth/me/tokens/{tokenID}", OperationID: "revokePersonalToken", Summary: "Отозвать персональный API-токен", Tag: "Аутентификация", SuccessCode: "204"},
 
 		{Method: "GET", Path: "/api/v1/managers", OperationID: "listManagers", Summary: "Получить пакетные менеджеры", Tag: "Менеджеры"},
 		{Method: "GET", Path: "/api/v1/managers/detect", OperationID: "detectManager", Summary: "Определить менеджер по имени файла", Tag: "Менеджеры", Query: []openAPIParam{{Name: "filename", Description: "Имя файла зависимостей", Required: true, Schema: map[string]any{"type": "string"}}}},
@@ -375,8 +382,10 @@ func openAPIRoutes() []openAPIRoute {
 		{Method: "GET", Path: "/api/v1/settings/policies", OperationID: "getPolicyState", Summary: "Получить состояние политик", Tag: "Администрирование"},
 		{Method: "GET", Path: "/api/v1/system/status", OperationID: "getSystemStatus", Summary: "Получить состояние компонентов", Tag: "Администрирование"},
 		{Method: "GET", Path: "/api/v1/admin/users", OperationID: "listUsers", Summary: "Получить пользователей и роли приложения", Tag: "Администрирование", Roles: []string{"admin"}},
-		{Method: "POST", Path: "/api/v1/admin/users", OperationID: "createUser", Summary: "Заранее создать OIDC-пользователя", Tag: "Администрирование", Roles: []string{"admin"}, Body: genericJSONBody("Логин, профиль и роли")},
-		{Method: "PATCH", Path: "/api/v1/admin/users/{userID}", OperationID: "updateUserAccess", Summary: "Изменить роли и активность пользователя", Tag: "Администрирование", Roles: []string{"admin"}, Body: genericJSONBody("Роли и активность")},
+		{Method: "POST", Path: "/api/v1/admin/users", OperationID: "createUser", Summary: "Создать локального пользователя", Tag: "Администрирование", Roles: []string{"admin"}, Body: jsonBody(refSchema("CreateUserRequest"), "Локальная учётная запись")},
+		{Method: "PATCH", Path: "/api/v1/admin/users/{userID}", OperationID: "updateUserAccess", Summary: "Изменить пользователя, роли или пароль", Tag: "Администрирование", Roles: []string{"admin"}, Body: genericJSONBody("Профиль, роли, активность и необязательный новый пароль")},
+		{Method: "GET", Path: "/api/v1/admin/integrations/oidc", OperationID: "getOIDCSettings", Summary: "Получить runtime-настройку OIDC", Tag: "Администрирование", Roles: []string{"admin"}},
+		{Method: "PUT", Path: "/api/v1/admin/integrations/oidc", OperationID: "updateOIDCSettings", Summary: "Сохранить и сразу применить OIDC", Tag: "Администрирование", Roles: []string{"admin"}, Body: jsonBody(refSchema("OIDCSettings"), "Issuer, клиент и публичный адрес")},
 		{Method: "POST", Path: "/api/v1/admin/reload", OperationID: "reloadPolicies", Summary: "Перезагрузить политики", Tag: "Администрирование", Roles: []string{"admin"}},
 		{Method: "GET", Path: "/api/v1/admin/audit", OperationID: "getAuditLog", Summary: "Получить аудит", Tag: "Администрирование", Roles: []string{"admin"}, Query: []openAPIParam{stringQuery("entity_type", "Тип сущности"), stringQuery("entity_id", "ID сущности"), stringQuery("action", "Действие"), stringQuery("actor", "Исполнитель"), integerQuery("limit", "Размер страницы"), integerQuery("offset", "Смещение")}},
 		{Method: "POST", Path: "/api/v1/admin/queue-sweep", OperationID: "sweepQueue", Summary: "Запустить сторож очереди", Tag: "Администрирование", Roles: []string{"admin"}},
@@ -394,9 +403,9 @@ func openAPISchemas() map[string]any {
 		"APIError": map[string]any{
 			"type": "object", "required": []string{"code", "message", "request_id"},
 			"properties": map[string]any{
-				"code": map[string]any{"type": "string", "example": "validation_error"},
-				"message": map[string]any{"type": "string"},
-				"details": map[string]any{"type": "object", "additionalProperties": true, "nullable": true},
+				"code":       map[string]any{"type": "string", "example": "validation_error"},
+				"message":    map[string]any{"type": "string"},
+				"details":    map[string]any{"type": "object", "additionalProperties": true, "nullable": true},
 				"request_id": map[string]any{"type": "string"},
 			},
 		},
@@ -408,18 +417,24 @@ func openAPISchemas() map[string]any {
 			},
 		},
 		"TokenResponse": map[string]any{
-			"type": "object", "required": []string{"access_token", "token_type"},
+			"type": "object", "required": []string{"access_token", "refresh_token", "token_type"},
 			"properties": map[string]any{
-				"access_token": map[string]any{"type": "string"},
-				"token_type": map[string]any{"type": "string", "example": "bearer"},
-				"expires_in": map[string]any{"type": "integer"},
-				"roles": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"access_token":  map[string]any{"type": "string"},
+				"refresh_token": map[string]any{"type": "string"},
+				"token_type":    map[string]any{"type": "string", "example": "bearer"},
+				"expires_in":    map[string]any{"type": "integer"},
+				"roles":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			},
 		},
+		"RefreshRequest":        map[string]any{"type": "object", "required": []string{"refresh_token"}, "properties": map[string]any{"refresh_token": map[string]any{"type": "string"}}},
+		"ChangePasswordRequest": map[string]any{"type": "object", "required": []string{"current_password", "new_password"}, "properties": map[string]any{"current_password": map[string]any{"type": "string", "format": "password"}, "new_password": map[string]any{"type": "string", "format": "password", "minLength": 6}}},
+		"CreateAPITokenRequest": map[string]any{"type": "object", "required": []string{"name"}, "properties": map[string]any{"name": map[string]any{"type": "string"}, "expires_in_days": map[string]any{"type": "integer", "minimum": 0}}},
+		"CreateUserRequest":     map[string]any{"type": "object", "required": []string{"username", "password"}, "properties": map[string]any{"username": map[string]any{"type": "string"}, "email": map[string]any{"type": "string"}, "full_name": map[string]any{"type": "string"}, "description": map[string]any{"type": "string"}, "password": map[string]any{"type": "string", "format": "password", "minLength": 6}, "roles": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "is_superuser": map[string]any{"type": "boolean"}, "must_change_password": map[string]any{"type": "boolean"}}},
+		"OIDCSettings":          map[string]any{"type": "object", "required": []string{"enabled", "issuer", "client_id", "public_base_url", "button_label"}, "properties": map[string]any{"enabled": map[string]any{"type": "boolean"}, "issuer": map[string]any{"type": "string", "format": "uri"}, "client_id": map[string]any{"type": "string"}, "client_secret": map[string]any{"type": "string", "format": "password", "description": "Пусто — оставить сохранённый"}, "public_base_url": map[string]any{"type": "string", "format": "uri"}, "button_label": map[string]any{"type": "string"}}},
 		"PackageInput": map[string]any{
 			"type": "object", "required": []string{"name", "version"},
 			"properties": map[string]any{
-				"name": map[string]any{"type": "string"},
+				"name":    map[string]any{"type": "string"},
 				"version": map[string]any{"type": "string"},
 			},
 		},
@@ -432,9 +447,9 @@ func openAPISchemas() map[string]any {
 						"oneOf": []any{map[string]any{"type": "string"}, refSchema("PackageInput")},
 					},
 				},
-				"reason": map[string]any{"type": "string"},
+				"reason":             map[string]any{"type": "string"},
 				"include_transitive": map[string]any{"type": "boolean", "default": false},
-				"resolve_depth": map[string]any{"type": "integer", "minimum": 1},
+				"resolve_depth":      map[string]any{"type": "integer", "minimum": 1},
 			},
 		},
 		"DecisionRequest": map[string]any{
@@ -447,7 +462,7 @@ func openAPISchemas() map[string]any {
 		"CommentRequest": map[string]any{
 			"type": "object", "required": []string{"body"},
 			"properties": map[string]any{
-				"body": map[string]any{"type": "string"},
+				"body":            map[string]any{"type": "string"},
 				"request_item_id": map[string]any{"type": "integer", "format": "int64", "nullable": true},
 			},
 		},

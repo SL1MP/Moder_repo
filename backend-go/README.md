@@ -26,7 +26,7 @@ Bearer JWT и требуемыми ролями.
 | `internal/config` | `Load(getenv)`, все ошибки валидации разом |
 | `internal/db`, `internal/repo` | pgx-пул и репозиторий без ORM |
 | `internal/domain` | структуры домена, перечисления 1:1 с миграциями |
-| `internal/auth` | OIDC/JWT, локальный вход, RBAC |
+| `internal/auth` | OakShield-модель: серверный OIDC+PKCE, Argon2id, access/refresh, PAT, RBAC |
 | `internal/registry` | плагины pypi / npm / go / nuget, нормализация SPDX, зависимости версии |
 | `internal/depfile` | разбор файлов зависимостей (requirements, lock-файлы, go.mod, csproj) |
 | `internal/version` | сравнение версий и диапазоны: semver, PEP 440, NuGet, MVS |

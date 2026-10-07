@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
 import { Alert, Loader } from './components/ui'
@@ -40,8 +40,19 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    configureApi(() => loadSession()?.access_token ?? null, handleUnauthorized)
-  }, [handleUnauthorized])
+    configureApi(
+      () => loadSession()?.access_token ?? null,
+      handleUnauthorized,
+      async () => {
+        const current = loadSession()
+        if (!config || !current) return null
+        const next = await refresh(config, current)
+        if (!next) return null
+        setSession(next)
+        return next.access_token
+      },
+    )
+  }, [config, handleUnauthorized])
 
   useEffect(() => {
     api.authConfig().then(setConfig).catch((exc: Error) => setError(exc.message))
@@ -52,10 +63,20 @@ export default function App() {
       setMe(null)
       return
     }
+    if (session.expires_at <= Date.now() && !config) return
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | undefined
-
-    api.me().then(
+    const ensureSession = session.expires_at <= Date.now() && config
+      ? refresh(config, session)
+      : Promise.resolve(session)
+    ensureSession.then((current) => {
+      if (!current) {
+        handleUnauthorized()
+        throw new Error('Сессия истекла. Войдите заново.')
+      }
+      if (current !== session && !cancelled) setSession(current)
+      return api.me()
+    }).then(
       (profile) => {
         if (cancelled) return
         setMe(profile)
@@ -77,11 +98,11 @@ export default function App() {
       cancelled = true
       if (retryTimer) clearTimeout(retryTimer)
     }
-  }, [session, authRetry])
+  }, [session, config, authRetry, handleUnauthorized])
 
   // Продление токена до истечения срока.
   useEffect(() => {
-    if (!session || !config || session.kind !== 'oidc') return
+    if (!session || !config) return
     const delay = Math.max(session.expires_at - Date.now() - 60_000, 15_000)
     const timer = setTimeout(() => {
       refresh(config, session).then((next) => (next ? setSession(next) : handleUnauthorized()))
@@ -100,8 +121,8 @@ export default function App() {
     return () => clearInterval(timer)
   }, [reloadCounters, location.pathname])
 
-  if (location.pathname === '/auth/callback') {
-    return <Callback config={config} onSession={setSession} />
+  if (location.pathname === '/oidc/callback' || location.pathname === '/auth/callback') {
+    return <Callback onSession={setSession} />
   }
 
   if (!config) {
@@ -133,6 +154,10 @@ export default function App() {
         }}
       />
     )
+  }
+
+  if (me.must_change_password) {
+    return <ForcedPasswordChange me={me} onChanged={() => api.me().then(setMe)} />
   }
 
   return (
@@ -251,6 +276,7 @@ function Login({
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
+  const ssoError = new URLSearchParams(window.location.search).get('sso_error')
 
   return (
     <div className="content login">
@@ -259,15 +285,15 @@ function Login({
         Вход через SSO. Заводить пакеты можно только здесь — правка <code>package_list.txt</code> и
         merge request'ы не поддерживаются.
       </p>
-      {error ? <Alert kind="error">{error}</Alert> : null}
+      {error || ssoError ? <Alert kind="error">{error || `Ошибка SSO: ${ssoError}`}</Alert> : null}
       <div className="card">
-        <button
+        {config.oidc_enabled ? <button
           className="primary"
           style={{ width: '100%' }}
           onClick={() => startLogin(config).catch((exc: Error) => onError(exc.message))}
         >
-          Войти через SSO
-        </button>
+          {config.oidc_button_label || 'Войти через SSO'}
+        </button> : <Alert kind="info">Вход через OIDC пока не настроен администратором.</Alert>}
       </div>
       {config.local_auth_enabled ? (
         <div className="card">
@@ -308,38 +334,20 @@ function Login({
   )
 }
 
-function Callback({
-  config,
-  onSession,
-}: {
-  config: AuthConfig | null
-  onSession: (session: Session) => void
-}) {
+function Callback({ onSession }: { onSession: (session: Session) => void }) {
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
-  const params = useMemo(() => new URLSearchParams(window.location.search), [])
 
   useEffect(() => {
-    if (!config) return
-    const code = params.get('code')
-    const state = params.get('state')
-    const oidcError = params.get('error_description') || params.get('error')
-    if (oidcError) {
-      setError(`Провайдер отклонил вход: ${oidcError}`)
-      return
+    try {
+      const from = completeLogin()
+      const session = loadSession()
+      if (session) onSession(session)
+      navigate(from, { replace: true })
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc))
     }
-    if (!code || !state) {
-      setError('В ответе провайдера нет кода авторизации')
-      return
-    }
-    completeLogin(config, code, state)
-      .then((from) => {
-        const session = loadSession()
-        if (session) onSession(session)
-        navigate(from, { replace: true })
-      })
-      .catch((exc: Error) => setError(exc.message))
-  }, [config, params, navigate, onSession])
+  }, [navigate, onSession])
 
   return (
     <div className="content login">
@@ -351,6 +359,33 @@ function Callback({
       ) : (
         <Loader text="Завершаем вход…" />
       )}
+    </div>
+  )
+}
+
+function ForcedPasswordChange({ me, onChanged }: { me: Me; onChanged: () => void }) {
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <div className="content login">
+      <h1>Смените временный пароль</h1>
+      <p className="page-hint">Администратор потребовал сменить пароль учётной записи <b>{me.username}</b> перед продолжением работы.</p>
+      {error ? <Alert kind="error">{error}</Alert> : null}
+      <form className="card" onSubmit={(event) => {
+        event.preventDefault()
+        if (next !== confirm) { setError('Новые пароли не совпадают'); return }
+        setBusy(true); setError(null)
+        api.changePassword(current, next).then(onChanged)
+          .catch((exc: Error) => setError(exc.message)).finally(() => setBusy(false))
+      }}>
+        <label><span>Текущий пароль</span><input className="wide" type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} /></label>
+        <label><span>Новый пароль</span><input className="wide" type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} /></label>
+        <label><span>Повторите новый пароль</span><input className="wide" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></label>
+        <button className="primary" type="submit" disabled={busy || !current || next.length < 6}>{busy ? 'Сохраняем…' : 'Сменить пароль'}</button>
+      </form>
     </div>
   )
 }

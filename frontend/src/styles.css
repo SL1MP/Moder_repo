@@ -171,7 +171,7 @@ button.small { padding: 3px 7px; font-size: 12px; }
 .setting-value input { width: min(430px, 100%); }
 .user-list { display: flex; flex-direction: column; }
 .user-row {
-  display: grid; grid-template-columns: minmax(220px, 1.3fr) 80px minmax(330px, 1.5fr) 90px max-content;
+  display: grid; grid-template-columns: minmax(190px, 1.2fr) 70px minmax(260px, 1.5fr) 105px 80px minmax(150px, .8fr) max-content;
   gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border);
 }
 .user-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }

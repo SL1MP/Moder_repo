@@ -79,6 +79,8 @@ func MountAdmin(r chi.Router, h *AdminHandler, a *Auth) {
 		sub.Get("/api/v1/admin/users", h.Users)
 		sub.Post("/api/v1/admin/users", h.CreateUser)
 		sub.Patch("/api/v1/admin/users/{userID}", h.UpdateUser)
+		sub.Get("/api/v1/admin/integrations/oidc", h.OIDCSettings)
+		sub.Put("/api/v1/admin/integrations/oidc", h.UpdateOIDCSettings)
 		sub.Post("/api/v1/admin/reload", h.Reload)
 		sub.Get("/api/v1/admin/audit", h.Audit)
 		if h.Sweep != nil {

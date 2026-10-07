@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +33,15 @@ type UserStore interface {
 type Auth struct {
 	Verifier *auth.Verifier
 	Repo     UserStore
-	Now      func() time.Time
+	// SessionRepo хранит refresh/PAT/OIDC-состояние Oakshield. Отдельное поле
+	// сохраняет лёгкие UserStore-моки старых unit-тестов.
+	SessionRepo *repo.Repo
+	RefreshTTL  time.Duration
+	// RuntimeOIDC читает issuer из DB-backed web-настройки и кэширует JWKS.
+	// Нужен для Bearer JWT внешнего провайдера; браузерный callback использует
+	// тот же экземпляр.
+	RuntimeOIDC *RuntimeOIDCVerifier
+	Now         func() time.Time
 	// RateLimit — ограничение частоты запросов, применяется ПОСЛЕ опознания
 	// пользователя: считаем по нему, а не по адресу (см. ratelimit.go).
 	//
@@ -61,7 +71,8 @@ func CurrentUser(ctx context.Context) (*domain.User, bool) {
 	return user, ok
 }
 
-// Authenticate проверяет Bearer-токен и заводит/обновляет учётку.
+// Authenticate проверяет внутренний access JWT, PAT или внешний OIDC Bearer-
+// токен и заводит/обновляет OIDC-учётку при первом обращении.
 //
 // Профиль синхронизируется на каждом запросе, но роли обычных пользователей
 // принадлежат приложению и не перезаписываются claims из Keycloak. Роли из
@@ -74,8 +85,26 @@ func (a *Auth) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 		token := strings.TrimSpace(header[len("bearer "):])
+		if strings.HasPrefix(token, auth.APITokenPrefix) && a.SessionRepo != nil {
+			user, apiToken, err := a.SessionRepo.UserByAPITokenHash(r.Context(), auth.HashToken(token))
+			if err != nil || user == nil || apiToken == nil || !user.IsActive ||
+				(apiToken.ExpiresAt != nil && a.now().After(*apiToken.ExpiresAt)) {
+				writeError(w, r, errUnauthorized("Недействительный персональный API-токен"))
+				return
+			}
+			_ = a.SessionRepo.TouchAPIToken(r.Context(), apiToken.ID)
+			a.serveUser(w, r, next, user)
+			return
+		}
 
-		claims, err := a.Verifier.Decode(r.Context(), token)
+		issuer, _ := auth.PeekIssuer(token)
+		var claims auth.Claims
+		var err error
+		if issuer != "" && issuer != auth.LocalIssuer && a.RuntimeOIDC != nil {
+			claims, err = a.RuntimeOIDC.Decode(r.Context(), token)
+		} else {
+			claims, err = a.Verifier.Decode(r.Context(), token)
+		}
 		if err != nil {
 			// Сообщение проверяльщика уходит клиенту как есть: оно объясняет
 			// причину отказа («истёк», «издатель не тот»), и без него
@@ -83,31 +112,49 @@ func (a *Auth) Authenticate(next http.Handler) http.Handler {
 			writeError(w, r, errUnauthorized(err.Error()).Because(err))
 			return
 		}
-
-		user, err := a.Repo.SyncUser(r.Context(), repo.UserClaims{
-			Subject:   claims.Subject,
-			Username:  claims.Username,
-			Email:     claims.Email,
-			FullName:  claims.FullName,
-			Roles:     claims.Roles,
-			IsService: claims.IsService,
-		}, a.now())
+		var user *domain.User
+		if claims.Raw["iss"] != auth.LocalIssuer {
+			// OakShield разрешает bearer-токен доверенного OIDC-провайдера и
+			// при первом обращении создаёт пользователя по неизменяемому sub.
+			// Роли из claims намеренно не передаются: права принадлежат сервису.
+			user, err = a.Repo.SyncUser(r.Context(), repo.UserClaims{
+				Subject: claims.Subject, Username: claims.Username,
+				Email: claims.Email, FullName: claims.FullName,
+			}, a.now())
+		} else if a.SessionRepo != nil {
+			userID, parseErr := strconv.ParseInt(claims.Subject, 10, 64)
+			if parseErr != nil {
+				writeError(w, r, errUnauthorized("Внутренний токен содержит неверный идентификатор пользователя"))
+				return
+			}
+			user, err = a.SessionRepo.GetUserByID(r.Context(), userID)
+		} else {
+			// Совместимость лёгких моков и токенов переходного периода.
+			user, err = a.Repo.GetUserByUsername(r.Context(), claims.Username)
+		}
 		if err != nil {
-			writeError(w, r, errInternal("Не удалось синхронизировать учётную запись").Because(err))
+			writeError(w, r, errInternal("Не удалось прочитать учётную запись").Because(err))
 			return
 		}
-		if !user.IsActive {
-			writeError(w, r, errForbidden("Учётная запись «"+user.Username+"» отключена"))
+		if user == nil {
+			writeError(w, r, errUnauthorized("Пользователь токена не найден"))
 			return
 		}
-
-		authed := r.WithContext(context.WithValue(r.Context(), userKey{}, user))
-		if a.RateLimit != nil {
-			a.RateLimit(next).ServeHTTP(w, authed)
-			return
-		}
-		next.ServeHTTP(w, authed)
+		a.serveUser(w, r, next, user)
 	})
+}
+
+func (a *Auth) serveUser(w http.ResponseWriter, r *http.Request, next http.Handler, user *domain.User) {
+	if !user.IsActive {
+		writeError(w, r, errForbidden("Учётная запись «"+user.Username+"» отключена"))
+		return
+	}
+	authed := r.WithContext(context.WithValue(r.Context(), userKey{}, user))
+	if a.RateLimit != nil {
+		a.RateLimit(next).ServeHTTP(w, authed)
+		return
+	}
+	next.ServeHTTP(w, authed)
 }
 
 // RequireRoles — доступ только перечисленным ролям. admin имеет доступ ко
@@ -167,9 +214,12 @@ func ClientIP(r *http.Request) *string {
 			return &ip
 		}
 	}
-	host := r.RemoteAddr
-	if idx := strings.LastIndex(host, ":"); idx > 0 && !strings.HasSuffix(host, "]") {
-		host = host[:idx]
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		return &realIP
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
 	}
 	if host == "" {
 		return nil

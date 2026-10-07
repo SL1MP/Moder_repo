@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { Alert, Empty, Loader, formatTime, useAsync } from '../components/ui'
-import { api, type AuthConfig, type Me } from '../lib/api'
+import { api, type ApiToken, type AuthConfig, type Me } from '../lib/api'
 
 const ROLE_TITLES: Record<string, string> = {
   admin: 'администратор — всё, включая аудит-лог и перечитывание конфигурации',
@@ -14,6 +14,7 @@ const ROLE_TITLES: Record<string, string> = {
 export default function Profile({ me, config }: { me: Me; config: AuthConfig }) {
   const notifications = useAsync(() => api.notifications(), [])
   const gitlab = useAsync(() => api.gitlabStatus(), [])
+  const tokens = useAsync(() => api.apiTokens(), [])
   const [error, setError] = useState<string | null>(null)
 
   return (
@@ -22,8 +23,8 @@ export default function Profile({ me, config }: { me: Me; config: AuthConfig }) 
         <div>
           <h1>Профиль</h1>
           <p className="page-hint">
-            Роли приходят из групп каталога через SSO и маппятся переменными{' '}
-            <code>ROLE_MAPPING_*</code>.
+            Учётная запись и права хранятся внутри сервиса. OIDC подтверждает личность,
+            а локальных пользователей и роли назначает администратор.
           </p>
         </div>
       </div>
@@ -39,9 +40,7 @@ export default function Profile({ me, config }: { me: Me; config: AuthConfig }) 
             <dt>Email</dt>
             <dd>{me.email ?? '—'}</dd>
             <dt>Тип учётной записи</dt>
-            <dd>{me.is_service ? 'сервисная' : 'пользовательская'}</dd>
-            <dt>Issuer</dt>
-            <dd className="mono small">{config.issuer}</dd>
+            <dd>{me.is_service ? 'сервисная' : me.source === 'oidc' ? 'OIDC' : 'локальная'}</dd>
           </dl>
           <h3 style={{ marginTop: 10 }}>Роли</h3>
           {me.roles.length ? (
@@ -106,6 +105,11 @@ export default function Profile({ me, config }: { me: Me; config: AuthConfig }) 
         </div>
       </div>
 
+      <div className="grid cols-2">
+        {me.source === 'local' ? <PasswordCard /> : <div className="card"><h2>Пароль</h2><p className="small dim">Пароль этой учётной записи управляется провайдером OIDC.</p></div>}
+        <TokenCard tokens={tokens} />
+      </div>
+
       <div className="card">
         <div className="row between">
           <h2>Уведомления {notifications.data?.unread ? `(${notifications.data.unread} новых)` : ''}</h2>
@@ -165,4 +169,47 @@ export default function Profile({ me, config }: { me: Me; config: AuthConfig }) 
       </div>
     </>
   )
+}
+
+function PasswordCard() {
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  return <form className="card" onSubmit={(event) => {
+    event.preventDefault(); setError(null); setMessage(null)
+    if (next !== confirm) { setError('Новые пароли не совпадают'); return }
+    api.changePassword(current, next).then(() => {
+      setCurrent(''); setNext(''); setConfirm(''); setMessage('Пароль изменён')
+    }).catch((exc: Error) => setError(exc.message))
+  }}>
+    <h2>Смена пароля</h2>
+    {message ? <Alert kind="ok">{message}</Alert> : null}
+    {error ? <Alert kind="error">{error}</Alert> : null}
+    <label><span>Текущий пароль</span><input className="wide" type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} /></label>
+    <label><span>Новый пароль</span><input className="wide" type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} /></label>
+    <label><span>Повторите новый пароль</span><input className="wide" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></label>
+    <button type="submit" disabled={!current || next.length < 6}>Сменить пароль</button>
+  </form>
+}
+
+function TokenCard({ tokens }: { tokens: { data: { items: ApiToken[] } | null; error: string | null; loading: boolean; reload: () => void } }) {
+  const [name, setName] = useState('')
+  const [days, setDays] = useState(0)
+  const [fresh, setFresh] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  return <div className="card">
+    <h2>Персональные API-токены</h2>
+    <p className="small dim">Для CI и скриптов: <code>Authorization: Bearer dso_pat_…</code>. Полное значение показывается один раз.</p>
+    {error || tokens.error ? <Alert kind="error">{error || tokens.error}</Alert> : null}
+    {fresh ? <Alert kind="ok"><b>Скопируйте токен сейчас:</b><br /><code style={{ wordBreak: 'break-all' }}>{fresh}</code><br /><button className="small" type="button" onClick={() => navigator.clipboard.writeText(fresh)}>копировать</button></Alert> : null}
+    <div className="row">
+      <input placeholder="Название токена" value={name} onChange={(e) => setName(e.target.value)} />
+      <select value={days} onChange={(e) => setDays(Number(e.target.value))}><option value={0}>бессрочно</option><option value={30}>30 дней</option><option value={90}>90 дней</option><option value={365}>1 год</option></select>
+      <button className="primary small" disabled={!name.trim()} onClick={() => api.createApiToken(name.trim(), days).then((value) => { setFresh(value.token); setName(''); tokens.reload() }).catch((exc: Error) => setError(exc.message))}>выпустить</button>
+    </div>
+    {tokens.loading ? <Loader /> : null}
+    <table><tbody>{tokens.data?.items.map((token) => <tr key={token.id}><td><b>{token.name}</b><div className="small dim">создан {formatTime(token.created_at)} · использован {formatTime(token.last_used_at)}</div></td><td className="small">{token.expires_at ? `до ${formatTime(token.expires_at)}` : 'бессрочно'}</td><td><button className="danger small" onClick={() => api.revokeApiToken(token.id).then(tokens.reload)}>отозвать</button></td></tr>)}</tbody></table>
+  </div>
 }

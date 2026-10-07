@@ -99,27 +99,21 @@ func (r *Repo) UpsertServiceAccount(
 		return nil, err
 	}
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO "user" (username, full_name, roles, is_service, is_active,
-		                    password_hash, created_at, updated_at)
-		VALUES ($1, $1, $2::jsonb, TRUE, TRUE, $3, $4, $4)
+		INSERT INTO "user" (username, full_name, roles, source, is_service, is_active,
+		                    is_superuser, password_hash, created_at, updated_at)
+		VALUES ($1, $1, $2::jsonb, 'local', TRUE, TRUE, $2::jsonb ? 'admin', $3, $4, $4)
 		ON CONFLICT (username) DO UPDATE
-		SET roles = EXCLUDED.roles, is_service = TRUE, is_active = TRUE,
+		SET roles = EXCLUDED.roles, source = 'local', is_service = TRUE, is_active = TRUE,
+		    is_superuser = EXCLUDED.is_superuser,
 		    password_hash = EXCLUDED.password_hash, updated_at = EXCLUDED.updated_at
-		RETURNING id, subject, username, email, full_name, roles, is_service, is_active,
-		          password_hash, last_login_at, created_at, updated_at`,
+		WHERE "user".source = 'local'
+		RETURNING `+userColumns,
 		username, rolesJSON, passwordHash, now)
-
-	var u domain.User
-	var rawRoles []byte
-	if err := row.Scan(&u.ID, &u.Subject, &u.Username, &u.Email, &u.FullName, &rawRoles,
-		&u.IsService, &u.IsActive, &u.PasswordHash, &u.LastLoginAt,
-		&u.CreatedAt, &u.UpdatedAt); err != nil {
+	u, err := scanUser(row)
+	if err != nil {
 		return nil, fmt.Errorf("сервисная учётная запись %q: %w", username, err)
 	}
-	if err := json.Unmarshal(rawRoles, &u.Roles); err != nil {
-		return nil, fmt.Errorf("роли учётной записи %q не разобраны: %w", username, err)
-	}
-	return &u, nil
+	return u, nil
 }
 
 // MarkVersionImported переводит версию в «одобрена» по импорту существующего
@@ -167,30 +161,25 @@ func (r *Repo) UpsertDemoUser(ctx context.Context, u DemoUser, passwordHash stri
 		return nil, err
 	}
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO "user" (username, full_name, email, roles, is_service, is_active,
-		                    password_hash)
-		VALUES ($1, $2, NULLIF($3, ''), $4::jsonb, $5, TRUE, NULLIF($6, ''))
+		INSERT INTO "user" (username, full_name, email, roles, source, is_service, is_active,
+		                    is_superuser, password_hash)
+		VALUES ($1, $2, NULLIF($3, ''), $4::jsonb, 'local', $5, TRUE,
+		        $4::jsonb ? 'admin', NULLIF($6, ''))
 		ON CONFLICT (username) DO UPDATE
 		SET full_name = EXCLUDED.full_name, email = EXCLUDED.email,
-		    roles = EXCLUDED.roles, is_active = TRUE,
+		    roles = EXCLUDED.roles, source = 'local', is_superuser = EXCLUDED.is_superuser,
+		    is_active = TRUE,
 		    is_service = "user".is_service OR EXCLUDED.is_service,
 		    password_hash = COALESCE(EXCLUDED.password_hash, "user".password_hash),
 		    updated_at = now()
-		RETURNING id, subject, username, email, full_name, roles, is_service, is_active,
-		          password_hash, last_login_at, created_at, updated_at`,
+		WHERE "user".source = 'local'
+		RETURNING `+userColumns,
 		u.Username, u.FullName, u.Email, rolesJSON, passwordHash != "", passwordHash)
-
-	var user domain.User
-	var rawRoles []byte
-	if err := row.Scan(&user.ID, &user.Subject, &user.Username, &user.Email, &user.FullName,
-		&rawRoles, &user.IsService, &user.IsActive, &user.PasswordHash, &user.LastLoginAt,
-		&user.CreatedAt, &user.UpdatedAt); err != nil {
+	user, err := scanUser(row)
+	if err != nil {
 		return nil, fmt.Errorf("демо-учётка %q: %w", u.Username, err)
 	}
-	if err := json.Unmarshal(rawRoles, &user.Roles); err != nil {
-		return nil, fmt.Errorf("роли демо-учётки %q не разобраны: %w", u.Username, err)
-	}
-	return &user, nil
+	return user, nil
 }
 
 // DemoVersion — поля версии, которые проставляет демо-стенд.

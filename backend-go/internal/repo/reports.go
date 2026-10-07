@@ -92,24 +92,15 @@ func scanScanReport(row scanner) (*domain.ScanReport, error) {
 // принявшего решение подставляется в сообщения шагов и в отчёт, и отсутствие
 // пользователя не должно ронять конвейер.
 func (r *Repo) GetUser(ctx context.Context, id int64) (*domain.User, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT id, subject, username, email, full_name, roles, is_service, is_active,
-		       password_hash, last_login_at, created_at, updated_at
-		FROM "user" WHERE id = $1
-	`, id)
-	var u domain.User
-	var roles []byte
-	if err := row.Scan(&u.ID, &u.Subject, &u.Username, &u.Email, &u.FullName, &roles,
-		&u.IsService, &u.IsActive, &u.PasswordHash, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
+	u, err := scanUser(r.pool.QueryRow(ctx,
+		`SELECT `+userColumns+` FROM "user" WHERE id = $1`, id))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("чтение user: %w", err)
 	}
-	if err := unmarshalInto(roles, &u.Roles); err != nil {
-		return nil, err
-	}
-	return &u, nil
+	return u, nil
 }
 
 // DisplayName — как назвать пользователя в сообщении: полное имя, иначе логин.
@@ -140,24 +131,17 @@ func DisplayName(u *domain.User, fallback string) string {
 // молча игнорирующий переданное имя, — ловушка, а не удобство.
 func (r *Repo) GetOrCreateUser(ctx context.Context, username, fullName string) (*domain.User, error) {
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO "user" (username, full_name, roles, is_service, is_active)
-		VALUES ($1, $2, '["developer"]'::jsonb, FALSE, TRUE)
+		INSERT INTO "user" (username, full_name, roles, source, is_service, is_active)
+		VALUES ($1, $2, '["developer"]'::jsonb, 'local', FALSE, TRUE)
 		ON CONFLICT (username) DO UPDATE
 		SET username = EXCLUDED.username, full_name = EXCLUDED.full_name
-		RETURNING id, subject, username, email, full_name, roles, is_service, is_active,
-		          password_hash, last_login_at, created_at, updated_at
+		RETURNING `+userColumns+`
 	`, username, fullName)
-
-	var u domain.User
-	var roles []byte
-	if err := row.Scan(&u.ID, &u.Subject, &u.Username, &u.Email, &u.FullName, &roles,
-		&u.IsService, &u.IsActive, &u.PasswordHash, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
+	u, err := scanUser(row)
+	if err != nil {
 		return nil, fmt.Errorf("создание пользователя: %w", err)
 	}
-	if err := unmarshalInto(roles, &u.Roles); err != nil {
-		return nil, err
-	}
-	return &u, nil
+	return u, nil
 }
 
 // ItemsAwaitingScan — пакеты заявок, по которым отчётов ещё нет.

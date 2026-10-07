@@ -163,9 +163,13 @@ type Config struct {
 	// ходит браузер. Keycloak кладёт в claim `iss` тот адрес, по которому к
 	// нему обратились, поэтому `iss` токена от SPA не совпадёт с внутренним —
 	// принимаем оба, подпись при этом одна и та же.
-	OIDCIssuer       string
-	OIDCPublicIssuer string
-	OIDCClientID     string
+	OIDCIssuer        string
+	OIDCPublicIssuer  string
+	OIDCClientID      string
+	OIDCClientSecret  string
+	OIDCEnabled       bool
+	OIDCPublicBaseURL string
+	OIDCButtonLabel   string
 
 	// Группы каталога, дающие роль сервиса. Права проверяются в API, а не
 	// только в UI.
@@ -175,9 +179,12 @@ type Config struct {
 	RoleMappingDeveloper string
 
 	// Локальный вход по логину/паролю для пользователей и сервисных учёток.
-	LocalAuthEnabled  bool
-	LocalAuthSecret   string
-	LocalAuthTokenTTL time.Duration
+	LocalAuthEnabled       bool
+	LocalAuthSecret        string
+	LocalAuthTokenTTL      time.Duration
+	LocalRefreshTokenTTL   time.Duration
+	BootstrapAdminUsername string
+	BootstrapAdminPassword string
 
 	// GitLab — интеграция только на чтение: подключение из профиля и чтение
 	// файла зависимостей из приватного проекта от имени пользователя.
@@ -349,18 +356,25 @@ func Load(getenv func(string) string) (*Config, error) {
 		ScanWatcherBatch:       intOr(getenv("SCAN_WATCHER_BATCH"), 10),
 		ScanWatcherItemTimeout: secondsOr(getenv("SCAN_WATCHER_ITEM_TIMEOUT_SECONDS"), 20*60),
 
-		OIDCIssuer:       strings.TrimRight(strings.TrimSpace(getenv("OIDC_ISSUER")), "/"),
-		OIDCPublicIssuer: strings.TrimRight(strings.TrimSpace(getenv("OIDC_PUBLIC_ISSUER")), "/"),
-		OIDCClientID:     valueOr(getenv("OIDC_CLIENT_ID"), "moderation-web"),
+		OIDCIssuer:        strings.TrimRight(strings.TrimSpace(getenv("OIDC_ISSUER")), "/"),
+		OIDCPublicIssuer:  strings.TrimRight(strings.TrimSpace(getenv("OIDC_PUBLIC_ISSUER")), "/"),
+		OIDCClientID:      valueOr(getenv("OIDC_CLIENT_ID"), "moderation-web"),
+		OIDCClientSecret:  strings.TrimSpace(getenv("OIDC_CLIENT_SECRET")),
+		OIDCEnabled:       boolOr(getenv("OIDC_ENABLED"), true),
+		OIDCPublicBaseURL: strings.TrimRight(strings.TrimSpace(getenv("OIDC_PUBLIC_BASE_URL")), "/"),
+		OIDCButtonLabel:   valueOr(getenv("OIDC_BUTTON_LABEL"), "Keycloak (SSO)"),
 
 		RoleMappingAdmin:     valueOr(getenv("ROLE_MAPPING_ADMIN"), "moderation-admin"),
 		RoleMappingDevSecOps: valueOr(getenv("ROLE_MAPPING_DEVSECOPS"), "moderation-devsecops"),
 		RoleMappingLegal:     valueOr(getenv("ROLE_MAPPING_LEGAL"), "moderation-legal"),
 		RoleMappingDeveloper: valueOr(getenv("ROLE_MAPPING_DEVELOPER"), "moderation-developer"),
 
-		LocalAuthEnabled:  boolOr(getenv("LOCAL_AUTH_ENABLED"), false),
-		LocalAuthSecret:   valueOr(getenv("LOCAL_AUTH_SECRET"), "change-me-in-prod"),
-		LocalAuthTokenTTL: time.Duration(intOr(getenv("LOCAL_AUTH_TOKEN_TTL_MINUTES"), 480)) * time.Minute,
+		LocalAuthEnabled:       boolOr(getenv("LOCAL_AUTH_ENABLED"), true),
+		LocalAuthSecret:        valueOr(getenv("LOCAL_AUTH_SECRET"), "change-me-in-prod"),
+		LocalAuthTokenTTL:      time.Duration(intOr(getenv("LOCAL_AUTH_TOKEN_TTL_MINUTES"), 15)) * time.Minute,
+		LocalRefreshTokenTTL:   time.Duration(intOr(getenv("LOCAL_REFRESH_TOKEN_TTL_HOURS"), 30*24)) * time.Hour,
+		BootstrapAdminUsername: valueOr(getenv("ADMIN_USERNAME"), "admin"),
+		BootstrapAdminPassword: valueOr(strings.TrimSpace(getenv("ADMIN_PASSWORD")), "admin"),
 
 		GitlabURL:           strings.TrimRight(strings.TrimSpace(getenv("GITLAB_URL")), "/"),
 		GitlabOAuthClientID: getenv("GITLAB_OAUTH_CLIENT_ID"),

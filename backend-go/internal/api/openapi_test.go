@@ -59,11 +59,20 @@ func TestOpenAPISpecDocumentsGoAPI(t *testing.T) {
 	}
 	for _, route := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/auth/token"},
+		{http.MethodPost, "/api/v1/auth/refresh"},
+		{http.MethodGet, "/api/v1/auth/oidc/login"},
+		{http.MethodGet, "/api/v1/auth/oidc/callback"},
+		{http.MethodPost, "/api/v1/auth/me/password"},
+		{http.MethodGet, "/api/v1/auth/me/tokens"},
+		{http.MethodPost, "/api/v1/auth/me/tokens"},
+		{http.MethodDelete, "/api/v1/auth/me/tokens/{tokenID}"},
 		{http.MethodPost, "/api/v1/requests"},
 		{http.MethodPost, "/api/v1/items/{itemID}/security-decision"},
 		{http.MethodGet, "/api/v1/request-items/{itemID}/reports/{file}"},
 		{http.MethodGet, "/api/v1/request-items/{itemID}/sboms/{file}"},
 		{http.MethodPost, "/api/v1/admin/osv-sync"},
+		{http.MethodGet, "/api/v1/admin/integrations/oidc"},
+		{http.MethodPut, "/api/v1/admin/integrations/oidc"},
 	} {
 		methods := spec.Paths[route.path]
 		if methods == nil || methods[strings.ToLower(route.method)] == nil {

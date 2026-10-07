@@ -2,12 +2,16 @@ package auth
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
 
 	"moderation/internal/domain"
@@ -26,21 +30,20 @@ const bcryptMaxBytes = 72
 // IssueLocalToken выпускает HS256-токен локальной или сервисной учётки.
 // Возвращает токен и срок жизни в секундах. Порт security.issue_local_token.
 func (v *Verifier) IssueLocalToken(user *domain.User) (string, int, error) {
-	if !v.settings.LocalAuthEnabled {
-		return "", 0, &Error{Message: "Локальная аутентификация отключена (LOCAL_AUTH_ENABLED=false)"}
-	}
 	ttl := int(v.settings.LocalTokenTTL / time.Second)
 	now := v.now()
 	payload := map[string]any{
-		"iss":        LocalIssuer,
-		"sub":        "local:" + user.Username,
-		"username":   user.Username,
-		"email":      stringOrNil(user.Email),
-		"name":       stringOrNil(user.FullName),
-		"roles":      rolesOrEmpty(user.Roles),
-		"is_service": user.IsService,
-		"iat":        now.Unix(),
-		"exp":        now.Add(v.settings.LocalTokenTTL).Unix(),
+		"iss":          LocalIssuer,
+		"sub":          fmt.Sprintf("%d", user.ID),
+		"username":     user.Username,
+		"email":        stringOrNil(user.Email),
+		"name":         stringOrNil(user.FullName),
+		"roles":        rolesOrEmpty(user.Roles),
+		"is_service":   user.IsService,
+		"is_superuser": user.IsSuperuser,
+		"source":       user.Source,
+		"iat":          now.Unix(),
+		"exp":          now.Add(v.settings.LocalTokenTTL).Unix(),
 	}
 	token, err := signHS256(payload, []byte(v.settings.LocalAuthSecret))
 	if err != nil {
@@ -72,16 +75,60 @@ func VerifyPassword(password string, hash *string) bool {
 	if hash == nil || *hash == "" {
 		return false
 	}
+	if strings.HasPrefix(*hash, "$argon2id$") {
+		return verifyArgon2id(password, *hash)
+	}
+	// Совместимость с пользователями, созданными до перехода на Oakshield.
+	// Новый пароль всегда записывается Argon2id; после следующей смены bcrypt
+	// исчезнет естественным образом.
 	return bcrypt.CompareHashAndPassword([]byte(*hash), passwordBytes(password)) == nil
 }
 
-// HashPassword — хеш пароля в том же формате, что пишет python-версия.
+// Параметры идентичны Oakshield (OWASP baseline).
+const (
+	argonTime    = 1
+	argonMemory  = 64 * 1024
+	argonThreads = 4
+	argonKeyLen  = 32
+	argonSaltLen = 16
+)
+
+// HashPassword записывает PHC-строку Argon2id, как Oakshield.
 func HashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword(passwordBytes(password), bcrypt.DefaultCost)
-	if err != nil {
-		return "", fmt.Errorf("хеширование пароля: %w", err)
+	salt := make([]byte, argonSaltLen)
+	if _, err := rand.Read(salt); err != nil {
+		return "", fmt.Errorf("salt пароля: %w", err)
 	}
-	return string(hash), nil
+	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version,
+		argonMemory, argonTime, argonThreads, base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(key)), nil
+}
+
+func verifyArgon2id(password, encoded string) bool {
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 6 || parts[1] != "argon2id" {
+		return false
+	}
+	var version int
+	var memory, iterations uint32
+	var threads uint8
+	if _, err := fmt.Sscanf(parts[2], "v=%d", &version); err != nil || version != argon2.Version {
+		return false
+	}
+	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &threads); err != nil {
+		return false
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil {
+		return false
+	}
+	want, err := base64.RawStdEncoding.DecodeString(parts[5])
+	if err != nil {
+		return false
+	}
+	got := argon2.IDKey([]byte(password), salt, iterations, memory, threads, uint32(len(want)))
+	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
 func passwordBytes(password string) []byte {

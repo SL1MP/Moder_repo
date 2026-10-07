@@ -517,7 +517,7 @@ func TestLocalTokenRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("свой же токен должен приниматься: %v", err)
 	}
-	if claims.Subject != "local:ci-bot" || claims.Username != "ci-bot" {
+	if claims.Subject != "7" || claims.Username != "ci-bot" {
 		t.Fatalf("claims локального токена: %+v", claims)
 	}
 	if len(claims.Roles) != 1 || claims.Roles[0] != "devsecops" {
@@ -555,9 +555,9 @@ func TestLocalHumanTokenIsNotServiceAccount(t *testing.T) {
 	}
 }
 
-// Выключенный LOCAL_AUTH_ENABLED обязан закрывать и выпуск, и приём: иначе
-// токен, выпущенный до выключения флага, продолжал бы работать.
-func TestLocalTokenRejectedWhenDisabled(t *testing.T) {
+// LOCAL_AUTH_ENABLED управляет только формой входа по паролю. Внутренний JWT
+// нужен и OIDC-сессиям, поэтому его проверка и выпуск от этого флага не зависят.
+func TestApplicationTokenWorksWhenPasswordLoginDisabled(t *testing.T) {
 	s := newRSASigner(t, "key-1")
 	f := newFakeIssuer(t, s.jwk())
 	issuing := newTestVerifier(f, func(st *Settings) {
@@ -574,11 +574,11 @@ func TestLocalTokenRejectedWhenDisabled(t *testing.T) {
 		st.LocalAuthEnabled = false
 		st.LocalAuthSecret = "секрет"
 	})
-	if _, err := closed.Decode(context.Background(), token); err == nil {
-		t.Fatal("при LOCAL_AUTH_ENABLED=false локальный токен не принимается")
+	if _, err := closed.Decode(context.Background(), token); err != nil {
+		t.Fatalf("внутренняя OIDC-сессия не должна зависеть от формы локального входа: %v", err)
 	}
-	if _, _, err := closed.IssueLocalToken(testUser("ci-bot", "admin")); err == nil {
-		t.Fatal("при LOCAL_AUTH_ENABLED=false токен не выпускается")
+	if _, _, err := closed.IssueLocalToken(testUser("ci-bot", "admin")); err != nil {
+		t.Fatalf("внутренний токен должен выпускаться для OIDC callback: %v", err)
 	}
 }
 
@@ -653,8 +653,8 @@ func TestEmptyPasswordHashDeniesAccess(t *testing.T) {
 	}
 }
 
-// Пароль длиннее 72 байт должен заводиться так же, как в python-версии:
-// без обрезки x/crypto/bcrypt отказывается его хешировать вовсе.
+// Argon2id не имеет ограничения bcrypt в 72 байта: длинный пароль нового
+// пользователя должен проверяться целиком.
 func TestHashLongPassword(t *testing.T) {
 	password := "x" + strings.Repeat("☭", 30)
 	hash, err := HashPassword(password)
@@ -674,8 +674,8 @@ func TestHashPasswordRoundTrip(t *testing.T) {
 	if !VerifyPassword("пароль-сервисной-учётки", &hash) {
 		t.Fatal("свой же хеш должен проверяться")
 	}
-	if !strings.HasPrefix(hash, "$2") {
-		t.Fatalf("формат хеша должен быть bcrypt: %q", hash)
+	if !strings.HasPrefix(hash, "$argon2id$") {
+		t.Fatalf("формат нового хеша должен быть Argon2id PHC: %q", hash)
 	}
 }
 

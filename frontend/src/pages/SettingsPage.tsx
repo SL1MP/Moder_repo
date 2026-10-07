@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 import { Alert, Loader, formatTime, useAsync } from '../components/ui'
-import { api, type AdminUser, type Me, type SettingRow } from '../lib/api'
+import { api, type AdminUser, type Me, type OIDCSettings, type SettingRow } from '../lib/api'
 
 export default function SettingsPage({ me }: { me: Me }) {
   const settings = useAsync(() => api.settings(), [])
@@ -9,7 +9,7 @@ export default function SettingsPage({ me }: { me: Me }) {
   const system = useAsync(() => api.systemStatus(), [])
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'general' | 'users'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'users' | 'oidc'>('general')
   const isAdmin = me.roles.includes('admin')
   const isSec = me.roles.includes('devsecops') || isAdmin
 
@@ -26,9 +26,9 @@ export default function SettingsPage({ me }: { me: Me }) {
         <div>
           <h1>Настройка</h1>
           <p className="page-hint">
-            Адреса, пороги и интеграции можно сохранить здесь. Для применения достаточно
+            Общие адреса и пороги можно сохранить здесь. Для их применения достаточно
             перезапустить <code>api-go</code> и <code>worker-go</code> — пересобирать образы не нужно.
-            Секреты остаются в защищённых переменных окружения.
+            OIDC и его секрет на отдельной вкладке применяются сразу.
           </p>
         </div>
         {isAdmin ? (
@@ -62,9 +62,14 @@ export default function SettingsPage({ me }: { me: Me }) {
             Пользователи и роли
           </button>
         ) : null}
+        {isAdmin ? (
+          <button className={activeTab === 'oidc' ? 'active' : ''} onClick={() => setActiveTab('oidc')}>
+            OIDC / Keycloak
+          </button>
+        ) : null}
       </div>
 
-      {activeTab === 'users' && isAdmin ? <UsersPanel /> : <>
+      {activeTab === 'users' && isAdmin ? <UsersPanel /> : activeTab === 'oidc' && isAdmin ? <OIDCPanel /> : <>
 
       {message ? <Alert kind="ok">{message}</Alert> : null}
       {error ? <Alert kind="error">{error}</Alert> : null}
@@ -214,8 +219,10 @@ function UsersPanel() {
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
-  const [source, setSource] = useState<'local' | 'oidc'>('local')
   const [password, setPassword] = useState('')
+  const [description, setDescription] = useState('')
+  const [isSuperuser, setIsSuperuser] = useState(false)
+  const [mustChange, setMustChange] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -226,8 +233,8 @@ function UsersPanel() {
           <div>
             <h2>Пользователи приложения</h2>
             <p className="page-hint">
-              Keycloak подтверждает личность. Роли, активность и доступ к модерации хранятся здесь.
-              OIDC-пользователь также появится автоматически после первого входа.
+              Локальные учётные записи создаёт администратор. OIDC-пользователь появляется
+              автоматически после первого подтверждённого входа — заранее создавать его не нужно.
             </p>
           </div>
           <span className="badge info">{users.data?.items.length ?? 0} учётных записей</span>
@@ -248,40 +255,36 @@ function UsersPanel() {
       <div className="card">
         <h2>Добавить пользователя</h2>
         <p className="small dim">
-          Локальный пользователь входит без Keycloak. Для OIDC логин должен совпадать с{' '}
-          <code>preferred_username</code>; пароль тогда хранится только в Keycloak.
+          Как в OakShield: здесь создаются только локальные пользователи. Пароль хранится как
+          Argon2id-хэш, открытое значение после создания получить нельзя.
         </p>
         <div className="grid cols-3">
           <label><span>Логин</span><input className="wide" value={username} onChange={(e) => setUsername(e.target.value)} /></label>
           <label><span>Имя</span><input className="wide" value={fullName} onChange={(e) => setFullName(e.target.value)} /></label>
           <label><span>Email</span><input className="wide" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-          <label>
-            <span>Источник</span>
-            <select className="wide" value={source} onChange={(e) => setSource(e.target.value as 'local' | 'oidc')}>
-              <option value="local">Локальный</option>
-              <option value="oidc">Keycloak / OIDC</option>
-            </select>
-          </label>
-          {source === 'local' ? (
-            <label>
-              <span>Начальный пароль</span>
-              <input className="wide" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            </label>
-          ) : null}
+          <label><span>Описание</span><input className="wide" value={description} onChange={(e) => setDescription(e.target.value)} /></label>
+          <label><span>Начальный пароль</span><input className="wide" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
         </div>
-        <button className="primary" disabled={!username.trim() || (source === 'local' && password.length < 8)} onClick={() => {
+        <div className="row" style={{ marginBottom: 12 }}>
+          <label className="row"><input type="checkbox" checked={isSuperuser} onChange={(e) => setIsSuperuser(e.target.checked)} /><span>Администратор</span></label>
+          <label className="row"><input type="checkbox" checked={mustChange} onChange={(e) => setMustChange(e.target.checked)} /><span>Сменить пароль при первом входе</span></label>
+        </div>
+        <button className="primary" disabled={!username.trim() || password.length < 6} onClick={() => {
           setError(null)
           api.createAdminUser({
             username: username.trim(),
             email: email.trim(),
             full_name: fullName.trim(),
-            roles: ['developer'],
-            source,
-            password: source === 'local' ? password : undefined,
+            description: description.trim(),
+            roles: isSuperuser ? ['admin', 'developer'] : ['developer'],
+            password,
+            is_superuser: isSuperuser,
+            must_change_password: mustChange,
           })
             .then(() => {
-              setUsername(''); setEmail(''); setFullName(''); setPassword('')
-              setMessage(`${source === 'local' ? 'Локальный' : 'OIDC'} пользователь создан с ролью разработчика`)
+              setUsername(''); setEmail(''); setFullName(''); setPassword(''); setDescription('')
+              setIsSuperuser(false); setMustChange(true)
+              setMessage('Локальный пользователь создан')
               users.reload()
             })
             .catch((exc: Error) => setError(exc.message))
@@ -299,29 +302,82 @@ function UserAccessRow({ user, roles, onSaved, onError }: {
 }) {
   const [selected, setSelected] = useState(user.roles)
   const [active, setActive] = useState(user.is_active)
+  const [superuser, setSuperuser] = useState(user.is_superuser)
+  const [username, setUsername] = useState(user.username)
+  const [email, setEmail] = useState(user.email ?? '')
+  const [fullName, setFullName] = useState(user.full_name ?? '')
+  const [description, setDescription] = useState(user.description ?? '')
+  const [password, setPassword] = useState('')
+  const [mustChange, setMustChange] = useState(true)
   const [busy, setBusy] = useState(false)
   return (
     <div className="user-row">
       <div className="user-identity">
         <span className="avatar">{user.display_name.slice(0, 2).toUpperCase()}</span>
-        <div><strong>{user.display_name}</strong><small>{user.username} · {user.email ?? 'без email'}</small></div>
+        <details><summary><strong>{user.display_name}</strong><small>{user.username} · {user.email ?? 'без email'}</small></summary>
+          <label><span>Логин</span><input value={username} onChange={(e) => setUsername(e.target.value)} /></label>
+          <label><span>Имя</span><input value={fullName} onChange={(e) => setFullName(e.target.value)} /></label>
+          <label><span>Email</span><input value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+          <label><span>Описание</span><textarea value={description} onChange={(e) => setDescription(e.target.value)} /></label>
+        </details>
       </div>
       <span className="badge mono">{user.source}</span>
       <div className="role-checks">
-        {roles.map((role) => <label key={role} className="row">
+        {roles.filter((role) => role !== 'admin').map((role) => <label key={role} className="row">
           <input type="checkbox" checked={selected.includes(role)} onChange={(event) => {
             setSelected(event.target.checked ? [...selected, role] : selected.filter((item) => item !== role))
           }} /><span>{role}</span>
         </label>)}
       </div>
+      <label className="row active-toggle"><input type="checkbox" checked={superuser} onChange={(e) => setSuperuser(e.target.checked)} /><span>администратор</span></label>
       <label className="row active-toggle"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /><span>активен</span></label>
+      {user.source === 'local' ? <div>
+        <input className="small" type="password" autoComplete="new-password" placeholder="новый пароль" value={password} onChange={(e) => setPassword(e.target.value)} />
+        {password ? <label className="row small"><input type="checkbox" checked={mustChange} onChange={(e) => setMustChange(e.target.checked)} /><span>сменить при входе</span></label> : null}
+      </div> : null}
       <button className="small" disabled={busy} onClick={() => {
         setBusy(true); onError('')
-        api.updateAdminUser(user.id, { roles: selected, is_active: active })
+        api.updateAdminUser(user.id, {
+          username, email, full_name: fullName, description,
+          roles: selected, is_superuser: superuser, is_active: active,
+          ...(password ? { password, must_change_password: mustChange } : {}),
+        })
           .then(onSaved).catch((exc: Error) => onError(exc.message)).finally(() => setBusy(false))
       }}>{busy ? '…' : 'сохранить'}</button>
     </div>
   )
+}
+
+function OIDCPanel() {
+  const settings = useAsync(() => api.oidcSettings(), [])
+  const [draft, setDraft] = useState<OIDCSettings | null>(null)
+  const [secret, setSecret] = useState('')
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const value = draft ?? settings.data
+  if (settings.loading || !value) return <Loader />
+  const change = (patch: Partial<OIDCSettings>) => setDraft({ ...value, ...patch })
+  return <div className="card">
+    <h2>OIDC / Keycloak</h2>
+    <p className="page-hint">Настройка применяется сразу, без пересборки и перезапуска. Redirect URI добавьте в клиент Keycloak в точности как показано ниже.</p>
+    {message ? <Alert kind="ok">{message}</Alert> : null}
+    {error || settings.error ? <Alert kind="error">{error || settings.error}</Alert> : null}
+    <label className="row"><input type="checkbox" checked={value.enabled} onChange={(e) => change({ enabled: e.target.checked })} /><span>Включить вход через OIDC</span></label>
+    <div className="grid cols-2">
+      <label><span>Issuer</span><input className="wide mono" value={value.issuer} onChange={(e) => change({ issuer: e.target.value })} placeholder="https://keycloak.example/realms/company" /></label>
+      <label><span>Client ID</span><input className="wide mono" value={value.client_id} onChange={(e) => change({ client_id: e.target.value })} /></label>
+      <label><span>Client secret {value.secret_set ? '(уже задан; пусто — не менять)' : ''}</span><input className="wide" type="password" autoComplete="new-password" value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
+      <label><span>Публичный адрес сервиса</span><input className="wide mono" value={value.public_base_url} onChange={(e) => change({ public_base_url: e.target.value })} placeholder="https://moderation.example" /></label>
+      <label><span>Текст кнопки входа</span><input className="wide" value={value.button_label} onChange={(e) => change({ button_label: e.target.value })} /></label>
+      <label><span>Redirect URI</span><input className="wide mono" readOnly value={(value.public_base_url || window.location.origin).replace(/\/$/, '') + '/api/v1/auth/oidc/callback'} /></label>
+    </div>
+    <button className="primary" onClick={() => {
+      setError(null)
+      api.saveOidcSettings({ ...value, client_secret: secret }).then(() => {
+        setMessage('OIDC-настройки сохранены и уже используются сервисом'); setSecret(''); setDraft(null); settings.reload()
+      }).catch((exc: Error) => setError(exc.message))
+    }}>Сохранить OIDC</button>
+  </div>
 }
 
 function QueueCard({

@@ -12,14 +12,15 @@ import (
 	"moderation/internal/domain"
 )
 
-const userColumns = `id, subject, username, email, full_name, roles, is_service, is_active,
-	password_hash, last_login_at, created_at, updated_at`
+const userColumns = `id, subject, username, email, full_name, roles, source, is_service, is_active,
+	is_superuser, must_change_password, description, password_hash, last_login_at, created_at, updated_at`
 
 func scanUser(row scanner) (*domain.User, error) {
 	var u domain.User
 	var roles []byte
 	if err := row.Scan(&u.ID, &u.Subject, &u.Username, &u.Email, &u.FullName, &roles,
-		&u.IsService, &u.IsActive, &u.PasswordHash, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		&u.Source, &u.IsService, &u.IsActive, &u.IsSuperuser, &u.MustChangePassword,
+		&u.Description, &u.PasswordHash, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if err := unmarshalInto(roles, &u.Roles); err != nil {
@@ -44,10 +45,10 @@ func (r *Repo) GetUserByUsername(ctx context.Context, username string) (*domain.
 // SyncUser заводит или обновляет учётку по claims токена. Порт
 // security.sync_user.
 //
-// Ищем сначала по subject, потом по логину: subject неизменен, а логин в
-// каталоге могут переименовать. Найденной по логину учётке subject
-// проставляется — так учётка, заведённая локально (или прошлой версией без
-// OIDC), привязывается к каталогу без ручного вмешательства.
+// Как в Oakshield, OIDC-пользователь сопоставляется только по неизменяемому
+// subject. Локальная учётка с таким же username не связывается с SSO молча:
+// это два разных способа входа и автоматическое объединение было бы захватом
+// локальной учётки через внешний каталог.
 //
 // Логин у уже существующей учётки НЕ меняется, даже если в каталоге он стал
 // другим: на него ссылаются записи аудита и подписи решений, и переименование
@@ -136,23 +137,16 @@ func lockUserKey(ctx context.Context, tx pgx.Tx, claims UserClaims) error {
 }
 
 func findUser(ctx context.Context, tx pgx.Tx, claims UserClaims) (*domain.User, error) {
-	if claims.Subject != "" {
-		user, err := scanUser(tx.QueryRow(ctx,
-			`SELECT `+userColumns+` FROM "user" WHERE subject = $1 FOR UPDATE`, claims.Subject))
-		if err == nil {
-			return user, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("поиск учётки по subject: %w", err)
-		}
+	if claims.Subject == "" {
+		return nil, nil
 	}
 	user, err := scanUser(tx.QueryRow(ctx,
-		`SELECT `+userColumns+` FROM "user" WHERE username = $1 FOR UPDATE`, claims.Username))
+		`SELECT `+userColumns+` FROM "user" WHERE source = 'oidc' AND subject = $1 FOR UPDATE`, claims.Subject))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("поиск учётки по логину: %w", err)
+		return nil, fmt.Errorf("поиск OIDC-учётки по subject: %w", err)
 	}
 	return user, nil
 }
@@ -175,12 +169,14 @@ func insertUser(ctx context.Context, tx pgx.Tx, claims UserClaims, now time.Time
 	// маршрутов сразу). Без него один из них падал бы с нарушением
 	// уникальности, и вход выглядел бы как случайная ошибка.
 	user, err := scanUser(tx.QueryRow(ctx, `
-		INSERT INTO "user" (subject, username, email, full_name, roles, is_service, is_active, last_login_at)
-		VALUES ($1, $2, $3, $4, $5::jsonb, $6, TRUE, $7)
-		ON CONFLICT (username) DO UPDATE SET last_login_at = EXCLUDED.last_login_at
+		INSERT INTO "user" (subject, username, email, full_name, roles, source, is_service, is_active, last_login_at)
+		VALUES ($1, $2, $3, $4, $5::jsonb, 'oidc', FALSE, TRUE, $6)
+		ON CONFLICT (source, subject) WHERE subject IS NOT NULL
+		DO UPDATE SET email = EXCLUDED.email, updated_at = EXCLUDED.last_login_at,
+		              last_login_at = EXCLUDED.last_login_at
 		RETURNING `+userColumns,
 		nullable(claims.Subject), claims.Username, nullable(claims.Email), nullable(claims.FullName),
-		roles, claims.IsService, now))
+		roles, now))
 	if err != nil {
 		return nil, fmt.Errorf("создание учётки %q: %w", claims.Username, err)
 	}
@@ -191,17 +187,9 @@ func updateUser(ctx context.Context, tx pgx.Tx, existing *domain.User, claims Us
 	// Пустые claims не затирают то, что уже есть: токен сервисной учётки
 	// приходит без email и имени, и затирание превратило бы карточку
 	// пользователя в пустую строку после первого же захода по API.
-	subject := existing.Subject
-	if subject == nil || *subject == "" {
-		subject = nullablePtr(claims.Subject)
-	}
 	email := existing.Email
 	if claims.Email != "" {
 		email = &claims.Email
-	}
-	fullName := existing.FullName
-	if claims.FullName != "" {
-		fullName = &claims.FullName
 	}
 	// Роли OIDC-пользователей принадлежат сервису и меняются только через
 	// административный API. Keycloak здесь отвечает за аутентификацию, а не
@@ -218,11 +206,10 @@ func updateUser(ctx context.Context, tx pgx.Tx, existing *domain.User, claims Us
 
 	user, err := scanUser(tx.QueryRow(ctx, `
 		UPDATE "user"
-		SET subject = $2, email = $3, full_name = $4, roles = $5::jsonb,
-		    last_login_at = $6, updated_at = $6
+		SET email = $2, roles = $3::jsonb, last_login_at = $4, updated_at = $4
 		WHERE id = $1
 		RETURNING `+userColumns,
-		existing.ID, subject, email, fullName, roles, now))
+		existing.ID, email, roles, now))
 	if err != nil {
 		return nil, fmt.Errorf("обновление учётки %q: %w", existing.Username, err)
 	}
@@ -329,27 +316,6 @@ func (r *Repo) GetUserByID(ctx context.Context, id int64) (*domain.User, error) 
 	return u, nil
 }
 
-// CreateOIDCUser заранее создаёт учётку, к которой subject Keycloak
-// привяжется при первом входе по совпадающему username.
-func (r *Repo) CreateOIDCUser(
-	ctx context.Context, username, email, fullName string, roles []string, now time.Time,
-) (*domain.User, error) {
-	rawRoles, err := jsonOrEmptyList(roles)
-	if err != nil {
-		return nil, err
-	}
-	u, err := scanUser(r.pool.QueryRow(ctx, `
-		INSERT INTO "user" (subject, username, email, full_name, roles, is_service,
-		                    is_active, last_login_at, created_at, updated_at)
-		VALUES (NULL, $1, $2, $3, $4::jsonb, FALSE, TRUE, NULL, $5, $5)
-		RETURNING `+userColumns,
-		username, nullable(email), nullable(fullName), rawRoles, now))
-	if err != nil {
-		return nil, fmt.Errorf("создание OIDC-пользователя %q: %w", username, err)
-	}
-	return u, nil
-}
-
 // CreateLocalUser создаёт обычного пользователя приложения с локальным
 // паролем. Keycloak для такой учётки не требуется; роли всё равно хранятся
 // в той же таблице и управляются тем же административным экраном.
@@ -357,16 +323,29 @@ func (r *Repo) CreateLocalUser(
 	ctx context.Context, username, email, fullName, passwordHash string,
 	roles []string, now time.Time,
 ) (*domain.User, error) {
+	return r.CreateLocalUserWithProfile(ctx, username, email, fullName, passwordHash,
+		roles, false, "", now)
+}
+
+// CreateLocalUserWithProfile создаёт локальную учётку целиком одним INSERT.
+// Это важно для административного API: ответ об обязательной смене пароля не
+// должен расходиться с базой из-за сбоя второго UPDATE после создания строки.
+func (r *Repo) CreateLocalUserWithProfile(
+	ctx context.Context, username, email, fullName, passwordHash string,
+	roles []string, mustChange bool, description string, now time.Time,
+) (*domain.User, error) {
 	rawRoles, err := jsonOrEmptyList(roles)
 	if err != nil {
 		return nil, err
 	}
 	u, err := scanUser(r.pool.QueryRow(ctx, `
-		INSERT INTO "user" (subject, username, email, full_name, roles, is_service,
-		                    is_active, password_hash, last_login_at, created_at, updated_at)
-		VALUES (NULL, $1, $2, $3, $4::jsonb, FALSE, TRUE, $5, NULL, $6, $6)
+		INSERT INTO "user" (subject, username, email, full_name, roles, source, is_service,
+		                    is_active, is_superuser, must_change_password, description,
+		                    password_hash, last_login_at, created_at, updated_at)
+		VALUES (NULL, $1, $2, $3, $4::jsonb, 'local', FALSE, TRUE, $4::jsonb ? 'admin',
+		        $5, $6, $7, NULL, $8, $8)
 		RETURNING `+userColumns,
-		username, nullable(email), nullable(fullName), rawRoles, passwordHash, now))
+		username, nullable(email), nullable(fullName), rawRoles, mustChange, description, passwordHash, now))
 	if err != nil {
 		return nil, fmt.Errorf("создание локального пользователя %q: %w", username, err)
 	}
@@ -384,7 +363,8 @@ func (r *Repo) UpdateUserAccess(
 	}
 	u, err := scanUser(r.pool.QueryRow(ctx, `
 		UPDATE "user"
-		SET roles = $2::jsonb, is_active = $3, updated_at = $4
+		SET roles = $2::jsonb, is_superuser = $2::jsonb ? 'admin',
+		    is_active = $3, updated_at = $4
 		WHERE id = $1
 		RETURNING `+userColumns, id, rawRoles, active, now))
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -15,8 +15,14 @@ type User struct {
 	Email     *string
 	FullName  *string
 	Roles     []string
+	Source    string // local | oidc
 	IsService bool
 	IsActive  bool
+	// IsSuperuser соответствует Oakshield. В сервисе модерации это же право
+	// представлено ролью admin; оба поля синхронизируются репозиторием.
+	IsSuperuser        bool
+	MustChangePassword bool
+	Description        string
 
 	PasswordHash *string
 	LastLoginAt  *time.Time

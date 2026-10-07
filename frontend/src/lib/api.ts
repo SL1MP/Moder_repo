@@ -25,13 +25,29 @@ export class ApiError extends Error {
 
 let tokenGetter: () => string | null = () => null
 let onUnauthorized: () => void = () => {}
+let renewToken: () => Promise<string | null> = async () => null
+let refreshInFlight: Promise<string | null> | null = null
 
-export function configureApi(getToken: () => string | null, unauthorized: () => void) {
+export function configureApi(
+  getToken: () => string | null,
+  unauthorized: () => void,
+  refreshToken: () => Promise<string | null> = async () => null,
+) {
   tokenGetter = getToken
   onUnauthorized = unauthorized
+  renewToken = refreshToken
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+function refreshOnce(): Promise<string | null> {
+  if (!refreshInFlight) {
+    refreshInFlight = renewToken().finally(() => {
+      refreshInFlight = null
+    })
+  }
+  return refreshInFlight
+}
+
+async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('X-Client', 'web')
   if (!(init.body instanceof FormData) && init.body) headers.set('Content-Type', 'application/json')
@@ -71,9 +87,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const retryAfter = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : Number.NaN
     const retryAfterSeconds = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null
     if (resp.status === 401) {
-      // Провал входа на самой форме не должен сбрасывать сессию: сессии ещё нет,
-      // а onUnauthorized() увёл бы пользователя с формы, не показав причину.
-      if (!path.startsWith('/auth/token')) onUnauthorized()
+      const isLogin = path.startsWith('/auth/token')
+      const isRefresh = path.startsWith('/auth/refresh')
+      if (retry && !isLogin && !isRefresh) {
+        // Несколько панелей могут одновременно получить 401. Если одна уже
+        // обновила пару токенов, остальные просто повторяют запрос; иначе все
+        // ждут один общий refresh, потому что refresh-токен одноразовый.
+        const currentToken = tokenGetter()
+        if (currentToken && currentToken !== token) return request<T>(path, init, false)
+        if (await refreshOnce()) return request<T>(path, init, false)
+      }
+      // Провал входа на самой форме не должен сбрасывать сессию: сессии ещё нет.
+      if (!isLogin && !isRefresh) onUnauthorized()
       throw new ApiError(401, err?.code ?? 'unauthorized', message, err?.details)
     }
     throw new ApiError(
@@ -93,7 +118,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 // его не открыть. Браузер по обычному <a href> заголовок Authorization НЕ
 // отправляет, поэтому ссылка на защищённый маршрут отвечала 401 — ровно это и
 // происходило с кнопками «смотреть» и «JSON» у отчётов сканирования.
-export async function fetchFile(url: string): Promise<{ body: string; contentType: string }> {
+export async function fetchFile(url: string, retry = true): Promise<{ body: string; contentType: string }> {
   const headers = new Headers({ 'X-Client': 'web' })
   const token = tokenGetter()
   if (token) headers.set('Authorization', `Bearer ${token}`)
@@ -111,7 +136,15 @@ export async function fetchFile(url: string): Promise<{ body: string; contentTyp
           ? `${payload.error.message} (request_id: ${payload.error.request_id})`
           : payload.error.message
       }
-      if (resp.status === 401) onUnauthorized()
+      if (resp.status === 401) {
+        if (retry) {
+          const currentToken = tokenGetter()
+          if ((currentToken && currentToken !== token) || await refreshOnce()) {
+            return fetchFile(url, false)
+          }
+        }
+        onUnauthorized()
+      }
       throw new ApiError(resp.status, payload.error?.code ?? 'http_error', message)
     } catch (e) {
       if (e instanceof ApiError) throw e
@@ -155,6 +188,9 @@ export interface Me {
   email: string | null
   roles: string[]
   is_service: boolean
+  source: 'oidc' | 'local' | 'service'
+  is_superuser: boolean
+  must_change_password: boolean
   gitlab_connected: boolean
 }
 
@@ -164,6 +200,9 @@ export interface AuthConfig {
   scopes: string[]
   flow: string
   local_auth_enabled: boolean
+  oidc_enabled: boolean
+  oidc_button_label: string
+  oidc_login_url: string
   app_name: string
   app_env: string
   gitlab_enabled: boolean
@@ -502,8 +541,31 @@ export interface AdminUser {
   roles: string[]
   source: 'oidc' | 'local' | 'service'
   is_active: boolean
+  is_superuser: boolean
+  must_change_password: boolean
+  description: string
   last_login_at: string | null
   created_at: string
+}
+
+export interface ApiToken {
+  id: number
+  name: string
+  expires_at: string | null
+  created_at: string
+  last_used_at: string | null
+}
+
+export interface OIDCSettings {
+  enabled: boolean
+  issuer: string
+  client_id: string
+  client_secret?: string
+  secret_set: boolean
+  public_base_url: string
+  button_label: string
+  redirect_uri: string
+  updated_at: string
 }
 
 export interface AuditRow {
@@ -527,10 +589,25 @@ export const api = {
   authConfig: () => request<AuthConfig>('/auth/config'),
   me: () => request<Me>('/auth/me'),
   localLogin: (username: string, password: string) =>
-    request<{ access_token: string; expires_in: number; roles: string[] }>('/auth/token', {
+    request<{ access_token: string; refresh_token: string; expires_in: number; roles: string[] }>('/auth/token', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
+  refreshSession: (refreshToken: string) =>
+    request<{ access_token: string; refresh_token: string; expires_in: number }>('/auth/refresh', {
+      method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }),
+    }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ status: string }>('/auth/me/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
+  apiTokens: () => request<{ items: ApiToken[] }>('/auth/me/tokens'),
+  createApiToken: (name: string, expiresInDays: number) =>
+    request<ApiToken & { token: string }>('/auth/me/tokens', {
+      method: 'POST', body: JSON.stringify({ name, expires_in_days: expiresInDays }),
+    }),
+  revokeApiToken: (id: number) => request<void>(`/auth/me/tokens/${id}`, { method: 'DELETE' }),
 
   managers: () => request<ManagerInfo[]>('/managers'),
   detectManager: (filename: string) =>
@@ -677,10 +754,15 @@ export const api = {
       method: 'PUT', body: JSON.stringify({ values }),
     }),
   adminUsers: () => request<{ items: AdminUser[]; roles: string[] }>('/admin/users'),
-  createAdminUser: (body: { username: string; email?: string; full_name?: string; roles: string[]; source: 'local' | 'oidc'; password?: string }) =>
+  createAdminUser: (body: { username: string; email?: string; full_name?: string; description?: string; roles: string[]; password: string; is_superuser: boolean; must_change_password: boolean }) =>
     request<AdminUser>('/admin/users', { method: 'POST', body: JSON.stringify(body) }),
-  updateAdminUser: (id: number, body: { roles: string[]; is_active: boolean }) =>
+  updateAdminUser: (id: number, body: { username?: string; email?: string; full_name?: string; description?: string; roles: string[]; is_superuser: boolean; is_active: boolean; password?: string; must_change_password?: boolean }) =>
     request<AdminUser>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  oidcSettings: () => request<OIDCSettings>('/admin/integrations/oidc'),
+  saveOidcSettings: (body: Partial<OIDCSettings>) =>
+    request<{ status: string }>('/admin/integrations/oidc', {
+      method: 'PUT', body: JSON.stringify(body),
+    }),
   policies: () => request<Record<string, any>>('/settings/policies'),
   reloadConfig: () => request<Record<string, any>>('/admin/reload', { method: 'POST' }),
   systemStatus: () => request<Record<string, any>>('/system/status'),

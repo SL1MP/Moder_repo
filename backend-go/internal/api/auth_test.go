@@ -62,6 +62,9 @@ func (s *memStore) SyncUser(_ context.Context, claims repo.UserClaims, now time.
 func (s *memStore) GetUserByUsername(_ context.Context, username string) (*domain.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failSync != nil {
+		return nil, s.failSync
+	}
 	return s.byName[username], nil
 }
 
@@ -189,6 +192,7 @@ func TestAuthConfigShape(t *testing.T) {
 
 	for _, field := range []string{
 		"issuer", "client_id", "scopes", "flow", "local_auth_enabled",
+		"oidc_enabled", "oidc_button_label", "oidc_login_url",
 		"app_name", "app_env", "gitlab_enabled", "role_mapping",
 	} {
 		if _, ok := payload[field]; !ok {
@@ -353,7 +357,7 @@ func TestLocalLogin(t *testing.T) {
 	if payload["token_type"] != "bearer" {
 		t.Fatalf("token_type: %v", payload["token_type"])
 	}
-	if payload["expires_in"] != float64(480*60) {
+	if payload["expires_in"] != float64(15*60) {
 		t.Fatalf("expires_in должен быть в секундах: %v", payload["expires_in"])
 	}
 	token, _ := payload["access_token"].(string)
@@ -502,10 +506,10 @@ func TestRequireAnyRole(t *testing.T) {
 	if rec2.Code != http.StatusForbidden {
 		t.Fatalf("ожидался 403, получено %d", rec2.Code)
 	}
-	// Учётка без единой роли — почти всегда незаданный маппинг групп, а не
-	// «нет прав»; сообщение обязано вести к причине.
-	if !strings.Contains(rec2.Body.String(), "ROLE_MAPPING_") {
-		t.Fatalf("сообщение должно указывать на маппинг групп: %s", rec2.Body.String())
+	// В модели Oakshield внешние группы больше не назначают роли автоматически:
+	// сообщение должно вести администратора к локальному экрану ролей.
+	if !strings.Contains(rec2.Body.String(), "Пользователи и роли") {
+		t.Fatalf("сообщение должно указывать на экран назначения ролей: %s", rec2.Body.String())
 	}
 }
 

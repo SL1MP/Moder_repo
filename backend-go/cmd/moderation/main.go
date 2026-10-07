@@ -90,6 +90,9 @@ func main() {
 
 	options, blacklist, _ := buildOptions(cfg, pool, logger)
 	_ = blacklist // политики попадают в конвейер вместе с переносом шагов 0-3
+	if options.Auth != nil && options.Auth.Auth != nil && options.Auth.Auth.SessionRepo != nil {
+		startLoginThrottleCleanup(ctx, options.Auth.Auth.SessionRepo, logger)
+	}
 
 	// Сверка схемы с тем, что пишет код. Не фатально — сервис обязан отвечать
 	// health и отдавать чтение даже на неполной схеме, — но громко: иначе
@@ -153,6 +156,29 @@ func main() {
 	}
 }
 
+// startLoginThrottleCleanup повторяет эксплуатационное поведение Oakshield:
+// счётчики подбора пароля общие для всех реплик, но отработавшие строки не
+// накапливаются в Postgres бесконечно.
+func startLoginThrottleCleanup(ctx context.Context, store *repo.Repo, logger *slog.Logger) {
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				removed, err := store.PruneLoginThrottle(ctx)
+				if err != nil {
+					logger.Warn("не удалось очистить ограничения входа", "error", err)
+				} else if removed > 0 {
+					logger.Debug("старые ограничения входа удалены", "rows", removed)
+				}
+			}
+		}
+	}()
+}
+
 func usage() {
 	fmt.Fprint(os.Stderr, `Сервис модерации пакетов (Go-версия).
 
@@ -205,6 +231,34 @@ ARTIFACT_BASE_URL и ARTIFACT_REPO_*.
 func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (api.Options, *policy.Blacklist, *stores) {
 	var options api.Options
 	r := repo.New(pool)
+	var sessionRepo *repo.Repo
+	if pool != nil {
+		sessionRepo = r
+		// Как в Oakshield: env только впервые заполняет OIDC singleton, после чего
+		// настройки меняются через web и хранятся в Postgres.
+		seedIssuer := cfg.BrowserIssuer()
+		if err := r.SeedOIDCSettings(context.Background(), repo.OIDCSettings{
+			Enabled: cfg.OIDCEnabled, Issuer: seedIssuer, ClientID: cfg.OIDCClientID,
+			ClientSecret: cfg.OIDCClientSecret, PublicBaseURL: cfg.OIDCPublicBaseURL,
+			ButtonLabel: cfg.OIDCButtonLabel,
+		}); err != nil {
+			logger.Warn("OIDC-настройки из env не перенесены", "error", err)
+		}
+		if cfg.BootstrapAdminPassword != "" {
+			if count, err := r.CountUsers(context.Background()); err != nil {
+				logger.Warn("первый администратор не проверен", "error", err)
+			} else if count == 0 {
+				hash, hashErr := auth.HashPassword(cfg.BootstrapAdminPassword)
+				if hashErr == nil {
+					_, hashErr = r.CreateLocalUser(context.Background(), cfg.BootstrapAdminUsername,
+						"", "", hash, []string{"admin"}, time.Now().UTC())
+				}
+				if hashErr != nil {
+					logger.Error("первый администратор не создан", "error", hashErr)
+				}
+			}
+		}
+	}
 	// Клиент тот же, что у хранилищ: реестры, артефактори и песочница ходят
 	// через один корпоративный прокси, и разные таймауты у них означали бы
 	// разное поведение при одной и той же недоступности сети.
@@ -218,9 +272,12 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 		Auth: &api.Auth{
 			// Ограничение частоты — после опознания пользователя: считаем по
 			// нему, а не по адресу, за которым сидит весь офис.
-			RateLimit: api.NewRateLimit(cfg.RateLimitPerMinute),
-			Verifier:  auth.NewVerifier(auth.SettingsFromConfig(cfg), nil, nil),
-			Repo:      repo.New(pool),
+			RateLimit:   api.NewRateLimit(cfg.RateLimitPerMinute),
+			Verifier:    auth.NewVerifier(auth.SettingsFromConfig(cfg), nil, nil),
+			Repo:        r,
+			SessionRepo: sessionRepo,
+			RefreshTTL:  cfg.LocalRefreshTokenTTL,
+			RuntimeOIDC: api.NewRuntimeOIDCVerifier(sessionRepo, cfg),
 		},
 		Cfg: cfg,
 	}
