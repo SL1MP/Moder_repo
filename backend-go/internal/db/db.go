@@ -1,6 +1,4 @@
-// Package db открывает пул подключений к Postgres через pgx — без ORM, как в
-// sentrix/oakshield (см. docs/migration-to-go.md: "GORM у vumana — единственное
-// расхождение референсов, не повторять").
+// Package db открывает пул подключений к Postgres через pgx без ORM.
 package db
 
 import (

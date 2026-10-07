@@ -1,4 +1,4 @@
--- Oakshield-compatible authentication and user lifecycle.
+-- Authentication sessions and application-managed user lifecycle.
 
 ALTER TABLE "user"
     ADD COLUMN source VARCHAR(16) NOT NULL DEFAULT 'local'

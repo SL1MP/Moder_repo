@@ -408,7 +408,7 @@ make import-list FILE=./package_list.txt MANAGER=pypi   # одноразовый
 - [`docs/architecture.md`](docs/architecture.md) — схема конвейера, состояния, схема БД, интерфейсы адаптеров
 - [`docs/stakeholders.md`](docs/stakeholders.md) — роли, их цели и зоны ответственности за конфигурацию/интеграции
 - [`docs/user-stories.md`](docs/user-stories.md) — что закрыто для каждой роли и чем именно, статус по сверке с кодом
-- [`docs/auth.md`](docs/auth.md) — целевая модель аутентификации (единая с sentrix/oakshield/vm.service)
+- [`docs/auth.md`](docs/auth.md) — модель аутентификации, сессий и управления пользователями
 - [`docs/design-system.md`](docs/design-system.md) — единая визуальная палитра с sentrix, что перекрашено и что осталось
 - [`docs/development-standards.md`](docs/development-standards.md) — обязательные конвенции, текущие и целевые (Go)
 - [`docs/testing.md`](docs/testing.md) — принципы тестирования из sentrix и разбор, чем текущие тесты от них отличаются

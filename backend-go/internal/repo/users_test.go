@@ -139,7 +139,7 @@ func TestSyncUserKeepsProfileWhenClaimsEmpty(t *testing.T) {
 	}
 }
 
-// Как в OakShield, совпадение логина не связывает локальную учётку с OIDC:
+// Совпадение логина не связывает локальную учётку с OIDC:
 // такая привязка позволила бы внешнему каталогу захватить локальную запись.
 // Конфликт должен быть разобран администратором явно.
 func TestSyncUserDoesNotAttachOIDCToLocalAccount(t *testing.T) {

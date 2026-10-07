@@ -156,7 +156,7 @@ func main() {
 	}
 }
 
-// startLoginThrottleCleanup повторяет эксплуатационное поведение Oakshield:
+// startLoginThrottleCleanup обслуживает таблицу защиты входа от перебора:
 // счётчики подбора пароля общие для всех реплик, но отработавшие строки не
 // накапливаются в Postgres бесконечно.
 func startLoginThrottleCleanup(ctx context.Context, store *repo.Repo, logger *slog.Logger) {
@@ -234,7 +234,7 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	var sessionRepo *repo.Repo
 	if pool != nil {
 		sessionRepo = r
-		// Как в Oakshield: env только впервые заполняет OIDC singleton, после чего
+		// Env только впервые заполняет OIDC singleton, после чего
 		// настройки меняются через web и хранятся в Postgres.
 		seedIssuer := cfg.BrowserIssuer()
 		if err := r.SeedOIDCSettings(context.Background(), repo.OIDCSettings{

@@ -132,7 +132,7 @@ Nexus. Подробный разбор — `docs/ci-parity-gaps.md`, новый 
 
 ### Решено
 
-- Целевой стек — Go (единство с `sentrix`, `oakshield`/DSO-track, `vm.service`): chi + pgx +
+- Целевой стек — Go для унификации DevSecOps-сервисов: chi + pgx +
   golang-migrate, NATS JetStream + Valkey вместо Celery/Redis, SeaweedFS вместо MinIO. План —
   [`docs/migration-to-go.md`](docs/migration-to-go.md), сравнение — `docs/architecture.md`,
   раздел "Целевой стек".
@@ -144,8 +144,7 @@ Nexus. Подробный разбор — `docs/ci-parity-gaps.md`, новый 
 - `docs/user-stories.md` — user stories по каждому стейкхолдеру, статус ✅/📋 по сверке с кодом.
 - `docs/migration-to-go.md` — план переноса backend на Go.
 - `docs/auth.md` — целевая модель аутентификации (PAT для CI, устранение статического
-  `LOCAL_AUTH_SECRET`, DB-throttle против перебора, роль `auditor`) — сведена из sentrix/
-  oakshield/vm.service.
+  `LOCAL_AUTH_SECRET`, DB-throttle против перебора, роль `auditor`).
 - `docs/design-system.md`, перекраска `frontend/src/styles.css` под палитру sentrix (PT brand,
   тёмная тема): токены `--bg`/`--accent`/`--pass`/`--warn`/`--fail`/`--radius`. Компонентные
   паттерны (mono-uppercase бейджи) не перенесены — см. документ.

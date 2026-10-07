@@ -234,8 +234,8 @@ func discoverOIDC(ctx context.Context, issuer string) (oidcDiscovery, error) {
 }
 
 // discoverOIDC сохраняет совместимость старой compose-конфигурации, в которой
-// OIDC_ISSUER доступен контейнеру, а OIDC_PUBLIC_ISSUER — браузеру. OakShield-
-// настройка из web обычно содержит один canonical issuer; внутренний адрес
+// OIDC_ISSUER доступен контейнеру, а OIDC_PUBLIC_ISSUER — браузеру. Настройка
+// из web обычно содержит один canonical issuer; внутренний адрес
 // применяется только когда runtime issuer в точности совпал с унаследованным
 // BrowserIssuer из env. Так смена issuer в UI не продолжает ходить в старый
 // realm незаметно.

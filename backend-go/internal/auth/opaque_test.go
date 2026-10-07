@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestNewAPITokenUsesOakshieldPrefixAndHash(t *testing.T) {
+func TestNewAPITokenUsesApplicationPrefixAndHash(t *testing.T) {
 	plain, hash, err := NewOpaqueToken(APITokenPrefix)
 	if err != nil {
 		t.Fatal(err)

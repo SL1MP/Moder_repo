@@ -1,4 +1,4 @@
-# Дизайн — единый с sentrix/oakshield
+# Дизайн сервиса
 
 Источник — `sentrix`'s `.claude/Design_patterns.md` (сам он ссылается на официальный
 `PT_Brand_Guidlines_v.02.pdf`, "Цветовая палитра", стр. 17 — только пять цветов бренда:

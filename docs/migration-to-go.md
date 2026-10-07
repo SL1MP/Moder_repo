@@ -28,8 +28,7 @@ testing.md` и `docs/python-behavior-reference.md` в `sentrix` (тот серв
   UI; аудит-лог на каждое действие с указанием источника (UI/API/фон/CLI).
 - **Auth** — OIDC/Keycloak (маппинг групп на роли через `ROLE_MAPPING_*`) + fallback
   логин/пароль для сервисных учёток. Протокол не меняется, меняется только реализация клиента
-  (Go: `coreos/go-oidc` + `golang-jwt/jwt` — уже используются в oakshield и vm.service, готовый
-  референс).
+  на Go с `coreos/go-oidc` и `golang-jwt/jwt`.
 - **REST API контракт** — пути и формы ответов `/api/v1/*` (см. `docs/api.md`) должны остаться
   совместимы с уже существующим React/TS/Vite фронтендом: он не переписывается, значит его
   ожидания от API — это часть контракта, а не деталь реализации, которую можно менять по пути.
@@ -44,9 +43,9 @@ testing.md` и `docs/python-behavior-reference.md` в `sentrix` (тот серв
 
 | Было (Python) | Станет (Go) | Комментарий |
 | --- | --- | --- |
-| FastAPI, SQLAlchemy | chi + pgx, без ORM | как в sentrix/oakshield; vumana использует GORM поверх pgx — не повторять, это единственное расхождение между референсами и явно более тяжёлый выбор без видимого выигрыша |
+| FastAPI, SQLAlchemy | chi + pgx, без ORM | явный SQL упрощает контроль запросов и не добавляет тяжёлый ORM без необходимости |
 | Alembic | golang-migrate, `NNNN_name.up/down.sql` | формат sentrix |
-| Celery + Redis (worker/beat) | воркер на Go + NATS JetStream (очередь) + Valkey (KV/rate-limit) | Redis ≥7.4 — SSPL, не наш список permissive-OSS; NATS/Valkey — прямой референс из oakshield |
+| Celery + Redis (worker/beat) | воркер на Go + NATS JetStream (очередь) + Valkey (KV/rate-limit) | Redis ≥7.4 — SSPL, не входит в список permissive-OSS; NATS и Valkey подходят по лицензии и назначению |
 | MinIO (карантинная зона) | SeaweedFS, S3-совместимое API | MinIO — AGPL; интерфейс `ArtifactStore`-подобного адаптера не меняется, меняется только реализация под капотом (аналог замены в `docs/integrations.md`, "Добавление третьей реализации") |
 | Watchdog на Python-потоке внутри API-процесса (`app/services/watchdog.py`) | тот же механизм на Go: heartbeat воркера в Valkey, сторож — горутина в API-процессе, атомарный захват `UPDATE ... WHERE status='queued'` | логика не меняется, меняется язык; см. `architecture.md`, "Пакет не должен зависать в очереди" — сохранить все три уровня защиты как есть |
 | `config.py` (pydantic Settings) | `config.Load(getenv func(string) string) (*Config, error)` — все ошибки валидации разом, не fail-fast на первой | паттерн sentrix, уже сформулирован как обязательное правило в `docs/development-standards.md` этого прототипа ("возвращать все найденные ошибки разом") — Go-реализация должна следовать тому же |

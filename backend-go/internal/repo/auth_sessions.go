@@ -33,7 +33,7 @@ func (r *Repo) OIDCSettings(ctx context.Context) (OIDCSettings, error) {
 }
 
 // SeedOIDCSettings переносит env-настройки только в пустую singleton-строку.
-// После первого запуска источником истины становится web-настройка, как в Oakshield.
+// После первого запуска источником истины становится web-настройка.
 func (r *Repo) SeedOIDCSettings(ctx context.Context, value OIDCSettings) error {
 	if value.Issuer == "" {
 		return nil

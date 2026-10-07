@@ -18,7 +18,7 @@ type User struct {
 	Source    string // local | oidc
 	IsService bool
 	IsActive  bool
-	// IsSuperuser соответствует Oakshield. В сервисе модерации это же право
+	// IsSuperuser соответствует административному доступу. В сервисе это же право
 	// представлено ролью admin; оба поля синхронизируются репозиторием.
 	IsSuperuser        bool
 	MustChangePassword bool

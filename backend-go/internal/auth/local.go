@@ -78,13 +78,13 @@ func VerifyPassword(password string, hash *string) bool {
 	if strings.HasPrefix(*hash, "$argon2id$") {
 		return verifyArgon2id(password, *hash)
 	}
-	// Совместимость с пользователями, созданными до перехода на Oakshield.
+	// Совместимость с пользователями, созданными до перехода на Argon2id.
 	// Новый пароль всегда записывается Argon2id; после следующей смены bcrypt
 	// исчезнет естественным образом.
 	return bcrypt.CompareHashAndPassword([]byte(*hash), passwordBytes(password)) == nil
 }
 
-// Параметры идентичны Oakshield (OWASP baseline).
+// Параметры соответствуют базовым рекомендациям OWASP.
 const (
 	argonTime    = 1
 	argonMemory  = 64 * 1024
@@ -93,7 +93,7 @@ const (
 	argonSaltLen = 16
 )
 
-// HashPassword записывает PHC-строку Argon2id, как Oakshield.
+// HashPassword записывает PHC-строку Argon2id.
 func HashPassword(password string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {

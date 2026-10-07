@@ -33,7 +33,7 @@ type UserStore interface {
 type Auth struct {
 	Verifier *auth.Verifier
 	Repo     UserStore
-	// SessionRepo хранит refresh/PAT/OIDC-состояние Oakshield. Отдельное поле
+	// SessionRepo хранит refresh/PAT/OIDC-состояние приложения. Отдельное поле
 	// сохраняет лёгкие UserStore-моки старых unit-тестов.
 	SessionRepo *repo.Repo
 	RefreshTTL  time.Duration
@@ -114,7 +114,7 @@ func (a *Auth) Authenticate(next http.Handler) http.Handler {
 		}
 		var user *domain.User
 		if claims.Raw["iss"] != auth.LocalIssuer {
-			// OakShield разрешает bearer-токен доверенного OIDC-провайдера и
+			// Сервис разрешает bearer-токен доверенного OIDC-провайдера и
 			// при первом обращении создаёт пользователя по неизменяемому sub.
 			// Роли из claims намеренно не передаются: права принадлежат сервису.
 			user, err = a.Repo.SyncUser(r.Context(), repo.UserClaims{

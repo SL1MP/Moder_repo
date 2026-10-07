@@ -158,10 +158,10 @@ var requiredColumns = []struct {
 	{"artifact", "staging_cleared_at", "backend-go/migrations/0015_staging_columns"},
 	{"scan_report", "repo", "backend-go/migrations/0015_staging_columns"},
 	{"scan_report", "verdict", "backend-go/migrations/0021_scan_report_verdict"},
-	{"user", "source", "backend-go/migrations/0023_oakshield_auth"},
-	{"user", "is_superuser", "backend-go/migrations/0023_oakshield_auth"},
-	{"user", "must_change_password", "backend-go/migrations/0023_oakshield_auth"},
-	{"user", "description", "backend-go/migrations/0023_oakshield_auth"},
+	{"user", "source", "backend-go/migrations/0023_auth_sessions"},
+	{"user", "is_superuser", "backend-go/migrations/0023_auth_sessions"},
+	{"user", "must_change_password", "backend-go/migrations/0023_auth_sessions"},
+	{"user", "description", "backend-go/migrations/0023_auth_sessions"},
 }
 
 // requiredTables — таблицы поздних миграций.
@@ -170,10 +170,10 @@ var requiredTables = []struct{ table, migration string }{
 	{"scan_report", "backend-go/migrations/0005_scan_reports"},
 	{"sbom_document", "backend-go/migrations/0020_sbom_documents"},
 	{"app_setting", "backend-go/migrations/0022_app_settings"},
-	{"refresh_token", "backend-go/migrations/0023_oakshield_auth"},
-	{"api_token", "backend-go/migrations/0023_oakshield_auth"},
-	{"oidc_integration", "backend-go/migrations/0023_oakshield_auth"},
-	{"login_throttle", "backend-go/migrations/0023_oakshield_auth"},
+	{"refresh_token", "backend-go/migrations/0023_auth_sessions"},
+	{"api_token", "backend-go/migrations/0023_auth_sessions"},
+	{"oidc_integration", "backend-go/migrations/0023_auth_sessions"},
+	{"login_throttle", "backend-go/migrations/0023_auth_sessions"},
 }
 
 // MissingSchemaObjects возвращает всё, чего код ждёт от базы, а в базе нет.

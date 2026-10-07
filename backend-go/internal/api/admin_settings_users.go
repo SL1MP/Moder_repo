@@ -92,7 +92,7 @@ func (h *AdminHandler) Users(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": out, "roles": domain.Roles})
 }
 
-// CreateUser создаёт только локального пользователя, как Oakshield. OIDC-
+// CreateUser создаёт только локального пользователя. OIDC-
 // пользователь автоматически появляется после первого подтверждённого входа.
 func (h *AdminHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var payload struct {

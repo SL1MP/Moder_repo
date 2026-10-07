@@ -136,7 +136,7 @@ Sandbox, upstream-реестры пакетных менеджеров, поро
 
 📋 Как аудитор, я хочу читать журнал аудита без роли `admin` целиком — сейчас
 `GET /api/v1/admin/audit` требует полных прав администратора; нужна отдельная read-only
-проверка (по аналогии с `access_audit` у DSO-track/oakshield), см. `docs/auth.md`.
+проверка через отдельный read-only `access_audit`, см. `docs/auth.md`.
 
 ## Команда разработки сервиса
 
