@@ -31,9 +31,9 @@ type Requirement struct {
 
 // DependencyResolver — плагин умеет рассказать о зависимостях версии.
 // Отдельный интерфейс, а не часть Plugin: не у всех менеджеров есть единый
-// переносимый граф (например, Docker и general), а для Maven, PHP, Terraform
-// и LuaRocks разрешение ещё не реализовано. Заглушка, молча возвращающая
-// пустой список, была бы хуже честного «этот менеджер так не умеет».
+// переносимый граф. Исключения намеренные: Docker раскрывается через OCI
+// index/manifest, а Git и произвольные файлы не являются пакетными
+// менеджерами и не имеют реестрового графа зависимостей.
 type DependencyResolver interface {
 	// Requirements — прямые зависимости версии, как их объявил сам пакет.
 	Requirements(ctx context.Context, ref Ref) ([]Requirement, error)
@@ -316,6 +316,10 @@ var (
 	_ DependencyResolver = (*Go)(nil)
 	_ DependencyResolver = (*NuGet)(nil)
 	_ DependencyResolver = (*Conan)(nil)
+	_ DependencyResolver = (*Maven)(nil)
+	_ DependencyResolver = (*LuaRocks)(nil)
+	_ DependencyResolver = (*Terraform)(nil)
+	_ DependencyResolver = (*PHP)(nil)
 )
 
 // nugetLowerBoundHigher — у требования a нижний порог выше, чем у b.

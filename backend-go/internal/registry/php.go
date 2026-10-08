@@ -92,6 +92,11 @@ type composerPackage struct {
 		Version           string   `json:"version"`
 		VersionNormalized string   `json:"version_normalized"`
 		Time              string   `json:"time"`
+		// Require содержит только runtime-зависимости. require-dev и suggest
+		// намеренно не раскрываются: при обычном composer install пакета они
+		// не устанавливаются. Указатель нужен из-за minified metadata так же,
+		// как у License ниже.
+		Require           *map[string]string `json:"require"`
 		// Packagist p2 применяет composer/2.0 metadata minification: если
 		// лицензия совпадает с предыдущей (более новой) версией, поле вообще
 		// отсутствует. Указатель отличает отсутствие от явного пустого массива.

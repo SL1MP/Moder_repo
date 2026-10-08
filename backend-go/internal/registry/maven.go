@@ -120,13 +120,59 @@ func splitMavenName(name string) (group, artifact string, ok bool) {
 // groupPath — groupId в виде пути: com.google.guava → com/google/guava.
 func groupPath(group string) string { return strings.ReplaceAll(group, ".", "/") }
 
-// mavenPOM — то, что нам нужно из pom.xml: лицензии.
+type mavenDependency struct {
+	GroupID    string `xml:"groupId"`
+	ArtifactID string `xml:"artifactId"`
+	Version    string `xml:"version"`
+	Scope      string `xml:"scope"`
+	Type       string `xml:"type"`
+	Optional   string `xml:"optional"`
+}
+
+// mavenProperties сохраняет произвольные имена из <properties>. У Maven
+// имя свойства одновременно является XML-тегом, поэтому обычной struct для
+// этого блока недостаточно.
+type mavenProperties map[string]string
+
+func (p *mavenProperties) UnmarshalXML(decoder *xml.Decoder, start xml.StartElement) error {
+	if *p == nil {
+		*p = make(map[string]string)
+	}
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		switch value := token.(type) {
+		case xml.StartElement:
+			var text string
+			if err := decoder.DecodeElement(&text, &value); err != nil {
+				return err
+			}
+			(*p)[value.Name.Local] = strings.TrimSpace(text)
+		case xml.EndElement:
+			if value.Name == start.Name {
+				return nil
+			}
+		}
+	}
+}
+
+// mavenPOM — поля pom.xml для лицензий и графа зависимостей.
 type mavenPOM struct {
+	GroupID    string `xml:"groupId"`
+	ArtifactID string `xml:"artifactId"`
+	Version    string `xml:"version"`
 	Parent struct {
 		GroupID    string `xml:"groupId"`
 		ArtifactID string `xml:"artifactId"`
 		Version    string `xml:"version"`
 	} `xml:"parent"`
+	Properties mavenProperties `xml:"properties"`
+	DependencyManagement struct {
+		Dependencies []mavenDependency `xml:"dependencies>dependency"`
+	} `xml:"dependencyManagement"`
+	Dependencies []mavenDependency `xml:"dependencies>dependency"`
 	Licenses struct {
 		License []struct {
 			Name string `xml:"name"`

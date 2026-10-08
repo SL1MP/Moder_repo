@@ -258,6 +258,32 @@ func TestGoModExactOnly(t *testing.T) {
 	}
 }
 
+func TestAdditionalManagerSchemes(t *testing.T) {
+	cases := []struct {
+		manager    string
+		constraint string
+		versions   []string
+		want       string
+	}{
+		{"maven", "[1.0,2.0)", []string{"0.9", "1.0", "1.8", "2.0"}, "1.8"},
+		{"maven", "1.2.3", []string{"1.2.2", "1.2.3", "1.2.4"}, "1.2.3"},
+		{"luarocks", ">= 3.0, < 4.0", []string{"2.0.0-1", "3.0.0-1", "3.1.0-2", "4.0.0-1"}, "3.1.0-2"},
+		{"php", "^6.4 || ^7.0", []string{"6.3.0", "6.4.2", "7.1.0", "8.0.0"}, "7.1.0"},
+		{"terraform", "^5.0.0", []string{"4.9.0", "5.1.0", "6.0.0"}, "5.1.0"},
+	}
+	for _, test := range cases {
+		scheme, err := For(test.manager)
+		if err != nil {
+			t.Fatalf("For(%s): %v", test.manager, err)
+		}
+		got, err := scheme.Select(test.constraint, test.versions)
+		if err != nil || got != test.want {
+			t.Errorf("%s Select(%q) = %q, %v; ожидалось %q",
+				test.manager, test.constraint, got, err, test.want)
+		}
+	}
+}
+
 func TestBadConstraintIsNamed(t *testing.T) {
 	if _, err := (PEP440{}).Satisfies("примерно 1.0", "1.0"); !errors.Is(err, ErrBadConstraint) {
 		t.Fatalf("ожидался ErrBadConstraint, получено %v", err)

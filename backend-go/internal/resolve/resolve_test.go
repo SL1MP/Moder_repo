@@ -302,7 +302,7 @@ func TestVersionsAreCached(t *testing.T) {
 	}
 }
 
-func TestUnsupportedManagerIsNamed(t *testing.T) {
+func TestDependencySupportMatrix(t *testing.T) {
 	fake := &fakePyPI{packages: map[string]map[string][]string{}}
 	reg := registry.New(registry.Config{HTTP: fake})
 	r := resolve.New(reg, resolve.DefaultOptions(), nil)
@@ -312,10 +312,15 @@ func TestUnsupportedManagerIsNamed(t *testing.T) {
 	if !r.Supports("conan") {
 		t.Error("conan обязан поддерживаться после статического разбора рецепта")
 	}
-	if r.Supports("maven") {
-		t.Error("нереализованный менеджер не может поддерживаться")
+	for _, manager := range []string{"maven", "luarocks", "terraform", "php"} {
+		if !r.Supports(manager) {
+			t.Errorf("%s обязан поддерживать раскрытие зависимостей", manager)
+		}
 	}
-	if _, err := r.Walk(context.Background(), "maven", nil); err == nil {
-		t.Error("для неизвестного менеджера ожидалась ошибка")
+	if r.Supports("docker") || r.Supports("git") || r.Supports("files") {
+		t.Error("docker, git и files не должны объявлять реестровый граф зависимостей")
+	}
+	if _, err := r.Walk(context.Background(), "docker", nil); err == nil {
+		t.Error("для менеджера без реестрового графа ожидалась ошибка")
 	}
 }

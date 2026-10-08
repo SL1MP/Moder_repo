@@ -58,6 +58,14 @@ func For(manager string) (Scheme, error) {
 		return GoMod{}, nil
 	case "conan":
 		return Conan{}, nil
+	case "maven":
+		return Maven{}, nil
+	case "luarocks":
+		return LuaRocks{}, nil
+	case "terraform":
+		return Terraform{}, nil
+	case "php":
+		return Composer{}, nil
 	}
 	return nil, fmt.Errorf("нет схемы версий для менеджера «%s»", manager)
 }
