@@ -17,8 +17,8 @@ import (
 const adminBodyLimit = 128 << 10
 
 // UpdateSettings сохраняет несекретные web-настройки. Транзакционный NOTIFY
-// после сохранения инициирует корректный автоматический перезапуск api-go и
-// worker-go; вручную перезапускать или пересобирать их не требуется.
+// после сохранения переключает api-go на новую конфигурацию без остановки и
+// корректно перезапускает worker-go; вручную обслуживать процессы не нужно.
 func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if h.Repo == nil || h.Cfg == nil {
 		writeError(w, r, errInternal("Хранилище настроек не подключено"))
@@ -66,7 +66,8 @@ func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"saved":             keys,
 		"restart_required":  false,
 		"restart_scheduled": true,
-		"message":           "Настройки сохранены и применяются автоматически. Сервисы кратковременно перезапустятся.",
+		"message": "Настройки сохранены. API применит их без остановки; " +
+			"worker-go перезапустится автоматически.",
 	})
 }
 

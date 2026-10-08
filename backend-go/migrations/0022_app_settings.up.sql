@@ -2,8 +2,8 @@
 --
 -- .env остаётся источником начальных значений и секретов. Значения из этой
 -- таблицы имеют приоритет над .env. После сохранения приложение отправляет
--- PostgreSQL NOTIFY, а api-go/worker-go автоматически корректно
--- перезапускаются и загружают новые значения.
+-- PostgreSQL NOTIFY: api-go атомарно заменяет runtime без остановки HTTP,
+-- worker-go корректно перезапускается и загружает новые значения.
 CREATE TABLE IF NOT EXISTS app_setting (
     key VARCHAR(128) PRIMARY KEY,
     value TEXT NOT NULL,

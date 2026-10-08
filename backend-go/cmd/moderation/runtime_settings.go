@@ -75,9 +75,13 @@ func watchStoredSettings(
 						notificationChannel = notification.Channel
 					}
 					if err == nil && notificationChannel == repo.AppSettingsChannel {
-						changed <- struct{}{}
-						conn.Release()
-						return
+						// Несколько быстрых сохранений объединяем: получатель всегда
+						// перечитывает весь набор значений из БД, поэтому достаточно
+						// одного ожидающего события.
+						select {
+						case changed <- struct{}{}:
+						default:
+						}
 					}
 				}
 			}

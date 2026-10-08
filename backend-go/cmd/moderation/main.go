@@ -88,7 +88,6 @@ func main() {
 	defer pool.Close()
 	settingsChanged := watchStoredSettings(ctx, pool, logger)
 	applyStoredSettings(ctx, pool, cfg, logger)
-	restartOnStoredSettingsChange(ctx, settingsChanged, stop, logger)
 
 	options, blacklist, _ := buildOptions(cfg, pool, logger)
 	_ = blacklist // политики попадают в конвейер вместе с переносом шагов 0-3
@@ -114,35 +113,17 @@ func main() {
 			"для ручной диагностики используйте `moderation scan --item N`")
 	}
 
-	// Сторож очереди конвейера. Подбирает пакеты, которые не забрал выделенный
-	// воркер, — см. cmd/moderation/watchdog.go, там же причина, почему он
-	// обязателен, а не «на всякий случай».
-	//
-	// Каждая ветка что-то пишет в лог по той же причине, что и у наблюдателя
-	// сканирования: страховка, которая не запустилась молча, снаружи
-	// неотличима от работающей.
-	var watchdogDone chan struct{}
-	switch {
-	case !cfg.PipelineWatchdogEnabled:
-		logger.Warn("сторож очереди выключен (PIPELINE_WATCHDOG_ENABLED=false) — " +
-			"пакеты разбирает только выделенный воркер; если он не поднят, заявки будут ждать вечно")
-	default:
-		worker, err := newPipelineWorker(cfg, pool, logger)
-		if err != nil {
-			logger.Error("сторож очереди НЕ запущен — пакеты разберёт только выделенный воркер",
-				"error", err)
-			break
-		}
-		watchdogDone = make(chan struct{})
-		go func() {
-			defer close(watchdogDone)
-			newWatchdog(worker, cfg.PipelineWatchdogInterval, cfg.PipelineStuckAfter, logger).run(ctx)
-		}()
-	}
+	// Сторож и ручной проход собираются до роутера: иначе условный маршрут
+	// /admin/queue-sweep не подключится и кнопка получит 404. При изменении
+	// web-настроек поколение сторожа заменяется вместе с роутером.
+	watchdogs := &watchdogManager{}
+	watchdogs.Replace(prepareWatchdog(ctx, cfg, pool, &options, logger), 10*time.Second)
+	runtimeHandler := newSwappableHandler(api.NewRouter(pool, options))
+	reloadAPIOnStoredSettings(ctx, settingsChanged, pool, runtimeHandler, watchdogs, logger)
 
 	server := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: api.NewRouter(pool, options),
+		Handler: runtimeHandler,
 	}
 
 	go func() {
@@ -155,18 +136,14 @@ func main() {
 
 	<-ctx.Done()
 	logger.Info("завершаю работу HTTP-сервиса")
+	// Пока сторож возвращает прерванный пакет в очередь, HTTP listener ещё
+	// открыт. Это убирает прежнее десятисекундное окно 502 при остановке.
+	watchdogs.Stop(10 * time.Second)
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("ошибка при остановке HTTP-сервера", "error", err)
-	}
-	if watchdogDone != nil {
-		select {
-		case <-watchdogDone:
-		case <-shutdownCtx.Done():
-			logger.Warn("сторож очереди не успел завершить активную задачу перед остановкой")
-		}
 	}
 }
 

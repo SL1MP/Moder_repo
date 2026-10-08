@@ -26,10 +26,10 @@ export default function SettingsPage({ me }: { me: Me }) {
         <div>
           <h1>Настройка</h1>
           <p className="page-hint">
-            Общие адреса и пороги можно сохранить здесь. После сохранения <code>api-go</code> и
-            <code>worker-go</code> автоматически перезапустятся и загрузят новые значения;
-            ручной перезапуск и пересборка не нужны. OIDC и его секрет на отдельной вкладке
-            применяются сразу.
+            Общие адреса и пороги можно сохранить здесь. <code>api-go</code> переключится на
+            новую конфигурацию без остановки, а <code>worker-go</code> автоматически
+            перезапустится. Ручной перезапуск и пересборка не нужны. OIDC и его секрет на
+            отдельной вкладке применяются сразу.
           </p>
         </div>
         {isAdmin ? (
@@ -394,7 +394,9 @@ function QueueCard({
   const worker = info.worker ?? {}
   const watchdog = info.watchdog ?? {}
   const stuck = Number(info.queue?.stuck_items ?? 0)
-  const alive = Boolean(worker.alive)
+  // Backend намеренно не притворяется heartbeat'ом контейнера: он показывает
+  // наблюдаемый результат — есть ли пакеты, которые никто не забирает.
+  const queueIsMoving = worker.queue_is_moving !== false
 
   return (
     <div className="card">
@@ -407,10 +409,7 @@ function QueueCard({
               api
                 .sweepQueue()
                 .then((res) => {
-                  setMessage(
-                    `Проход сторожа: зависших — ${res.stuck}, подхвачено — ${res.recovered}` +
-                      (res.mode === 'inline' ? ' (выполнено на месте, worker молчит)' : ''),
-                  )
+                  setMessage(`Проход сторожа завершён: обработано пакетов — ${Number(res.processed ?? 0)}`)
                   onDone()
                 })
                 .catch((exc: Error) => setMessage(exc.message))
@@ -421,11 +420,10 @@ function QueueCard({
         ) : null}
       </div>
       {message ? <Alert kind="info">{message}</Alert> : null}
-      {!alive ? (
+      {!queueIsMoving && stuck > 0 ? (
         <Alert kind="warn">
-          Worker очереди не отвечает: {String(worker.detail)}. Пакеты не остановятся — их подхватит
-          сторож в процессе API, но проверки будут идти медленнее. Поднимите контейнер{' '}
-          <code>worker-go</code>.
+          Очередь не разбирается: пакеты лежат дольше установленного порога. Проверьте контейнер{' '}
+          <code>worker-go</code> или запустите ручной проход сторожа.
         </Alert>
       ) : null}
       {stuck > 0 ? (
@@ -435,14 +433,14 @@ function QueueCard({
         </Alert>
       ) : null}
       <dl className="kv">
-        <dt>Go worker</dt>
+        <dt>Состояние очереди</dt>
         <dd>
-          <span className={alive ? 'badge pass' : 'badge fail'}>
-            {alive ? 'разбирает очередь' : 'не отвечает'}
+          <span className={queueIsMoving ? 'badge pass' : 'badge fail'}>
+            {queueIsMoving ? 'залежавшихся пакетов нет' : 'очередь не разбирается'}
           </span>
         </dd>
-        <dt>Последний heartbeat</dt>
-        <dd>{formatTime((worker.last_seen as string) ?? null)}</dd>
+        <dt>Как определяется</dt>
+        <dd className="small muted">{String(worker.note ?? 'По возрасту пакетов в очереди')}</dd>
         <dt>Зависших пакетов</dt>
         <dd className="mono">{stuck}</dd>
         <dt>Сторож очереди</dt>
