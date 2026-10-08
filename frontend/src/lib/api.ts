@@ -750,7 +750,7 @@ export const api = {
 
   settings: () => request<SettingRow[]>('/settings'),
   saveSettings: (values: Record<string, string>) =>
-    request<{ saved: string[]; restart_required: boolean; message: string }>('/settings', {
+    request<{ saved: string[]; restart_required: boolean; restart_scheduled: boolean; message: string }>('/settings', {
       method: 'PUT', body: JSON.stringify({ values }),
     }),
   adminUsers: () => request<{ items: AdminUser[]; roles: string[] }>('/admin/users'),

@@ -85,6 +85,35 @@ func newItem(t *testing.T, r *repo.Repo, status string) int64 {
 	return item.ID
 }
 
+func TestReleaseReturnsInterruptedItemWithoutSpendingAttempt(t *testing.T) {
+	q, r, cleanup := setup(t)
+	defer cleanup()
+	ctx := context.Background()
+	itemID := newItem(t, r, "running")
+	if _, err := r.Pool().Exec(ctx,
+		`UPDATE request_item SET attempts = 2 WHERE id = $1`, itemID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := q.Release(ctx, itemID); err != nil {
+		t.Fatalf("возврат в очередь: %v", err)
+	}
+	var status string
+	var attempts int
+	if err := r.Pool().QueryRow(ctx,
+		`SELECT status, attempts FROM request_item WHERE id = $1`, itemID,
+	).Scan(&status, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if status != "queued" || attempts != 2 {
+		t.Fatalf("status=%s attempts=%d, ожидались queued и 2", status, attempts)
+	}
+	if err := q.Release(ctx, itemID); !errors.Is(err, queue.ErrNotOurs) {
+		t.Fatalf("повторный Release вернул %v, ожидался ErrNotOurs", err)
+	}
+}
+
 // Ни один пакет не достаётся двум воркерам. Это главное свойство очереди: без
 // него пакет проверяется дважды, и два прогона пишут его шаги вперемешку.
 //

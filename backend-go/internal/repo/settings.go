@@ -5,6 +5,12 @@ import (
 	"fmt"
 )
 
+// AppSettingsChannel сообщает долгоживущим процессам, что сохранённые через
+// web настройки изменились. NOTIFY выполняется в той же транзакции, что и
+// UPDATE: подписчики увидят событие только после успешного COMMIT и загрузят
+// уже зафиксированные значения.
+const AppSettingsChannel = "moderation_app_settings_changed"
+
 // AppSettings возвращает сохранённые через web переопределения .env.
 // Секреты в эту таблицу не пишутся: список допустимых ключей задаёт config.
 func (r *Repo) AppSettings(ctx context.Context) (map[string]string, error) {
@@ -46,6 +52,9 @@ func (r *Repo) SaveAppSettings(ctx context.Context, values map[string]string, ac
 				updated_at = EXCLUDED.updated_at`, key, value, actorID); err != nil {
 			return fmt.Errorf("сохранение настройки %s: %w", key, err)
 		}
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_notify($1, '')`, AppSettingsChannel); err != nil {
+		return fmt.Errorf("уведомление об изменении настроек: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("фиксация настроек: %w", err)

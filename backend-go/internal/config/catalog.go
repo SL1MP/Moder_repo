@@ -31,8 +31,8 @@ type Setting struct {
 	Editable bool `json:"editable"`
 	// Overridden — значение пришло из БД, а не из .env.
 	Overridden bool `json:"overridden"`
-	// RestartRequired — новое значение применится после restart api-go и
-	// worker-go; пересборка образов не требуется.
+	// RestartRequired оставлен в контракте API для совместимости. Для
+	// web-настроек он false: процессы перезапускаются автоматически.
 	RestartRequired bool `json:"restart_required"`
 }
 
@@ -172,7 +172,7 @@ func (c *Config) Catalog() []Setting {
 	}
 	for i := range settings {
 		settings[i].Editable = IsWebEditable(settings[i].Env)
-		settings[i].RestartRequired = settings[i].Editable
+		settings[i].RestartRequired = false
 	}
 	return settings
 }

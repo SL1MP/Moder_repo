@@ -372,6 +372,27 @@ func (q *Queue) Wait(ctx context.Context, timeout time.Duration) error {
 
 // --------------------------------------------------------------------------- исходы прогона
 
+// Release возвращает пакет в очередь без увеличения attempts. Это штатное
+// завершение процесса (в том числе автоматическое применение web-настроек),
+// а не ошибка внешнего сервиса, поэтому расходовать попытку нельзя.
+//
+// Guard по status не даёт отменённому или уже переданному роли пакету снова
+// попасть в очередь, если его состояние изменилось одновременно с остановкой.
+func (q *Queue) Release(ctx context.Context, itemID int64) error {
+	tag, err := q.pool.Exec(ctx, `
+		UPDATE request_item
+		SET status = 'queued', updated_at = now()
+		WHERE id = $1 AND status = 'running'
+	`, itemID)
+	if err != nil {
+		return fmt.Errorf("возврат прерванного пакета #%d в очередь: %w", itemID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotOurs
+	}
+	return q.Notify(ctx)
+}
+
 // Done снимает пакет с обработки после успешного прогона: счётчик неудач
 // обнуляется, отметка шага возобновления снимается. Статус к этому моменту уже
 // выставил сам конвейер, поэтому здесь он не трогается — иначе воркер затирал

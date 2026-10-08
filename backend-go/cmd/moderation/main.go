@@ -86,7 +86,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	settingsChanged := watchStoredSettings(ctx, pool, logger)
 	applyStoredSettings(ctx, pool, cfg, logger)
+	restartOnStoredSettingsChange(ctx, settingsChanged, stop, logger)
 
 	options, blacklist, _ := buildOptions(cfg, pool, logger)
 	_ = blacklist // политики попадают в конвейер вместе с переносом шагов 0-3
@@ -119,6 +121,7 @@ func main() {
 	// Каждая ветка что-то пишет в лог по той же причине, что и у наблюдателя
 	// сканирования: страховка, которая не запустилась молча, снаружи
 	// неотличима от работающей.
+	var watchdogDone chan struct{}
 	switch {
 	case !cfg.PipelineWatchdogEnabled:
 		logger.Warn("сторож очереди выключен (PIPELINE_WATCHDOG_ENABLED=false) — " +
@@ -130,7 +133,11 @@ func main() {
 				"error", err)
 			break
 		}
-		go newWatchdog(worker, cfg.PipelineWatchdogInterval, cfg.PipelineStuckAfter, logger).run(ctx)
+		watchdogDone = make(chan struct{})
+		go func() {
+			defer close(watchdogDone)
+			newWatchdog(worker, cfg.PipelineWatchdogInterval, cfg.PipelineStuckAfter, logger).run(ctx)
+		}()
 	}
 
 	server := &http.Server{
@@ -147,12 +154,19 @@ func main() {
 	}()
 
 	<-ctx.Done()
-	logger.Info("получен сигнал остановки, завершаю работу")
+	logger.Info("завершаю работу HTTP-сервиса")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("ошибка при остановке HTTP-сервера", "error", err)
+	}
+	if watchdogDone != nil {
+		select {
+		case <-watchdogDone:
+		case <-shutdownCtx.Done():
+			logger.Warn("сторож очереди не успел завершить активную задачу перед остановкой")
+		}
 	}
 }
 

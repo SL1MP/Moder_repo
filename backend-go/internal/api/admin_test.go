@@ -102,9 +102,36 @@ func TestWebSettingsAreAdminOnlyAndPersisted(t *testing.T) {
 		t.Fatalf("разработчик изменил настройки: %d %s", rec.Code, rec.Body.String())
 	}
 
+	listener, err := f.repo.Pool().Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = listener.Exec(context.Background(), "UNLISTEN *")
+		listener.Release()
+	}()
+	if _, err := listener.Exec(context.Background(), "LISTEN "+repo.AppSettingsChannel); err != nil {
+		t.Fatal(err)
+	}
+
 	rec := f.doBody(t, "admin", http.MethodPut, "/api/v1/settings", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("настройка не сохранена: %d %s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		RestartRequired  bool `json:"restart_required"`
+		RestartScheduled bool `json:"restart_scheduled"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.RestartRequired || !result.RestartScheduled {
+		t.Fatalf("неверный режим применения настроек: %s", rec.Body.String())
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := listener.Conn().WaitForNotification(waitCtx); err != nil {
+		t.Fatalf("процессы не уведомлены об изменении настроек: %v", err)
 	}
 	stored, err := f.repo.AppSettings(context.Background())
 	if err != nil {

@@ -80,6 +80,7 @@ func runWorker(args []string, logger *slog.Logger) int {
 		return 1
 	}
 	defer pool.Close()
+	settingsChanged := watchStoredSettings(ctx, pool, logger)
 	applyStoredSettings(ctx, pool, cfg, logger)
 
 	w, err := newPipelineWorker(cfg, pool, logger)
@@ -97,6 +98,7 @@ func runWorker(args []string, logger *slog.Logger) int {
 		logger.Info("очередь разобрана", "обработано", n)
 		return 0
 	}
+	restartOnStoredSettingsChange(ctx, settingsChanged, stop, logger)
 
 	queued, running, err := w.queue.Depth(ctx)
 	if err != nil {
@@ -225,7 +227,15 @@ func (w *pipelineWorker) handle(ctx context.Context, job queue.Job) {
 	// коду (повтор или окончательный отказ), и пересчёт до этого зафиксировал
 	// бы промежуточное состояние. Без пересчёта заявка навсегда остаётся «в
 	// обработке», хотя её пакеты давно разошлись по очередям ролей.
-	defer w.recompute(ctx, job.ItemID)
+	defer func() {
+		if ctx.Err() == nil {
+			w.recompute(ctx, job.ItemID)
+			return
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		w.recompute(cleanupCtx, job.ItemID)
+	}()
 
 	result, err := w.runPipeline(runCtx, job)
 	if err == nil {
@@ -239,11 +249,21 @@ func (w *pipelineWorker) handle(ctx context.Context, job queue.Job) {
 		return
 	}
 
-	// Контекст отменён остановкой сервиса — это не неудача пакета. Оставляем
-	// его в `running`: отметка о жизни перестанет обновляться, и следующий
-	// воркер подберёт его как брошенный.
+	// Контекст отменён остановкой сервиса — это не неудача пакета. Возвращаем
+	// его в очередь сразу: при автоматическом применении web-настроек ждать
+	// StaleAfter означало бы искусственно задержать активную заявку.
 	if ctx.Err() != nil {
-		w.logger.Info("прогон прерван остановкой сервиса", "item", job.ItemID)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		err := w.queue.Release(cleanupCtx, job.ItemID)
+		switch {
+		case err == nil:
+			w.logger.Info("прогон прерван остановкой сервиса и возвращён в очередь", "item", job.ItemID)
+		case errors.Is(err, queue.ErrNotOurs):
+			w.logger.Info("прогон прерван, пакет уже сменил состояние", "item", job.ItemID)
+		default:
+			w.logger.Error("прерванный пакет не возвращён в очередь", "item", job.ItemID, "error", err)
+		}
 		return
 	}
 
