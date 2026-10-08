@@ -28,6 +28,13 @@ var webEditable = map[string]bool{
 	"SANDBOX_URL":                         true,
 	"SANDBOX_TIMEOUT_SECONDS":             true,
 	"SANDBOX_INSECURE_TLS":                true,
+	"DRAGON_ENABLED":                      true,
+	"DRAGON_URL":                          true,
+	"DRAGON_PIPELINE_ID":                  true,
+	"DRAGON_STAGING_URL":                  true,
+	"DRAGON_POLL_INTERVAL_SECONDS":         true,
+	"DRAGON_TIMEOUT_SECONDS":               true,
+	"DRAGON_MIN_SEVERITY":                  true,
 	"OSV_DB_SOURCE":                       true,
 	"OSV_PYPI_SNAPSHOT_PATH":              true,
 	"OSV_NPM_SNAPSHOT_PATH":               true,
@@ -73,7 +80,8 @@ func validateOverride(key, value string) error {
 	case "QUARANTINE_DAYS", "OSV_MAX_STALENESS_DAYS", "MAX_PACKAGES_PER_REQUEST",
 		"RATE_LIMIT_REQUESTS_PER_MINUTE", "PIPELINE_WATCHDOG_INTERVAL_SECONDS",
 		"PIPELINE_STUCK_AFTER_SECONDS", "REGISTRY_RETRY_ATTEMPTS", "REGISTRY_BREAKER_THRESHOLD",
-		"SANDBOX_TIMEOUT_SECONDS", "OSV_SYNC_INTERVAL_SECONDS":
+		"SANDBOX_TIMEOUT_SECONDS", "OSV_SYNC_INTERVAL_SECONDS",
+		"DRAGON_POLL_INTERVAL_SECONDS", "DRAGON_TIMEOUT_SECONDS":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 {
 			return fmt.Errorf("ожидается неотрицательное целое число")
@@ -83,12 +91,12 @@ func validateOverride(key, value string) error {
 		if err != nil || n < 0 || n > 100 {
 			return fmt.Errorf("ожидается число от 0 до 100")
 		}
-	case "LOCAL_AUTH_ENABLED", "SANDBOX_ENABLED", "SANDBOX_INSECURE_TLS", "PIPELINE_WATCHDOG_ENABLED":
+	case "LOCAL_AUTH_ENABLED", "SANDBOX_ENABLED", "SANDBOX_INSECURE_TLS", "DRAGON_ENABLED", "PIPELINE_WATCHDOG_ENABLED":
 		if _, err := strconv.ParseBool(value); err != nil {
 			return fmt.Errorf("ожидается true или false")
 		}
 	case "ARTIFACT_BASE_URL", "ARTIFACT_PUBLIC_BASE_URL", "ARTIFACT_DOCKER_REGISTRY_URL",
-		"ARTIFACT_DOCKER_PUBLIC_URL", "SANDBOX_URL", "OIDC_ISSUER", "OIDC_PUBLIC_ISSUER",
+		"ARTIFACT_DOCKER_PUBLIC_URL", "SANDBOX_URL", "DRAGON_URL", "DRAGON_STAGING_URL", "OIDC_ISSUER", "OIDC_PUBLIC_ISSUER",
 		"GITLAB_URL":
 		if value == "" && (key == "ARTIFACT_PUBLIC_BASE_URL" || key == "ARTIFACT_DOCKER_PUBLIC_URL") {
 			return nil
@@ -104,6 +112,10 @@ func validateOverride(key, value string) error {
 	case "OSV_DB_SOURCE":
 		if value != "artifactory" && value != "http" && value != "file" {
 			return fmt.Errorf("допустимо artifactory, http или file")
+		}
+	case "DRAGON_MIN_SEVERITY":
+		if value != "critical" && value != "high" && value != "medium" && value != "low" {
+			return fmt.Errorf("допустимо critical, high, medium или low")
 		}
 	default:
 		if value == "" {
@@ -155,6 +167,22 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.SandboxTimeout = time.Duration(n) * time.Second
 		case "SANDBOX_INSECURE_TLS":
 			c.SandboxInsecureTLS, _ = strconv.ParseBool(v)
+		case "DRAGON_ENABLED":
+			c.DragonEnabled, _ = strconv.ParseBool(v)
+		case "DRAGON_URL":
+			c.DragonURL = strings.TrimRight(v, "/")
+		case "DRAGON_PIPELINE_ID":
+			c.DragonPipelineID = v
+		case "DRAGON_STAGING_URL":
+			c.DragonStagingURL = strings.TrimRight(v, "/")
+		case "DRAGON_POLL_INTERVAL_SECONDS":
+			n, _ := strconv.Atoi(v)
+			c.DragonPollInterval = time.Duration(n) * time.Second
+		case "DRAGON_TIMEOUT_SECONDS":
+			n, _ := strconv.Atoi(v)
+			c.DragonTimeout = time.Duration(n) * time.Second
+		case "DRAGON_MIN_SEVERITY":
+			c.DragonMinSeverity = v
 		case "OSV_DB_SOURCE":
 			c.OSVDBSource = v
 		case "OSV_PYPI_SNAPSHOT_PATH":

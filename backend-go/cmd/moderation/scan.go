@@ -218,6 +218,7 @@ func buildScanContext(_ context.Context, r *repo.Repo, st *stores, cfg *config.C
 			Index:     osv.NewSnapshotIndex(cfg.OSVLocalDBPath),
 			Artifacts: st.Artifacts,
 			Sandbox:   newSandbox(cfg),
+			Dragon:    newDragon(cfg),
 			SBOM:      newSBOMGenerator(cfg),
 			// Сканеры снятых шагов: конвейер их не вызывает, но контекст
 			// собирается целиком — см. комментарий к Validate.

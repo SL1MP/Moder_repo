@@ -126,6 +126,24 @@ func (s *Service) DecideSecurity(ctx context.Context, item *domain.RequestItem, 
 	result := &Result{Item: item}
 
 	if approve {
+		// Ручное решение может переоценить известную находку, но не может
+		// заменить проверку, которой не было. Проверяем это и на сервере, а не
+		// только блокировкой кнопки: API доступен напрямую.
+		steps, err := s.Repo.ListStepsByItem(ctx, item.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, step := range steps {
+			if !domain.Contains(pipeline.SecurityBlockers, step.StepCode) {
+				continue
+			}
+			reason, _ := step.Details["reason"].(string)
+			if reason == "sandbox_unavailable" || reason == "dragon_unavailable" {
+				return nil, fmt.Errorf("%w: обязательный шаг %s не выполнен; восстановите интеграцию и перезапустите шаг",
+					ErrConflict, step.StepCode)
+			}
+		}
+
 		// Решение фиксируем на ВЕРСИИ пакета: иначе возобновлённый конвейер
 		// снова упрётся в тот же вердикт сканера и вернёт пакет в очередь —
 		// решение DevSecOps не имело бы эффекта.

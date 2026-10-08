@@ -369,7 +369,7 @@ func (h *RequestsHandler) canCancel(r *http.Request, req *domain.ModerationReque
 }
 
 // stepViews — снимок конвейера для карточки. Порт runner.step_snapshot:
-// отдаются ВСЕ девять шагов, включая те, до которых прогон не дошёл, — иначе
+// отдаются ВСЕ действующие шаги, включая те, до которых прогон не дошёл, — иначе
 // в карточке не видно, что ещё впереди.
 func (h *RequestsHandler) stepViews(steps []domain.PipelineStep) []map[string]any {
 	byCode := make(map[string]domain.PipelineStep, len(steps))

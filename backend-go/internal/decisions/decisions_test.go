@@ -190,7 +190,7 @@ func TestSecurityApprovalReachesSiblings(t *testing.T) {
 	ctx := context.Background()
 
 	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{
-		"vuln_scan": "info", "sandbox_scan": "fail",
+		"vuln_scan": "info", "sandbox_scan": "fail", "dragon_scan": "warn",
 	})
 	svc, rec := newService(r)
 
@@ -284,6 +284,32 @@ func TestSecurityRejectionRequiresComment(t *testing.T) {
 	_, err := svc.DecideSecurity(context.Background(), f.first, false, 0, "   ")
 	if !errors.Is(err, decisions.ErrValidation) {
 		t.Errorf("err = %v, ожидалась ErrValidation", err)
+	}
+}
+
+func TestSecurityApprovalCannotReplaceUnavailableDragon(t *testing.T) {
+	r, cleanup := mustRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	f := setupTwoRequests(t, r, "awaiting_security", map[string]string{"dragon_scan": "warn"})
+	steps, err := r.ListStepsByItem(ctx, f.first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range steps {
+		if step.StepCode != "dragon_scan" {
+			continue
+		}
+		step.Details = map[string]any{"reason": "dragon_unavailable"}
+		if _, err := r.UpsertPipelineStep(ctx, step); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc, _ := newService(r)
+	actor, _ := r.GetOrCreateUser(ctx, "sec-dragon-"+testSlug(t), "DevSecOps")
+	if _, err := svc.DecideSecurity(ctx, f.first, true, actor.ID, "пропустить"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("ожидался conflict для невыполненного Dragon, получено %v", err)
 	}
 }
 

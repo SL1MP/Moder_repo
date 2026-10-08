@@ -23,6 +23,7 @@ var Steps = []Step{
 	QuarantineStep{},
 	LicenseStep{},
 	DownloadStep{},
+	DragonScanStep{},
 	VulnScanStep{},
 	SandboxScanStep{},
 	SBOMStep{},

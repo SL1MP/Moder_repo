@@ -7,6 +7,7 @@ import (
 
 	"moderation/internal/artifactstore"
 	"moderation/internal/config"
+	"moderation/internal/dragon"
 	"moderation/internal/maintenance"
 	"moderation/internal/osv"
 	"moderation/internal/pipeline"
@@ -193,8 +194,12 @@ func pipelineConfig(cfg *config.Config) pipeline.Config {
 		MaxArtifactSizeBytes:       cfg.MaxArtifactSizeBytes,
 		MaxDockerArtifactSizeBytes: cfg.MaxDockerArtifactSizeBytes,
 
-		SandboxEnabled: cfg.SandboxEnabled,
-		SBOMEnabled:    cfg.SBOMEnabled,
+		SandboxEnabled:     cfg.SandboxEnabled,
+		DragonEnabled:      cfg.DragonEnabled,
+		DragonPipelineID:   cfg.DragonPipelineID,
+		DragonStagingURL:   cfg.DragonStagingURL,
+		DragonMinSeverity:  cfg.DragonMinSeverity,
+		SBOMEnabled:        cfg.SBOMEnabled,
 
 		// Снятые шаги: конвейер их не запускает, значения переносятся, чтобы
 		// возврат шага в строй не требовал ещё и правки сборки.
@@ -209,6 +214,18 @@ func pipelineConfig(cfg *config.Config) pipeline.Config {
 
 func newSBOMGenerator(cfg *config.Config) sbom.Generator {
 	return sbom.DefaultGenerator{SyftBinary: cfg.SBOMSyftBinary}
+}
+
+func newDragon(cfg *config.Config) dragon.Scanner {
+	if !cfg.DragonEnabled {
+		return nil
+	}
+	return dragon.New(dragon.Config{
+		BaseURL:      cfg.DragonURL,
+		Token:        cfg.DragonToken,
+		PollInterval: cfg.DragonPollInterval, Timeout: cfg.DragonTimeout,
+		HTTPClient:   newHTTPClient(),
+	})
 }
 
 // storeProbeTimeout — сколько ждать ответа артефактори при проверке

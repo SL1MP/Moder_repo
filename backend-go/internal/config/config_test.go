@@ -74,6 +74,10 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"sandbox_priority", cfg.SandboxPriority, 3},
 		{"sandbox_short_result", cfg.SandboxShortResult, true},
 		{"sandbox_timeout", cfg.SandboxTimeout, 900 * time.Second},
+		{"dragon_enabled", cfg.DragonEnabled, false},
+		{"dragon_poll_interval", cfg.DragonPollInterval, 5 * time.Second},
+		{"dragon_timeout", cfg.DragonTimeout, 25 * time.Minute},
+		{"dragon_min_severity", cfg.DragonMinSeverity, "high"},
 		{"sbom_enabled", cfg.SBOMEnabled, true},
 		{"sbom_syft_binary", cfg.SBOMSyftBinary, "syft"},
 		{"oidc_client_id", cfg.OIDCClientID, "moderation-web"},
@@ -431,5 +435,42 @@ func TestApplyWebOverrides(t *testing.T) {
 func TestWebOverridesRejectSecrets(t *testing.T) {
 	if err := ValidateOverrides(map[string]string{"ARTIFACT_TOKEN": "secret"}); err == nil {
 		t.Fatal("секрет разрешено сохранить через web")
+	}
+}
+
+func TestDragonRequiresCompleteConfigurationWhenEnabled(t *testing.T) {
+	env := map[string]string{
+		"DATABASE_URL":  "postgres://localhost/moderation",
+		"DRAGON_ENABLED": "true",
+	}
+	_, err := Load(func(key string) string { return env[key] })
+	if err == nil {
+		t.Fatal("неполная конфигурация Dragon должна быть отклонена")
+	}
+	for _, field := range []string{"DRAGON_URL", "DRAGON_TOKEN", "DRAGON_PIPELINE_ID", "DRAGON_STAGING_URL"} {
+		if !strings.Contains(err.Error(), field) {
+			t.Errorf("в ошибке нет %s: %v", field, err)
+		}
+	}
+}
+
+func TestDragonConfiguration(t *testing.T) {
+	env := map[string]string{
+		"DATABASE_URL": "postgres://localhost/moderation",
+		"DRAGON_ENABLED": "true",
+		"DRAGON_URL": "https://dragon.example/",
+		"DRAGON_TOKEN": "pat",
+		"DRAGON_PIPELINE_ID": "pl:packages",
+		"DRAGON_STAGING_URL": "http://nexus:8081/repository/moderation-staging/",
+		"DRAGON_MIN_SEVERITY": "critical",
+	}
+	cfg, err := Load(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.DragonEnabled || cfg.DragonURL != "https://dragon.example" ||
+		cfg.DragonStagingURL != "http://nexus:8081/repository/moderation-staging" ||
+		cfg.DragonMinSeverity != "critical" {
+		t.Fatalf("Dragon config = %+v", cfg)
 	}
 }

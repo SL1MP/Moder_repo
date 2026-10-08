@@ -69,10 +69,11 @@ var StepCodes = []string{
 	"quarantine",   // шаг 2
 	"license",      // шаг 3
 	"download",     // шаг 4
-	"vuln_scan",    // шаг 5 — уязвимости по снапшоту OSV
-	"sandbox_scan", // шаг 6 — динамический анализ в песочнице
-	"sbom",         // шаг 7 — CycloneDX SBOM проверенного артефакта
-	"publish",      // шаг 8
+	"dragon_scan",  // шаг 5 — оркестрация сканеров Dragon по точным байтам
+	"vuln_scan",    // шаг 6 — уязвимости по снапшоту OSV
+	"sandbox_scan", // шаг 7 — динамический анализ в песочнице
+	"sbom",         // шаг 8 — CycloneDX SBOM проверенного артефакта
+	"publish",      // шаг 9
 }
 
 // RetiredStepCodes — шаги, снятые с конвейера, но оставшиеся в истории.
@@ -112,6 +113,7 @@ var StepTitles = map[string]string{
 	"quarantine":   "Карантин",
 	"license":      "Лицензия",
 	"download":     "Скачивание артефакта",
+	"dragon_scan":  "Сканирование в Dragon",
 	"vuln_scan":    "Проверка на уязвимости",
 	"sandbox_scan": "Проверка в песочнице",
 	"sbom":         "Формирование SBOM",

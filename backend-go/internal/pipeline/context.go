@@ -8,6 +8,7 @@ import (
 
 	"moderation/internal/artifactstore"
 	"moderation/internal/domain"
+	"moderation/internal/dragon"
 	"moderation/internal/osv"
 	"moderation/internal/registry"
 	"moderation/internal/repo"
@@ -38,6 +39,13 @@ type Config struct {
 	// с явной пометкой, а не молча пропускается: «проверку не делали» обязано
 	// быть видно в карточке.
 	SandboxEnabled bool
+	// DragonEnabled включает внешнюю оркестрацию сканеров уже скачанного
+	// артефакта. DragonMinSeverity остаётся политикой Moder_repo: Dragon
+	// исполняет инструменты и возвращает факты, но не разрешает публикацию.
+	DragonEnabled     bool
+	DragonPipelineID  string
+	DragonStagingURL  string
+	DragonMinSeverity string
 	// SBOMEnabled — формировать CycloneDX между проверками и публикацией.
 	SBOMEnabled bool
 
@@ -94,6 +102,9 @@ type Deps struct {
 	// Sandbox — внешняя песочница шага sandbox_scan. nil означает «проверять
 	// нечем»: шаг позовёт DevSecOps, а не пропустит пакет.
 	Sandbox sandbox.Client
+	// Dragon сканирует точный объект из staging и обязан подтвердить SHA-256.
+	// nil допустим, пока DragonEnabled=false.
+	Dragon dragon.Scanner
 	// SBOM строит документы из уже скачанных байтов. Повторно обращаться к
 	// внешнему реестру генератору не разрешается.
 	SBOM sbom.Generator

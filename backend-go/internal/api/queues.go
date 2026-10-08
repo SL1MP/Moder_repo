@@ -48,7 +48,7 @@ func (h *QueuesHandler) Security(w http.ResponseWriter, r *http.Request) {
 		[]string{"awaiting_security", "quarantined"},
 		// sast_scan в списке нет: SAST информационный, решения DevSecOps по
 		// нему не требуется, и пакет не должен попадать в очередь из-за него.
-		[]string{"vuln_scan", "banner_scan", "quarantine"}, "devsecops")
+		[]string{"dragon_scan", "sandbox_scan", "quarantine"}, "devsecops")
 }
 
 // Legal — GET /api/v1/queue/legal.

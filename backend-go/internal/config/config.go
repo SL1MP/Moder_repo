@@ -65,6 +65,18 @@ type Config struct {
 	// сертификата обязана быть видимым решением, а не строчкой в скрипте.
 	SandboxInsecureTLS bool
 
+	// Dragon orchestrates containerized scanners over the exact artifact stored
+	// in staging. Its token authorizes Moder_repo in Dragon; Nexus credentials
+	// are configured read-only on Dragon runners and are never sent per task.
+	DragonEnabled      bool
+	DragonURL          string
+	DragonToken        string
+	DragonPipelineID   string
+	DragonStagingURL   string
+	DragonPollInterval time.Duration
+	DragonTimeout      time.Duration
+	DragonMinSeverity  string
+
 	// SBOM — CycloneDX для пакетов, прошедших модерацию. Для Docker генератор
 	// запускает Syft по локальному OCI layout отдельно для каждой платформы.
 	SBOMEnabled    bool
@@ -302,6 +314,14 @@ func Load(getenv func(string) string) (*Config, error) {
 		SandboxShortResult: boolOr(getenv("SANDBOX_SHORT_RESULT"), true),
 		SandboxTimeout:     secondsOr(getenv("SANDBOX_TIMEOUT_SECONDS"), 900),
 		SandboxInsecureTLS: boolOr(getenv("SANDBOX_INSECURE_TLS"), false),
+		DragonEnabled:      boolOr(getenv("DRAGON_ENABLED"), false),
+		DragonURL:          strings.TrimRight(strings.TrimSpace(getenv("DRAGON_URL")), "/"),
+		DragonToken:        strings.TrimSpace(getenv("DRAGON_TOKEN")),
+		DragonPipelineID:   strings.TrimSpace(getenv("DRAGON_PIPELINE_ID")),
+		DragonStagingURL:   strings.TrimRight(strings.TrimSpace(getenv("DRAGON_STAGING_URL")), "/"),
+		DragonPollInterval: secondsOr(getenv("DRAGON_POLL_INTERVAL_SECONDS"), 5),
+		DragonTimeout:      secondsOr(getenv("DRAGON_TIMEOUT_SECONDS"), 25*60),
+		DragonMinSeverity:  valueOr(getenv("DRAGON_MIN_SEVERITY"), "high"),
 		SBOMEnabled:        boolOr(getenv("SBOM_ENABLED"), true),
 		SBOMSyftBinary:     valueOr(getenv("SBOM_SYFT_BINARY"), "syft"),
 
@@ -505,6 +525,27 @@ func Load(getenv func(string) string) (*Config, error) {
 		errs = append(errs, errors.New(
 			"SANDBOX_URL: не задан при SANDBOX_ENABLED=true — шаг песочницы будет отдавать "+
 				"каждый пакет на ручное решение DevSecOps. Задайте адрес или выключите шаг"))
+	}
+	if cfg.DragonEnabled {
+		if strings.TrimSpace(cfg.DragonURL) == "" {
+			errs = append(errs, errors.New("DRAGON_URL: не задан при DRAGON_ENABLED=true"))
+		}
+		if strings.TrimSpace(cfg.DragonToken) == "" {
+			errs = append(errs, errors.New("DRAGON_TOKEN: не задан при DRAGON_ENABLED=true"))
+		}
+		if strings.TrimSpace(cfg.DragonPipelineID) == "" {
+			errs = append(errs, errors.New("DRAGON_PIPELINE_ID: не задан при DRAGON_ENABLED=true"))
+		}
+		if strings.TrimSpace(cfg.DragonStagingURL) == "" {
+			errs = append(errs, errors.New(
+				"DRAGON_STAGING_URL: не задан при DRAGON_ENABLED=true — Runner не сможет скачать артефакт"))
+		}
+	}
+	if !domain.Contains([]string{"critical", "high", "medium", "low"},
+		strings.ToLower(strings.TrimSpace(cfg.DragonMinSeverity))) {
+		errs = append(errs, fmt.Errorf(
+			"DRAGON_MIN_SEVERITY: недопустимое значение %q, ожидается critical|high|medium|low",
+			cfg.DragonMinSeverity))
 	}
 
 	// Тип артефактори проверяем на старте: опечатка ("nexsus") иначе всплыла
