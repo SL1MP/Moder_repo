@@ -77,6 +77,7 @@ func TestDefaultsMatchPython(t *testing.T) {
 		{"sbom_enabled", cfg.SBOMEnabled, true},
 		{"sbom_syft_binary", cfg.SBOMSyftBinary, "syft"},
 		{"oidc_client_id", cfg.OIDCClientID, "moderation-web"},
+		{"ca_certs", cfg.CACerts, ""},
 		{"role_mapping_admin", cfg.RoleMappingAdmin, "moderation-admin"},
 		{"role_mapping_devsecops", cfg.RoleMappingDevSecOps, "moderation-devsecops"},
 		{"role_mapping_legal", cfg.RoleMappingLegal, "moderation-legal"},

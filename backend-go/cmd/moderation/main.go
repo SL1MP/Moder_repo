@@ -34,6 +34,7 @@ import (
 	"moderation/internal/repo"
 	"moderation/internal/requests"
 	"moderation/internal/resolve"
+	"moderation/internal/tlsconf"
 )
 
 func main() {
@@ -75,6 +76,18 @@ func main() {
 	if err != nil {
 		logger.Error("конфигурация невалидна", "error", err)
 		os.Exit(1)
+	}
+	// OIDC discovery, authorization-code exchange and JWKS loading all use
+	// http.DefaultTransport. Install the corporate CA before any of those
+	// requests can be made. A bad path is fatal so SSO cannot silently start
+	// with a different trust policy than the administrator configured.
+	if count, err := tlsconf.Install(cfg.CACerts); err != nil {
+		logger.Error("корпоративные CA не загружены", "path", cfg.CACerts, "error", err)
+		os.Exit(1)
+	} else if count > 0 {
+		logger.Info("корпоративные CA загружены", "path", cfg.CACerts, "count", count)
+	} else if cfg.CACerts != "" {
+		logger.Warn("каталог корпоративных CA пуст; используются только системные корни", "path", cfg.CACerts)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

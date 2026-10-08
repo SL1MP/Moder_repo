@@ -179,12 +179,16 @@ services:
     environment:
       <<: *proxy-env
       LISTEN_ADDR: ":8000"
+      # В .env CA_CERTS может быть путём хоста для локального go run. В
+      # контейнере всегда используется точка монтирования ниже.
+      CA_CERTS: /etc/moderation/ca
       # DATABASE_URL в .env пустой (python-версия собирает DSN из POSTGRES_*),
       # а Go-конфигу нужен готовый. Значения из environment перекрывают env_file.
       DATABASE_URL: postgres://${POSTGRES_USER:-moderation}:${POSTGRES_PASSWORD:-moderation}@db:5432/${POSTGRES_DB:-moderation}
     # Правила YARA и справочники — те же файлы, что у python-версии.
     volumes:
       - ./config:/config:ro
+      - ${CA_CERTS_HOST:-./certs/ca}:/etc/moderation/ca:ro
       # Снапшот базы OSV нужен и здесь: в процессе api-go живёт сторож
       # очереди, и когда выделенный воркер не забрал пакет, конвейер (вместе с
       # шагом уязвимостей) выполняется прямо тут. Без этого тома тот же пакет

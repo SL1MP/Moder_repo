@@ -211,6 +211,10 @@ docker compose logs -f nginx api web
 * **«Издатель OIDC недоступен»** без кода — в `OIDC_PUBLIC_ISSUER` внутренний
   адрес (`http://keycloak:8080/...`). Он резолвится только внутри compose-сети;
   браузеру нужен внешний: `http://localhost:8080/realms/moderation`.
+* **`x509: certificate signed by unknown authority`** — корпоративный Keycloak
+  использует внутренний CA. Положите Root/Issuer CA в `certs/ca`, задайте при
+  необходимости `CA_CERTS_HOST` и пересоздайте `api-go`; подробности —
+  [Корпоративный Keycloak и внутренний CA](auth.md#корпоративный-keycloak-и-внутренний-ca).
 
 Проверка в три команды:
 

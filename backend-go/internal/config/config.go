@@ -170,6 +170,9 @@ type Config struct {
 	OIDCEnabled       bool
 	OIDCPublicBaseURL string
 	OIDCButtonLabel   string
+	// CACerts points to a PEM file or directory with corporate root and
+	// intermediate certificates trusted by outgoing OIDC HTTPS requests.
+	CACerts string
 
 	// Группы каталога, дающие роль сервиса. Права проверяются в API, а не
 	// только в UI.
@@ -363,6 +366,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		OIDCEnabled:       boolOr(getenv("OIDC_ENABLED"), true),
 		OIDCPublicBaseURL: strings.TrimRight(strings.TrimSpace(getenv("OIDC_PUBLIC_BASE_URL")), "/"),
 		OIDCButtonLabel:   valueOr(getenv("OIDC_BUTTON_LABEL"), "Keycloak (SSO)"),
+		CACerts:          strings.TrimSpace(getenv("CA_CERTS")),
 
 		RoleMappingAdmin:     valueOr(getenv("ROLE_MAPPING_ADMIN"), "moderation-admin"),
 		RoleMappingDevSecOps: valueOr(getenv("ROLE_MAPPING_DEVSECOPS"), "moderation-devsecops"),

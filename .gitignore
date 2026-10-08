@@ -31,7 +31,11 @@ frontend/.vite/
 # файл из исключённого каталога нельзя ничем: .gitkeep не попал бы в
 # репозиторий, каталога не оказалось бы в чистом клоне и `COPY certs/` в
 # Dockerfile уронил бы сборку.
-/certs/
+/certs/*
+!/certs/ca/
+/certs/ca/*
+!/certs/ca/.gitkeep
+!/certs/ca/README.md
 nginx/certs/*
 !nginx/certs/.gitkeep
 keycloak/certs/*
