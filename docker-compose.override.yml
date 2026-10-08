@@ -1,50 +1,10 @@
-# dev-окружение: hot reload и порты наружу. Подхватывается автоматически при
+# Dev-окружение: порты инфраструктуры наружу. Подхватывается автоматически при
 # `docker compose up`.
-#
-# Блоки api, worker, beat и redis относятся к python-версии и вступают в силу
-# только с `--profile python`: без профиля этих сервисов в стеке нет
-# (см. docker-compose.yml). Оверлей на отсутствующий сервис compose не считает
-# ошибкой, поэтому обычный `docker compose up` их просто не замечает.
 
 services:
-  api:
-    ports:
-      - "${API_PORT:-8000}:8000"
-    environment:
-      APP_ENV: dev
-      LOG_LEVEL: DEBUG
-      UVICORN_EXTRA_ARGS: "--reload --reload-dir /app/app"
-    volumes:
-      - ./backend/app:/app/app
-      - ./backend/alembic:/app/alembic
-      - ./config:/config:ro
-      - osv-db:/var/lib/osv-db
-
-  worker:
-    environment:
-      APP_ENV: dev
-      LOG_LEVEL: DEBUG
-      CELERY_CONCURRENCY: 2
-    volumes:
-      - ./backend/app:/app/app
-      - ./config:/config:ro
-      - osv-db:/var/lib/osv-db
-
-  beat:
-    environment:
-      APP_ENV: dev
-      LOG_LEVEL: DEBUG
-    volumes:
-      - ./backend/app:/app/app
-      - ./config:/config:ro
-
   db:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
-
-  redis:
-    ports:
-      - "6379:6379"
 
   keycloak:
     ports:

@@ -160,7 +160,7 @@ docker compose ps                      # все контейнеры, включ
 docker compose run --rm migrate-go schema  # схема базы против кода
 docker compose logs -f api-go          # сторож очереди, сверка схемы, HTTP
 docker compose logs -f worker-go       # обработка пакетов конвейером
-docker compose logs -f nginx api web
+docker compose logs -f nginx api-go web
 ```
 
 Типичные ситуации:
@@ -242,7 +242,8 @@ LOCAL_AUTH_SECRET=любая-длинная-строка
 
 ```bash
 make restart
-docker compose run --rm api bootstrap --demo --service-password 'пароль'
+MODERATION_SERVICE_PASSWORD='пароль' docker compose run --rm migrate-go \
+  bootstrap --demo
 ```
 
 На странице входа появится форма «Сервисная учётная запись». Учётки:
@@ -333,8 +334,8 @@ make up-all      # + профили sso (Keycloak) и nexus
 make bootstrap   # дождётся Nexus, создаст репозитории, импортирует realm
 ```
 
-Тогда вход идёт через Keycloak (демо-учётки `dev.ivanov/dev`, `sec.petrov/sec`,
-`legal.sidorova/legal`, `moderation.admin/admin`), а публикация — в настоящий
+Тогда вход идёт через Keycloak (тестовые учётные записи создаются при
+bootstrap с паролем из окружения), а публикация — в настоящий
 локальный Nexus (`ARTIFACT_DRY_RUN=false`). Nexus поднимается 1–3 минуты.
 
 ---

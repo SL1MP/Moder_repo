@@ -59,9 +59,9 @@ make logs                 # логи api-go и worker-go
 docker compose run --rm migrate-go schema   # схема базы против кода: чего не хватает
 ```
 
-При пустой базе сервис создаёт локального администратора из
-`ADMIN_USERNAME`/`ADMIN_PASSWORD` (по умолчанию `admin/admin`; перед первым
-запуском задайте безопасный пароль). Остальные локальные учётки создаются на
+При пустой базе сервис создаёт локального администратора из обязательных
+`ADMIN_USERNAME`/`ADMIN_PASSWORD`. Задайте уникальный пароль до первого
+запуска. Остальные локальные учётки создаются на
 странице «Настройка → Пользователи и роли».
 
 После старта:
@@ -75,8 +75,9 @@ docker compose run --rm migrate-go schema   # схема базы против �
 | Keycloak (профиль `sso`) | http://localhost:8081 |
 | Nexus (профиль `nexus`) | http://localhost:8082 |
 
-Демо-учётные записи Keycloak (realm `moderation`): `dev.ivanov/dev`, `sec.petrov/sec`,
-`legal.sidorova/legal`, `moderation.admin/admin`.
+Тестовые учётные записи для локального стенда создавайте через bootstrap или
+страницу «Настройка → Пользователи и роли»; готовые пароли в репозитории не
+публикуются.
 
 ### Вход через Keycloak
 
@@ -224,35 +225,12 @@ docker compose up -d --build nginx
 
 ### Если пакет долго «проверяется»
 
-Очередь разбирает Celery-worker. Чтобы упавший worker не превращался в «заявка висит
-вечно», в сервисе есть страховка — сторож внутри процесса API. Он раз в
+Очередь в PostgreSQL разбирает `worker-go`. Чтобы упавший worker не превращался
+в «заявка висит вечно», в сервисе есть страховка — сторож внутри `api-go`. Он раз в
 `PIPELINE_WATCHDOG_INTERVAL_SECONDS` ищет пакеты, стоящие в очереди дольше
-`PIPELINE_STUCK_AFTER_SECONDS`, и либо переотправляет задачу (если worker жив и потерялось
-сообщение), либо прогоняет конвейер сам. Двойного прогона не будет: пакет захватывается
-атомарно. Подробнее — в [`docs/architecture.md`](docs/architecture.md#пакет-не-должен-зависать-в-очереди).
-
-Посмотреть, что происходит:
-
-```bash
-make queue-status         # жив ли worker, сколько пакетов зависло
-make queue-doctor         # почему очередь стоит: разбор с готовым выводом
-```
-
-`queue-doctor` собирает в один отчёт всё, что иначе приходится добывать пятью разными
-командами: heartbeat worker'а, доступность брокера, длину каждой очереди, ответ самого
-worker'а на `inspect` и список очередей, которые он реально слушает. По этим данным
-команда печатает вывод — что именно сломано и что делать. Она различает состояния,
-снаружи неотличимые друг от друга:
-
-| Что показывает отчёт | Что на самом деле |
-| --- | --- |
-| нет ни heartbeat, ни ответа на `inspect` | worker не запущен — смотрите логи контейнера |
-| `inspect` отвечает, heartbeat молчит | образ без сигнала `worker_ready` — пересобрать worker |
-| worker жив, но очередь никто не слушает | неверный `CELERY_QUEUES` — задачи уходят в никуда |
-| worker жив, пакеты висят дольше порога | потерянное сообщение — разберёт сторож или `make run-pending` |
-
-Отчёт рассчитан на то, чтобы отправить его целиком, не пересобирая вывод вручную.
-Команда возвращает ненулевой код, если нашла проблему, — её можно звать из скриптов.
+`PIPELINE_STUCK_AFTER_SECONDS`, захватывает строку атомарно и запускает конвейер.
+Двойного прогона не будет благодаря `FOR UPDATE SKIP LOCKED`. Подробнее — в
+[`docs/architecture.md`](docs/architecture.md#пакет-не-должен-зависать-в-очереди).
 
 То же самое видно на экране «Настройка» (блок «Обработка очереди») и в
 `GET /api/v1/system/status`. Если ждать прохода сторожа не хочется:
@@ -261,15 +239,15 @@ worker'а на `inspect` и список очередей, которые он �
 make run-pending          # прогнать зависшие пакеты прямо сейчас
 ```
 
-Поднять сам worker, если он лёг: `docker compose up -d worker` и
-`docker compose logs worker --tail=60`.
+Поднять сам worker, если он лёг: `docker compose up -d worker-go` и
+`docker compose logs worker-go --tail=60`.
 
 Логи структурные (JSON), сообщения — на русском. Грепать по русскому слову можно, но
 надёжнее по имени логгера: оно ASCII и не зависит от языка сообщения.
 
 ```bash
-docker compose logs api | grep app.services.watchdog   # что решил сторож при старте
-docker compose logs worker | grep app.pipeline         # ход конвейера
+docker compose logs api-go --tail=100
+docker compose logs worker-go --tail=100
 ```
 
 ### Первый рабочий инструмент — REST API
@@ -328,10 +306,9 @@ curl -sS -X POST http://localhost:8080/api/v1/requests \
 | `docker compose --profile nexus up -d` | плюс собственный Sonatype Nexus |
 | `docker compose --profile sso up -d` | плюс собственный Keycloak с готовым realm |
 | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` | прод: healthcheck'и, `restart: unless-stopped`, без hot reload |
-| `docker compose --profile python up -d` | плюс погашенная python-версия (`api`, `worker`, `beat`, `redis`) — только для отката |
 
-`docker-compose.override.yml` подхватывается автоматически и включает dev-режим: hot reload и порты
-наружу. В проде он не используется (см. команду выше).
+`docker-compose.override.yml` подхватывается автоматически и публикует порты инфраструктуры
+для локальной разработки. В проде он не используется (см. команду выше).
 
 ## Роли
 
@@ -355,12 +332,11 @@ make cli ARGS="create-service-account ci-bot --roles developer"
 ## Разработка
 
 ```bash
-# Backend без docker
-cd backend
-python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-DATABASE_URL=sqlite:// pytest              # тесты, порог покрытия 70%
-ruff check app tests
+# Backend на Go
+cd backend-go
+go test -p 1 ./...                         # интеграционным тестам нужен PostgreSQL
+gofmt -w .
+go vet ./...
 
 # Frontend
 cd frontend
@@ -371,11 +347,12 @@ npm run dev                                # http://localhost:5173, API прок
 Миграции:
 
 ```bash
-make revision M="описание изменения"   # автогенерация по моделям
-make migrate                           # применить
+make migrate          # применить SQL-миграции backend-go/migrations
+make migrate-status   # показать применённые и ожидающие миграции
+make schema           # сверить фактическую схему с ожиданиями кода
 ```
 
-Полезные команды CLI (`moderctl`):
+Полезные команды CLI (`moderation` внутри Go-образа):
 
 ```bash
 make cli ARGS="--help"
@@ -407,7 +384,7 @@ PostgreSQL уведомляет оба процесса: `api-go` в фоне с
 
 ## Документация
 
-- [`docs/status.md`](docs/status.md) — **состояние дел**: что сделано, какие проблемы вылезали и чем кончились, что осталось на Python, план и долги
+- [`docs/status.md`](docs/status.md) — **состояние дел**: что сделано, какие проблемы вылезали и чем кончились, план и долги
 - [`docs/architecture.md`](docs/architecture.md) — схема конвейера, состояния, схема БД, интерфейсы адаптеров
 - [`docs/stakeholders.md`](docs/stakeholders.md) — роли, их цели и зоны ответственности за конфигурацию/интеграции
 - [`docs/user-stories.md`](docs/user-stories.md) — что закрыто для каждой роли и чем именно, статус по сверке с кодом
@@ -423,7 +400,7 @@ PostgreSQL уведомляет оба процесса: `api-go` в фоне с
 - [`docs/integrations.md`](docs/integrations.md) — свой Artifactory, GitLab, прокси
 - [`docs/osv-snapshot.md`](docs/osv-snapshot.md) — формат снапшота OSV и поведение при его недоступности
 - [`docs/migration-from-ci.md`](docs/migration-from-ci.md) — переход с `package_list.txt` и CI-проверок
-- [`docs/migration-to-go.md`](docs/migration-to-go.md) — план переноса backend с Python на Go (решение принято, см. `docs/architecture.md`, "Целевой стек"); каркас — [`backend-go/`](backend-go/README.md), фаза 1 готова и проверена
+- [`docs/migration-to-go.md`](docs/migration-to-go.md) — исторический план завершённого переноса backend с Python на Go
 - [`docs/scanning-and-reports.md`](docs/scanning-and-reports.md) — как устроены проверки на SAST и политический контент и где брать файлы отчётов (JSON и HTML)
 
 ## Что сервис намеренно не делает

@@ -108,9 +108,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		"source":               user.Source,
 		"is_superuser":         user.IsSuperuser,
 		"must_change_password": user.MustChangePassword,
-		// Маршруты GitLab пока ведёт python-версия; сюда отдаём только факт
-		// привязки, чтобы SPA рисовала одно и то же независимо от того, какая
-		// версия ответила.
+		// SPA использует этот признак, чтобы показать состояние подключения GitLab.
 		"gitlab_connected": user.GitlabRefreshTokenEnc != nil || user.GitlabAccessTokenEnc != nil,
 	})
 }

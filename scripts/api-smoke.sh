@@ -202,8 +202,8 @@ if [ -z "${TOKEN:-}" ]; then
   cat >&2 <<'EOF'
 Варианты:
   1) Сервисная учётка (в .env: LOCAL_AUTH_ENABLED=true, затем make restart):
-       docker compose exec api python -m app.cli create-service-account ci-bot \
-         --roles developer --password secret
+       MODERATION_SERVICE_PASSWORD=secret docker compose run --rm migrate-go \
+         service-account ci-bot --roles developer
        SVC_USER=ci-bot SVC_PASSWORD=secret ./scripts/api-smoke.sh
   2) Токен из браузера: F12 -> Application -> Session Storage -> moderation.session
        TOKEN=eyJ... ./scripts/api-smoke.sh
@@ -301,7 +301,7 @@ case "$APPROVED" in
   True|true)
     ok_ "Заявка #$RID одобрена — пакет опубликован в артефактори."
     echo "Проверить в хранилище:"
-    echo "  curl -sS -u admin:admin123 'http://localhost:8082/service/rest/v1/search?repository=pypi-internal'"
+    echo '  curl -sS -u "$ARTIFACT_USER:$ARTIFACT_TOKEN" "$ARTIFACT_PUBLIC_BASE_URL/service/rest/v1/search?repository=pypi-internal"'
     ;;
   *)
     echo "Заявка #$RID не одобрена автоматически."

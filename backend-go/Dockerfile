@@ -5,7 +5,7 @@ ARG SYFT_VERSION=v0.80.0
 FROM golang:1.25-alpine AS build
 
 # Прокси на этапе сборки передаётся build-аргументами (в образ не попадает) —
-# как в backend/Dockerfile. Без него `go mod download` не выйдет наружу в
+# как и для остальных сборочных стадий. Без него `go mod download` не выйдет наружу в
 # корпоративной сети.
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
@@ -48,7 +48,7 @@ RUN apt-get update \
 
 # semgrep — шаг SAST. Ставится отдельно и НЕ фатально: без него шаг честно
 # отдаёт «проверка не выполнена» и зовёт DevSecOps, а не притворяется, что
-# чисто. Тот же приём, что в backend/Dockerfile.
+# чисто. Пустые значения удаляются перед запуском сканеров.
 RUN if [ "$INSTALL_SEMGREP" = "true" ]; then \
       pip install --no-cache-dir --break-system-packages semgrep \
       || echo "semgrep не установлен: шаг SAST будет требовать решения DevSecOps"; \

@@ -1,9 +1,7 @@
 // Package config читает конфигурацию сервиса из переменных окружения.
 //
-// Паттерн — как в sentrix (internal/config): Load собирает ВСЕ ошибки валидации
-// разом через errors.Join, не падает на первой. В Python-версии это давалось
-// бесплатно pydantic_settings; в Go так само по себе не происходит — нужно
-// явно копить []error, см. docs/development-standards.md.
+// Load собирает все ошибки валидации разом через errors.Join, не падая на
+// первой; для этого ошибки явно накапливаются в []error.
 package config
 
 import (
@@ -17,11 +15,9 @@ import (
 	"moderation/internal/osv"
 )
 
-// Config — конфигурация сервиса. Список переменных растёт по мере переноса
-// возможностей из backend/app/core/config.py (см. docs/migration-to-go.md) —
-// в этой ревизии есть только то, что нужно для каркаса (HTTP + подключение к БД).
+// Config — полный снимок конфигурации API и worker.
 type Config struct {
-	AppEnv      string // dev | prod — влияет на строгость проверок, как в Python-версии
+	AppEnv      string // dev | prod — влияет на строгость проверок
 	AppName     string // заголовок в UI, отдаётся SPA в /auth/config
 	ListenAddr  string
 	DatabaseURL string
@@ -96,9 +92,8 @@ type Config struct {
 	SASTTimeout       time.Duration
 	SASTMinSeverity   string
 
-	// Пороги конвейера. Значения по умолчанию — те же, что у python-версии
-	// (backend/app/core/config.py): обе версии выносят вердикт по одному
-	// пакету, и разные пороги означали бы разный вердикт при одном .env.
+	// Пороги конвейера. Значения по умолчанию являются частью политики сервиса
+	// и меняются только осознанно вместе с тестами и документацией.
 	QuarantineDays      int
 	VulnMaxScore        float64
 	OSVMaxStalenessDays int
@@ -159,9 +154,8 @@ type Config struct {
 	GitBinary  string
 	GitTimeout time.Duration
 
-	// Наблюдатель сканирования: сам находит пакеты без отчётов и прогоняет по
-	// ним сканеры. Конструкция переходного периода — пока заявки ведёт
-	// python-конвейер, а отчёты умеет делать только Go.
+	// Параметры устаревшей диагностической batch-команды. Штатный конвейер
+	// формирует отчёты сам; main предупреждает, если старый флаг ещё включён.
 	ScanWatcherEnabled  bool
 	ScanWatcherInterval time.Duration
 	ScanWatcherBatch    int
@@ -429,8 +423,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		PipelineWatchdogEnabled:  boolOr(getenv("PIPELINE_WATCHDOG_ENABLED"), true),
 		PipelineWatchdogInterval: secondsOr(getenv("PIPELINE_WATCHDOG_INTERVAL_SECONDS"), 30),
 
-		// Интервалы совпадают с расписанием python-версии (celery beat):
-		// карантин — раз в 15 минут, уборка хранилища — раз в 2 часа.
+		// Регламент: карантин — раз в 15 минут, уборка staging — раз в 2 часа.
 		MaintenanceEnabled:      boolOr(getenv("MAINTENANCE_ENABLED"), true),
 		QuarantineSweepInterval: secondsOr(getenv("QUARANTINE_SWEEP_INTERVAL_SECONDS"), 15*60),
 		// Прежние имена (S3_*) принимаются по-прежнему: S3 из сервиса убран,
@@ -570,7 +563,6 @@ func valueOr(v, fallback string) string {
 }
 
 // valueOr и родственники: пустая переменная — это «не задано», а не «пусто».
-// Python-версия получала это бесплатно от pydantic_settings, в Go нужно явно.
 
 func boolOr(v string, fallback bool) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {

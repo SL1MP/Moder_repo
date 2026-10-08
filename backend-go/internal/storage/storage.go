@@ -51,8 +51,7 @@ type Store interface {
 
 // ArtifactKey — ключ объекта артефакта: `{manager}/{name}/{version}/{filename}`.
 // Порт artifact_key из Python-версии, формат сохранён 1:1 — иначе объекты,
-// положенные Python-версией, станут не видны Go-версии во время параллельной
-// эксплуатации.
+// положенные старой версией сервиса, останутся видимы после обновления.
 func ArtifactKey(manager, name, version, filename string) string {
 	return fmt.Sprintf("%s/%s/%s/%s", manager, name, version, filename)
 }

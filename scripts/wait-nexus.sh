@@ -41,7 +41,7 @@ echo "Жду готовности Nexus (до $((ATTEMPTS * INTERVAL)) с)…"
 # Цикл выполняется внутри одного контейнера: имя `nexus` резолвится только в
 # сети compose, а поднимать контейнер на каждую попытку — дорого.
 if $COMPOSE run --rm -e ATTEMPTS="$ATTEMPTS" -e INTERVAL="$INTERVAL" \
-    --entrypoint sh api -c '
+    --entrypoint sh migrate-go -c '
         i=0
         while [ "$i" -lt "$ATTEMPTS" ]; do
             i=$((i + 1))

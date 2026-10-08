@@ -6,19 +6,10 @@ import (
 	"time"
 )
 
-// TestDefaultsMatchPython — сторож против расхождения умолчаний с
-// python-версией (backend/app/core/config.py).
-//
-// Обе версии читают ОДИН .env и выносят вердикт по одному пакету. Если
-// переменной в .env нет, каждая берёт своё умолчание — и при разных
-// умолчаниях один и тот же пакет получает разный вердикт. Ровно это и
-// случилось в бою: SAST_MIN_SEVERITY в .env отсутствовал, python применял
-// порог high, Go — medium, и Go пометил блокирующими находки, которые python
-// пропускал.
-//
-// Значения ниже сверены с backend/app/core/config.py. Меняются только вместе
-// с ней и осознанно.
-func TestDefaultsMatchPython(t *testing.T) {
+// TestConfigDefaults фиксирует значения политики, применяемые при неполном
+// окружении. Их изменение должно быть явным и сопровождаться обновлением
+// документации.
+func TestConfigDefaults(t *testing.T) {
 	cfg, err := Load(func(key string) string {
 		if key == "DATABASE_URL" {
 			return "postgres://localhost/x"
@@ -171,9 +162,8 @@ func TestPublicArtifactURLAndWebOverrides(t *testing.T) {
 	}
 }
 
-// TestBannerTimeoutIsSeparateVariable — BANNER_SCAN_TIMEOUT_SECONDS у
-// python-версии значит таймаут на ОДИН файл (умолчание 10 с), а Go запускает
-// yara на всё дерево сразу. Переиспользовать ту же переменную нельзя: 10 с на
+// TestBannerTimeoutIsSeparateVariable фиксирует отдельный таймаут YARA на
+// всё дерево. Переиспользовать короткий таймаут на один файл нельзя: 10 с на
 // всё дерево означали бы, что проверка почти всегда обрывается и отдаёт «не
 // выполнена» — то есть молча зовёт DevSecOps на каждом пакете.
 func TestBannerTimeoutIsSeparateVariable(t *testing.T) {
@@ -182,7 +172,7 @@ func TestBannerTimeoutIsSeparateVariable(t *testing.T) {
 		case "DATABASE_URL":
 			return "postgres://localhost/x"
 		case "BANNER_SCAN_TIMEOUT_SECONDS":
-			return "10" // значение python-версии; Go его брать не должен
+			return "10" // короткий таймаут не должен переопределять полный прогон
 		}
 		return ""
 	})

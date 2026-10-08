@@ -344,7 +344,3 @@ HTML-отчёт — самодостаточная страница: ни одн
 | Хранилище и ключи отчётов | `backend-go/internal/storage` |
 | Таблица `scan_report` | `backend-go/migrations/0005_scan_reports.up.sql` |
 | API отчётов | `backend-go/internal/api/reports.go` |
-
-Python-версия (пока существует параллельно): `backend/app/adapters/content_scan.py`,
-`backend/app/services/artifact_unpack.py`, `backend/app/pipeline/steps.py`. Отчётов она не
-формирует — это добавлено в Go-версии.

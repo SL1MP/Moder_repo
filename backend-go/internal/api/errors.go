@@ -17,7 +17,7 @@ import (
 // Единый формат ошибки — тот же, что у python-версии
 // (backend/app/core/errors.py): машинный код + человеческое сообщение на
 // русском. Формат обязан совпадать байт в байт: nginx раздаёт часть путей
-// Go-сервису, часть — python-версии, а разбирает ответы один и тот же
+// разным обработчикам API, а разбирает ответы один и тот же
 // frontend/src/lib/api.ts, который читает error.code и error.message.
 type errorBody struct {
 	Error errorPayload `json:"error"`
@@ -105,7 +105,7 @@ func schemaError(err error) *Error {
 	}
 	return errInternal(fmt.Sprintf(
 		"Схема базы не соответствует версии сервиса: %s. Накатите пропущенные миграции — "+
-			"какие именно, покажет `docker compose run --rm api-go schema` "+
+			"какие именно, покажет `docker compose run --rm migrate-go schema` "+
 			"(и лог api-go при старте). Подробности: %s", what, pgErr.Message)).Because(err)
 }
 
