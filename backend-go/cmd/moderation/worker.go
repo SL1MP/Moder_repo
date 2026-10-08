@@ -239,6 +239,9 @@ func (w *pipelineWorker) handle(ctx context.Context, job queue.Job) {
 
 	result, err := w.runPipeline(runCtx, job)
 	if err == nil {
+		if result.ItemStatus == "approved" {
+			w.syncPublishedSiblings(ctx, job.ItemID)
+		}
 		w.deliver(ctx, job.ItemID, result.Notifications)
 		if err := w.queue.Done(ctx, job.ItemID); err != nil {
 			w.logger.Error("пакет не снят с обработки", "item", job.ItemID, "error", err)
@@ -310,6 +313,28 @@ func (w *pipelineWorker) handle(ctx context.Context, job queue.Job) {
 		w.logger.Error("пакет не помечен неудачей", "item", job.ItemID, "error", failErr)
 	}
 	w.logger.Error("прогон не удался окончательно", "item", job.ItemID, "error", err)
+}
+
+// syncPublishedSiblings исправляет историю старых заявок на тот же пакет.
+// Версия в базе общая, поэтому после успешной публикации оставлять прежнюю
+// заявку с ошибкой шага publish противоречиво: артефакт уже доступен.
+func (w *pipelineWorker) syncPublishedSiblings(ctx context.Context, itemID int64) {
+	requestIDs, err := w.repo.ApproveFailedPublicationSiblings(ctx, itemID)
+	if err != nil {
+		w.logger.Error("старые заявки после публикации не синхронизированы",
+			"item", itemID, "error", err)
+		return
+	}
+	for _, requestID := range requestIDs {
+		if _, err := w.repo.RecomputeRequestStatus(ctx, requestID); err != nil {
+			w.logger.Error("статус старой заявки после публикации не пересчитан",
+				"item", itemID, "request", requestID, "error", err)
+		}
+	}
+	if len(requestIDs) > 0 {
+		w.logger.Info("старые ошибки публикации синхронизированы",
+			"item", itemID, "requests", requestIDs)
+	}
 }
 
 // beat держит отметку о жизни прогона. Возвращает функцию остановки.

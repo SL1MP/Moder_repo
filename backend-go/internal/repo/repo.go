@@ -174,6 +174,64 @@ func (r *Repo) UpdateRequestItemStatus(ctx context.Context, id int64, status str
 	return nil
 }
 
+// ApproveFailedPublicationSiblings синхронизирует старые заявки на ту же
+// версию после успешной публикации. Меняются только пакеты, которые упали
+// именно на publish: неудачу blacklist, песочницы или лицензии чужая успешная
+// заявка отменять не должна.
+//
+// Возвращаются заявки, чей агрегатный статус нужно пересчитать.
+func (r *Repo) ApproveFailedPublicationSiblings(
+	ctx context.Context, sourceItemID int64,
+) ([]int64, error) {
+	rows, err := r.pool.Query(ctx, `
+		WITH source AS (
+			SELECT ri.package_version_id, ri.next_action,
+			       ps.message, ps.details, ps.started_at
+			FROM request_item ri
+			JOIN pipeline_step ps
+			  ON ps.request_item_id = ri.id AND ps.step_code = 'publish'
+			WHERE ri.id = $1 AND ri.status = 'approved' AND ps.result = 'pass'
+		), updated_items AS (
+			UPDATE request_item ri
+			SET status = 'approved', current_step = 'publish',
+			    blocked_reason = source.message, next_action = source.next_action,
+			    waiting_since = NULL, finished_at = now(), updated_at = now(),
+			    attempts = 0, resume_from_step = NULL
+			FROM source
+			WHERE ri.package_version_id = source.package_version_id
+			  AND ri.id <> $1
+			  AND ri.status = 'failed'
+			  AND ri.current_step = 'publish'
+			RETURNING ri.id, ri.request_id
+		), updated_steps AS (
+			UPDATE pipeline_step ps
+			SET result = 'pass', message = source.message, details = source.details,
+			    started_at = COALESCE(ps.started_at, source.started_at),
+			    finished_at = now()
+			FROM source, updated_items ui
+			WHERE ps.request_item_id = ui.id AND ps.step_code = 'publish'
+			RETURNING ps.request_item_id
+		)
+		SELECT DISTINCT request_id FROM updated_items ORDER BY request_id
+	`, sourceItemID)
+	if err != nil {
+		return nil, fmt.Errorf("синхронизация старых заявок после публикации: %w", err)
+	}
+	defer rows.Close()
+	var requestIDs []int64
+	for rows.Next() {
+		var requestID int64
+		if err := rows.Scan(&requestID); err != nil {
+			return nil, fmt.Errorf("чтение синхронизированной заявки: %w", err)
+		}
+		requestIDs = append(requestIDs, requestID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("чтение синхронизированных заявок: %w", err)
+	}
+	return requestIDs, nil
+}
+
 // UpdateRequestItemCurrentStep отмечает фактически выполняющийся этап, не
 // затрагивая статус и результаты предыдущих шагов. Это особенно важно для
 // долгих загрузок в песочницу и публикаций OCI: карточка сразу показывает,

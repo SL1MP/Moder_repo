@@ -175,8 +175,15 @@ func osvConfig(cfg *config.Config) maintenance.OSVConfig {
 // Одна функция на все команды: разные значения в api и worker означали бы
 // разный вердикт по одному пакету в зависимости от того, кто его проверил.
 func pipelineConfig(cfg *config.Config) pipeline.Config {
+	artifactBaseURL := cfg.ArtifactPublicBaseURL
+	if artifactBaseURL == "" {
+		artifactBaseURL = cfg.ArtifactBaseURL
+	}
 	return pipeline.Config{
-		ArtifactBaseURL:         cfg.ArtifactBaseURL,
+		// Внутренний ARTIFACT_BASE_URL нужен Store для публикации, но тексты
+		// шагов и команды установки сохраняются конвейером и показываются
+		// разработчику. Поэтому в pipeline передаётся внешний адрес.
+		ArtifactBaseURL:         artifactBaseURL,
 		ArtifactDockerPublicURL: cfg.ArtifactDockerPublicURL,
 		ArtifactRepos:           cfg.ArtifactRepos,
 

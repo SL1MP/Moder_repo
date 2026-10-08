@@ -87,11 +87,16 @@ func (p *PHP) ValidateVersion(version string) error {
 
 // composerPackage — ответ Packagist v2 (/p2/{vendor}/{package}.json).
 type composerPackage struct {
+	Minified string `json:"minified"`
 	Packages map[string][]struct {
 		Version           string   `json:"version"`
 		VersionNormalized string   `json:"version_normalized"`
 		Time              string   `json:"time"`
-		License           []string `json:"license"`
+		// Packagist p2 применяет composer/2.0 metadata minification: если
+		// лицензия совпадает с предыдущей (более новой) версией, поле вообще
+		// отсутствует. Указатель отличает отсутствие от явного пустого массива.
+		License           *[]string `json:"license"`
+		Unset             []string  `json:"__unset"`
 		Dist              struct {
 			Type   string `json:"type"`
 			URL    string `json:"url"`
@@ -120,7 +125,18 @@ func (p *PHP) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 			break
 		}
 	}
+	var inheritedLicense []string
 	for _, v := range versions {
+		if composerFieldUnset(v.Unset, "license") {
+			inheritedLicense = nil
+		}
+		if v.License != nil {
+			inheritedLicense = append([]string(nil), (*v.License)...)
+		}
+		license := inheritedLicense
+		if payload.Minified != "composer/2.0" && v.License == nil {
+			license = nil
+		}
 		// Сравниваем по нормализованной версии: в ответе она бывает и «v6.4.2»,
 		// и «6.4.2.0», и искать точное совпадение строки значит не находить
 		// половину версий.
@@ -144,9 +160,9 @@ func (p *PHP) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 			// исторически, как и npm.
 			meta.Checksum, meta.ChecksumAlgo = v.Dist.Shasum, "sha1"
 		}
-		if len(v.License) > 0 {
-			meta.LicenseRaw = strings.Join(v.License, " OR ")
-			meta.LicenseSPDX = NormalizeSPDX(v.License[0])
+		if len(license) > 0 {
+			meta.LicenseRaw = strings.Join(license, " OR ")
+			meta.LicenseSPDX = NormalizeSPDX(license[0])
 		}
 		if meta.ArtifactURL == "" {
 			return Metadata{}, fmt.Errorf(
@@ -158,6 +174,15 @@ func (p *PHP) FetchMetadata(ctx context.Context, ref Ref) (Metadata, error) {
 	}
 	return Metadata{}, fmt.Errorf("%w: версии %s пакета %s нет в реестре Packagist",
 		ErrNotFound, ref.RawVersion, ref.DisplayName)
+}
+
+func composerFieldUnset(fields []string, wanted string) bool {
+	for _, field := range fields {
+		if field == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *PHP) InstallCommand(ref Ref, baseURL, repo string) string {

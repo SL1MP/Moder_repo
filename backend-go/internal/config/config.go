@@ -663,6 +663,32 @@ func (c *Config) PublicArtifactURL(raw string) string {
 	return raw
 }
 
+// PublicArtifactText заменяет внутренние адреса артефактори внутри уже
+// сохранённых сообщений, команд и деталей шагов. Ранние прогоны записывали в
+// историю полный текст с http://nexus:8081; менять каждую историческую строку
+// при смене внешнего адреса нельзя, поэтому read API приводит её к актуальной
+// публичной конфигурации на лету.
+func (c *Config) PublicArtifactText(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	out := raw
+	// Docker URL обычно длиннее общего base URL. Сначала заменяем его, иначе
+	// общий prefix превратит строку в адрес, который уже не совпадёт с
+	// ARTIFACT_DOCKER_PUBLIC_URL.
+	internalDocker := strings.TrimRight(c.ArtifactDockerRegistryURL, "/")
+	publicDocker := strings.TrimRight(c.ArtifactDockerPublicURL, "/")
+	if internalDocker != "" && publicDocker != "" && internalDocker != publicDocker {
+		out = strings.ReplaceAll(out, internalDocker, publicDocker)
+	}
+	internal := strings.TrimRight(c.ArtifactBaseURL, "/")
+	public := strings.TrimRight(c.ArtifactPublicBaseURL, "/")
+	if internal != "" && public != "" && internal != public {
+		out = strings.ReplaceAll(out, internal, public)
+	}
+	return out
+}
+
 // RoleForGroup — роль сервиса по группе каталога. Пустая строка — группа не
 // наша. Порт config.role_for_group.
 func (c *Config) RoleForGroup(group string) string {

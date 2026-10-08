@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
 import { Alert, Badge, Empty, Loader, formatTime, useAsync } from '../components/ui'
@@ -15,8 +15,11 @@ const STATUS_FILTERS = [
   { value: 'cancelled', label: 'Закрыты автором' },
 ]
 
+const PAGE_SIZE = 25
+
 export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'mine' | 'all' }) {
   const [status, setStatus] = useState('')
+  const [page, setPage] = useState(0)
   const navigate = useNavigate()
   // Чужие заявки видят только эти роли; разработчику переключатель не нужен —
   // API всё равно отдаст ему лишь свои.
@@ -25,10 +28,20 @@ export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'm
   // «Мои заявки» обязан показывать именно свои, а не то, что осталось от
   // прошлого переключения.
   const mine = scope === 'mine' || !canSeeAll
+  useEffect(() => setPage(0), [mine, status])
   const { data, error, loading, reload } = useAsync(
-    () => api.requests({ ...(status ? { status } : {}), mine: String(mine) }),
-    [status, mine],
+    () => api.requests({
+      ...(status ? { status } : {}),
+      mine: String(mine),
+      // Берём одну лишнюю запись: она не показывается, но точно говорит,
+      // доступна ли следующая страница без отдельного COUNT на каждый клик.
+      limit: String(PAGE_SIZE + 1),
+      offset: String(page * PAGE_SIZE),
+    }),
+    [status, mine, page],
   )
+  const rows = (data ?? []).slice(0, PAGE_SIZE)
+  const hasNext = (data?.length ?? 0) > PAGE_SIZE
 
   return (
     <>
@@ -79,9 +92,9 @@ export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'm
 
       {error ? <Alert kind="error">{error}</Alert> : null}
       {loading ? <Loader /> : null}
-      {data && !data.length ? <Empty text="Заявок нет" /> : null}
+      {data && !data.length && page === 0 ? <Empty text="Заявок нет" /> : null}
 
-      {data && data.length ? (
+      {data && rows.length ? (
         <div className="card">
           <table>
             <thead>
@@ -97,7 +110,7 @@ export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'm
               </tr>
             </thead>
             <tbody>
-              {data.map((row) => (
+              {rows.map((row) => (
                 <tr key={row.request_id}>
                   <td>
                     <Link to={`/requests/${row.request_id}`}>#{row.request_id}</Link>
@@ -117,6 +130,26 @@ export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'm
               ))}
             </tbody>
           </table>
+        </div>
+      ) : null}
+
+      {data && (page > 0 || hasNext) ? (
+        <div className="card tight row between">
+          <button
+            className="ghost small"
+            disabled={loading || page === 0}
+            onClick={() => setPage((current) => Math.max(0, current - 1))}
+          >
+            ← предыдущая
+          </button>
+          <span className="small muted">Страница {page + 1}</span>
+          <button
+            className="ghost small"
+            disabled={loading || !hasNext}
+            onClick={() => setPage((current) => current + 1)}
+          >
+            следующая →
+          </button>
         </div>
       ) : null}
     </>

@@ -122,7 +122,8 @@ func readTestConfig(t *testing.T) *config.Config {
 		"DATABASE_URL":       "postgres://не-используется",
 		"LOCAL_AUTH_ENABLED": "true",
 		"LOCAL_AUTH_SECRET":  "секрет-тестов-чтения",
-		"ARTIFACT_BASE_URL":  "https://artifactory.example.com",
+		"ARTIFACT_BASE_URL":        "http://nexus:8081",
+		"ARTIFACT_PUBLIC_BASE_URL": "https://artifactory.example.com",
 	}
 	cfg, err := config.Load(func(k string) string { return env[k] })
 	if err != nil {
@@ -345,6 +346,38 @@ func TestApprovedPackageHasInstallCommand(t *testing.T) {
 	command, _ := decodeObject(t, rec)["install_command"].(string)
 	if !strings.Contains(command, "pip install") || !strings.Contains(command, "artifactory.example.com") {
 		t.Fatalf("команда установки должна вести во внутренний репозиторий: %q", command)
+	}
+}
+
+func TestRequestCardHidesInternalArtifactAddress(t *testing.T) {
+	f := newReadFixture(t)
+	ctx := context.Background()
+	step := "publish"
+	message := "Пакет опубликован: http://nexus:8081/repository/pypi-internal/pkg.whl"
+	action := "pip install -i http://nexus:8081/repository/pypi-internal/simple pkg"
+	if err := f.repo.UpdateRequestItemStatus(ctx, f.itemID, "failed", &step, &message, &action, nil); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := f.repo.UpsertPipelineStep(ctx, domain.PipelineStep{
+		RequestItemID: f.itemID, StepCode: "publish", StepOrder: domain.StepOrder["publish"],
+		Result: "fail", Message: &message,
+		Details: map[string]any{"nexus_url": "http://nexus:8081/repository/pypi-internal/pkg.whl"},
+		StartedAt: &now, FinishedAt: &now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.as(t, f.author, []string{"developer"},
+		fmt.Sprintf("/api/v1/requests/%d", f.requestID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "nexus:8081") {
+		t.Fatalf("внутренний адрес утёк в карточку: %s", body)
+	}
+	if !strings.Contains(body, "https://artifactory.example.com/repository/pypi-internal") {
+		t.Fatalf("публичный адрес не подставлен: %s", body)
 	}
 }
 

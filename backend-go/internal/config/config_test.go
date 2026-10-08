@@ -157,6 +157,13 @@ func TestPublicArtifactURLAndWebOverrides(t *testing.T) {
 	if got != "https://packages.example/repository/pypi-internal/simple" {
 		t.Fatalf("public URL = %q", got)
 	}
+	text := cfg.PublicArtifactText(
+		"Пакет опубликован: http://nexus:8081/repository/pypi-internal/pkg.whl; " +
+			"pip install -i http://nexus:8081/repository/pypi-internal/simple pkg",
+	)
+	if strings.Contains(text, "nexus:8081") || strings.Count(text, "https://packages.example") != 2 {
+		t.Fatalf("внутренний адрес не заменён во всём тексте: %q", text)
+	}
 }
 
 // TestBannerTimeoutIsSeparateVariable — BANNER_SCAN_TIMEOUT_SECONDS у

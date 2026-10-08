@@ -319,6 +319,28 @@ func TestPHPMetadata(t *testing.T) {
 	}
 }
 
+// Packagist p2 обычно отдаёт минифицированный список: общие поля старой
+// версии не повторяются, а наследуются от предыдущей записи. psr/log:3.0.0 —
+// реальный пример, из-за которого MIT раньше терялась и пакет уходил юристам.
+func TestPHPMetadataInheritsLicenseFromMinifiedVersion(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://packagist.test/p2/psr/log.json": `{
+			"minified":"composer/2.0",
+			"packages":{"psr/log":[
+				{"version":"3.0.2","version_normalized":"3.0.2.0","license":["MIT"],
+				 "dist":{"type":"zip","url":"https://dist.test/3.0.2.zip"}},
+				{"version":"3.0.0","version_normalized":"3.0.0.0",
+				 "dist":{"type":"zip","url":"https://dist.test/3.0.0.zip"}}
+			]}}
+		`,
+	}}
+
+	meta := metaFor(t, "php", "psr/log:3.0.0", f)
+	if meta.LicenseSPDX != "MIT" || meta.LicenseRaw != "MIT" {
+		t.Fatalf("минифицированная лицензия не восстановлена: %+v", meta)
+	}
+}
+
 // TestPHPVersionWithLeadingV — v6.4.2 и 6.4.2 это одна версия. Разводить их
 // по двум строкам в базе значило бы модерировать один пакет дважды.
 func TestPHPVersionWithLeadingV(t *testing.T) {

@@ -145,9 +145,15 @@ func TestQueuesFindItemByOpenStepNotOnlyStatus(t *testing.T) {
 		t.Error("пакет с непогашенным шагом лицензии должен быть в очереди юристов, " +
 			"хотя его статус — awaiting_security")
 	}
+	if status := queueItem(t, legal, f.itemID)["status"]; status != "awaiting_legal" {
+		t.Errorf("в очереди юристов показан статус %v вместо awaiting_legal", status)
+	}
 	security := decodeArray(t, f.do(t, f.outsider, []string{"devsecops"}, http.MethodGet, "/api/v1/queue/security", ""))
 	if !containsQueueItem(security, f.itemID) {
 		t.Error("пакет должен быть и в очереди DevSecOps")
+	}
+	if status := queueItem(t, security, f.itemID)["status"]; status != "awaiting_security" {
+		t.Errorf("в очереди DevSecOps показан статус %v вместо awaiting_security", status)
 	}
 }
 

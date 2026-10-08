@@ -108,10 +108,8 @@ func Run(ctx context.Context, pc *Context, fromCode string) (Result, error) {
 		}
 
 		if outcome.NotifyEvent != "" {
-			result.Notifications = append(result.Notifications, Notification{
-				Event: outcome.NotifyEvent, Roles: outcome.NotifyRoles,
-				Message: outcome.Message, RequestItemID: pc.Item.ID,
-			})
+			result.Notifications = append(result.Notifications,
+				notificationsForOutcome(outcome, pc.Item.ID)...)
 		}
 
 		if outcome.ItemStatus != "" {
@@ -141,6 +139,34 @@ func Run(ctx context.Context, pc *Context, fromCode string) (Result, error) {
 		result.ItemStatus, result.Blocked = deferredStatus, true
 	}
 	return result, nil
+}
+
+// notificationsForOutcome не смешивает роли в одном событии. Публикация
+// может одновременно ждать лицензию и песочницу; раньше событие называлось по
+// первой блокировке («ждёт DevSecOps»), но рассылалось и юристам. Теперь у
+// каждой роли собственное корректно названное уведомление.
+func notificationsForOutcome(outcome StepOutcome, itemID int64) []Notification {
+	if len(outcome.NotifyRoles) <= 1 {
+		return []Notification{{
+			Event: outcome.NotifyEvent, Roles: outcome.NotifyRoles,
+			Message: outcome.Message, RequestItemID: itemID,
+		}}
+	}
+	out := make([]Notification, 0, len(outcome.NotifyRoles))
+	for _, role := range outcome.NotifyRoles {
+		event := outcome.NotifyEvent
+		switch role {
+		case "legal":
+			event = EventAwaitsLegal
+		case "devsecops":
+			event = EventAwaitsSecurity
+		}
+		out = append(out, Notification{
+			Event: event, Roles: []string{role}, Message: outcome.Message,
+			RequestItemID: itemID,
+		})
+	}
+	return out
 }
 
 // loadSecurityOverride — одна проверка решения DevSecOps на весь прогон.

@@ -185,7 +185,7 @@ curl -sS -X POST http://localhost:8080/api/v1/gitlab/requests \
      "dependency_kind": "direct", "message": null},
     {"raw": "requests 2.31.0", "state": "already_in_base", "name": "requests", "version": "2.31.0",
      "package_version_id": 7, "status": "approved", "link": "/api/v1/packages/7",
-     "install_command": "pip install -i http://nexus:8081/repository/pypi-internal/simple requests==2.31.0",
+     "install_command": "pip install -i https://packages.example/repository/pypi-internal/simple requests==2.31.0",
      "message": "requests 2.31.0 уже одобрен — заявка по нему не требуется."},
     {"raw": "lodash@4.17.21", "state": "invalid_format",
      "message": "«lodash@4.17.21» не соответствует формату pypi. Ожидается: name==version",

@@ -171,6 +171,110 @@ func TestIdempotencyKey_NoDuplicate(t *testing.T) {
 	}
 }
 
+func TestApproveFailedPublicationSiblings(t *testing.T) {
+	r, cleanup := mustPool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	pkg, err := r.GetOrCreatePackage(ctx, "pypi", "publication-sync-fixture", "publication-sync-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ver, err := r.CreatePackageVersion(ctx, pkg.ID, "1.0.0", "1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resetItems(t, r, ver.ID)
+	author := mustUser(t, r, "publication-sync-author")
+	newRequest := func() *domain.ModerationRequest {
+		req, err := r.CreateModerationRequest(ctx, domain.ModerationRequest{
+			AuthorID: author, Manager: "pypi", Status: "pending", Source: "ui",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+	newItem := func(req *domain.ModerationRequest) *domain.RequestItem {
+		item, err := r.CreateRequestItem(ctx, domain.RequestItem{
+			RequestID: req.ID, PackageVersionID: ver.ID,
+			RequestedName: pkg.Name, RequestedVersion: "1.0.0",
+			DependencyKind: "direct", Status: "queued",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+
+	failedReq := newRequest()
+	failedItem := newItem(failedReq)
+	publish := "publish"
+	oldFailure := "Nexus временно отклонил публикацию"
+	if err := r.UpdateRequestItemStatus(ctx, failedItem.ID, "failed", &publish,
+		&oldFailure, strPtr("Повторите публикацию"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.UpsertPipelineStep(ctx, domain.PipelineStep{
+		RequestItemID: failedItem.ID, StepCode: "publish",
+		StepOrder: domain.StepOrder["publish"], Result: "fail", Message: &oldFailure,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Неудача не на публикации не должна быть снята чужим успехом.
+	licenseReq := newRequest()
+	licenseItem := newItem(licenseReq)
+	license := "license"
+	if err := r.UpdateRequestItemStatus(ctx, licenseItem.ID, "failed", &license,
+		strPtr("Лицензия отклонена"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	successReq := newRequest()
+	successItem := newItem(successReq)
+	successMessage := "Пакет опубликован: http://nexus:8081/repository/pypi-internal/pkg.whl"
+	successAction := "pip install publication-sync-fixture==1.0.0"
+	if err := r.UpdateRequestItemStatus(ctx, successItem.ID, "approved", &publish,
+		&successMessage, &successAction, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.UpsertPipelineStep(ctx, domain.PipelineStep{
+		RequestItemID: successItem.ID, StepCode: "publish",
+		StepOrder: domain.StepOrder["publish"], Result: "pass", Message: &successMessage,
+		Details: map[string]any{"nexus_url": "http://nexus:8081/repository/pypi-internal/pkg.whl"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	requestIDs, err := r.ApproveFailedPublicationSiblings(ctx, successItem.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requestIDs) != 1 || requestIDs[0] != failedReq.ID {
+		t.Fatalf("синхронизированы заявки %v, ожидалась только #%d", requestIDs, failedReq.ID)
+	}
+	updated, err := r.GetRequestItem(ctx, failedItem.ID)
+	if err != nil || updated == nil {
+		t.Fatalf("старый пакет не прочитан: item=%+v err=%v", updated, err)
+	}
+	if updated.Status != "approved" || updated.NextAction == nil || *updated.NextAction != successAction {
+		t.Fatalf("старая ошибка публикации не исправлена: %+v", updated)
+	}
+	steps, err := r.ListStepsByItem(ctx, failedItem.ID)
+	if err != nil || len(steps) != 1 || steps[0].Result != "pass" {
+		t.Fatalf("старый шаг публикации не синхронизирован: steps=%+v err=%v", steps, err)
+	}
+	untouched, err := r.GetRequestItem(ctx, licenseItem.ID)
+	if err != nil || untouched == nil || untouched.Status != "failed" {
+		t.Fatalf("чужая неудача была ошибочно снята: item=%+v err=%v", untouched, err)
+	}
+	status, err := r.RecomputeRequestStatus(ctx, failedReq.ID)
+	if err != nil || status != "approved" {
+		t.Fatalf("статус старой заявки = %q, err=%v", status, err)
+	}
+}
+
 func strPtr(s string) *string { return &s }
 
 // mustUser — пользователь для фикстуры. Раньше здесь стоял литерал AuthorID: 1

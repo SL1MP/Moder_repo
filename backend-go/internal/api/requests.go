@@ -227,8 +227,8 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 			"waiting_for":        nilIfEmpty(waitingFor),
 			"current_step":       item.CurrentStep,
 			"current_step_title": stepTitleOf(item.CurrentStep),
-			"blocked_reason":     item.BlockedReason,
-			"next_action":        item.NextAction,
+			"blocked_reason":     h.publicArtifactTextPtr(item.BlockedReason),
+			"next_action":        h.publicArtifactTextPtr(item.NextAction),
 			"waiting_since":      item.WaitingSince,
 			"finished_at":        item.FinishedAt,
 			"license_spdx":       version.Version.LicenseSPDX,
@@ -236,7 +236,7 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 			"max_vuln_score":     version.Version.MaxVulnScore,
 			"vulnerabilities":    vulnerabilityViews(vulns[item.PackageVersionID], false),
 			"code_findings":      codeFindingViews(findings[item.PackageVersionID]),
-			"steps":              stepViews(itemSteps),
+			"steps":              h.stepViews(itemSteps),
 			"can_restart":        h.canRestartItem(r, req, &item),
 		}
 		// Дерево зависимостей: кто притащил этот пакет и по какому требованию.
@@ -371,7 +371,7 @@ func (h *RequestsHandler) canCancel(r *http.Request, req *domain.ModerationReque
 // stepViews — снимок конвейера для карточки. Порт runner.step_snapshot:
 // отдаются ВСЕ девять шагов, включая те, до которых прогон не дошёл, — иначе
 // в карточке не видно, что ещё впереди.
-func stepViews(steps []domain.PipelineStep) []map[string]any {
+func (h *RequestsHandler) stepViews(steps []domain.PipelineStep) []map[string]any {
 	byCode := make(map[string]domain.PipelineStep, len(steps))
 	for _, s := range steps {
 		byCode[s.StepCode] = s
@@ -385,14 +385,49 @@ func stepViews(steps []domain.PipelineStep) []map[string]any {
 		}
 		if s, ok := byCode[code]; ok {
 			view["result"] = s.Result
-			view["message"] = s.Message
-			view["details"] = s.Details
+			view["message"] = h.publicArtifactTextPtr(s.Message)
+			view["details"] = h.publicArtifactValue(s.Details)
 			view["started_at"] = s.StartedAt
 			view["finished_at"] = s.FinishedAt
 		}
 		out = append(out, view)
 	}
 	return out
+}
+
+func (h *RequestsHandler) publicArtifactTextPtr(value *string) *string {
+	if value == nil || h.Cfg == nil {
+		return value
+	}
+	public := h.Cfg.PublicArtifactText(*value)
+	return &public
+}
+
+// publicArtifactValue проходит по JSON-совместимым details рекурсивно: URL и
+// команды могут находиться не только на верхнем уровне, а например внутри
+// сведений о публикации OCI.
+func (h *RequestsHandler) publicArtifactValue(value any) any {
+	if h.Cfg == nil {
+		return value
+	}
+	switch current := value.(type) {
+	case string:
+		return h.Cfg.PublicArtifactText(current)
+	case map[string]any:
+		out := make(map[string]any, len(current))
+		for key, nested := range current {
+			out[key] = h.publicArtifactValue(nested)
+		}
+		return out
+	case []any:
+		out := make([]any, len(current))
+		for i, nested := range current {
+			out[i] = h.publicArtifactValue(nested)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func statusTitle(status string) string {

@@ -48,15 +48,17 @@ func (h *QueuesHandler) Security(w http.ResponseWriter, r *http.Request) {
 		[]string{"awaiting_security", "quarantined"},
 		// sast_scan в списке нет: SAST информационный, решения DevSecOps по
 		// нему не требуется, и пакет не должен попадать в очередь из-за него.
-		[]string{"vuln_scan", "banner_scan", "quarantine"})
+		[]string{"vuln_scan", "banner_scan", "quarantine"}, "devsecops")
 }
 
 // Legal — GET /api/v1/queue/legal.
 func (h *QueuesHandler) Legal(w http.ResponseWriter, r *http.Request) {
-	h.queue(w, r, []string{"awaiting_legal", "license_claimed"}, []string{"license"})
+	h.queue(w, r, []string{"awaiting_legal", "license_claimed"}, []string{"license"}, "legal")
 }
 
-func (h *QueuesHandler) queue(w http.ResponseWriter, r *http.Request, statuses, steps []string) {
+func (h *QueuesHandler) queue(
+	w http.ResponseWriter, r *http.Request, statuses, steps []string, role string,
+) {
 	rows, err := h.Repo.QueueItems(r.Context(), statuses, steps)
 	if err != nil {
 		writeError(w, r, errInternal("Не удалось получить очередь").Because(err))
@@ -66,14 +68,30 @@ func (h *QueuesHandler) queue(w http.ResponseWriter, r *http.Request, statuses, 
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		item := row.Item
+		// У request_item один глобальный статус, хотя он может параллельно
+		// ждать обе роли. В очереди каждой роли показываем причину попадания
+		// именно в эту очередь, иначе юрист видел «Ждёт DevSecOps» у своей
+		// задачи. Исключение — карантин: это отдельное действие DevSecOps.
+		viewStatus := item.Status
+		switch role {
+		case "legal":
+			viewStatus = "awaiting_legal"
+			if row.LicenseClaimID != nil {
+				viewStatus = "license_claimed"
+			}
+		case "devsecops":
+			if item.Status != "quarantined" {
+				viewStatus = "awaiting_security"
+			}
+		}
 		out = append(out, map[string]any{
 			"item_id":          item.ID,
 			"request_id":       item.RequestID,
 			"manager":          row.Manager,
 			"name":             item.RequestedName,
 			"version":          item.RequestedVersion,
-			"status":           item.Status,
-			"status_title":     statusTitle(item.Status),
+			"status":           viewStatus,
+			"status_title":     statusTitle(viewStatus),
 			"current_step":     item.CurrentStep,
 			"blocked_reason":   item.BlockedReason,
 			"waiting_since":    item.WaitingSince,
