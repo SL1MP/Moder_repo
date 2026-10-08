@@ -174,13 +174,17 @@ func (r *Repo) UpdateRequestItemStatus(ctx context.Context, id int64, status str
 	return nil
 }
 
-// ApproveFailedPublicationSiblings синхронизирует старые заявки на ту же
-// версию после успешной публикации. Меняются только пакеты, которые упали
-// именно на publish: неудачу blacklist, песочницы или лицензии чужая успешная
-// заявка отменять не должна.
+// ApprovePublishedSiblings синхронизирует все старые заявки на ту же версию
+// после успешной публикации. Версия пакета общая для всех заявок: если она
+// реально появилась во внутреннем репозитории, прежняя ошибка больше не
+// должна показываться разработчику как актуальный итог этого пакета.
+//
+// Исключаются только уже одобренные и явно закрытые автором заявки. Последнее
+// важно: закрытие заявки — это намерение пользователя, а не ошибка проверки,
+// и поздняя публикация не должна открывать её снова.
 //
 // Возвращаются заявки, чей агрегатный статус нужно пересчитать.
-func (r *Repo) ApproveFailedPublicationSiblings(
+func (r *Repo) ApprovePublishedSiblings(
 	ctx context.Context, sourceItemID int64,
 ) ([]int64, error) {
 	rows, err := r.pool.Query(ctx, `
@@ -200,8 +204,8 @@ func (r *Repo) ApproveFailedPublicationSiblings(
 			FROM source
 			WHERE ri.package_version_id = source.package_version_id
 			  AND ri.id <> $1
-			  AND ri.status = 'failed'
-			  AND ri.current_step = 'publish'
+			  AND ri.status <> 'approved'
+			  AND ri.status <> 'cancelled'
 			RETURNING ri.id, ri.request_id
 		), updated_steps AS (
 			UPDATE pipeline_step ps

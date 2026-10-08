@@ -48,6 +48,13 @@ func (n *Nexus) assetPath(t Target) string {
 			return fmt.Sprintf("%s/%s/%s/%s",
 				strings.ReplaceAll(group, ".", "/"), artifact, t.Version, t.Filename)
 		}
+	case "php":
+		// Nexus Composer derives the final asset path from composer.json and
+		// stores the archive without its extension. The component URL therefore
+		// uses vendor/package/version/<vendor-package-version>, not the raw
+		// Packagist zip filename.
+		archiveName := strings.TrimSuffix(t.Filename, path.Ext(t.Filename))
+		return fmt.Sprintf("%s/%s/%s", t.Name, t.Version, archiveName)
 	}
 	return fmt.Sprintf("%s/%s/%s", t.Name, t.Version, t.Filename)
 }
@@ -544,6 +551,14 @@ func (n *Nexus) componentForm(t Target, data []byte) ([]byte, string, error) {
 
 	var err error
 	switch t.Manager {
+	case "php":
+		// Composer hosted repositories accept one archive in the generic
+		// `asset` field. The version is supplied explicitly because the
+		// Packagist dist archive may not contain a version field in its
+		// composer.json; Nexus then indexes it under the requested version.
+		if err = writeFile("asset"); err == nil {
+			err = form.WriteField("version", t.Version)
+		}
 	case "pypi":
 		err = writeFile("pypi.asset")
 	case "npm":

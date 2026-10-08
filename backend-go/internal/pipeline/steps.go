@@ -146,6 +146,9 @@ type QuarantineStep struct{}
 func (QuarantineStep) Code() string { return "quarantine" }
 
 func (QuarantineStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
+	if pc.Package.Manager == "git" {
+		return Pass("Проверка карантина отключена для Git-репозитория: ревизия фиксируется коммитом."), nil
+	}
 	published := pc.Version.PublishedAt
 	if published == nil {
 		// Дата публикации приходит из метаданных реестра. Если её ещё не
@@ -208,10 +211,11 @@ func (LicenseStep) Code() string { return "license" }
 func (LicenseStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	// Для этих типов модерации проверка лицензий политикой сервиса отключена.
 	// В частности, у Docker одна метка образа не описывает лицензии всех
-	// входящих в него пакетов, а у файлов и git нет реестра с единым контрактом
-	// метаданных. Не отправляем такие заявки в очередь юристов автоматически.
+	// входящих в него пакетов, а у файлов нет реестра с единым контрактом
+	// метаданных. Git намеренно отсутствует в списке: для репозитория нужно
+	// получить лицензию из метаданных/архива или передать её юристу.
 	switch pc.Package.Manager {
-	case "docker", "files", "git", "luarocks", "terraform":
+	case "docker", "files", "luarocks", "terraform":
 		return StepOutcome{
 			Result:  "skipped",
 			Message: fmt.Sprintf("Проверка лицензии отключена для менеджера %s.", pc.Package.Manager),

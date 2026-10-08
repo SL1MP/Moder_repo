@@ -224,8 +224,9 @@ func TestLicenseDoesNotStopPipeline(t *testing.T) {
 
 func TestLicenseIsNotApplicableToExcludedManagers(t *testing.T) {
 	// Каждый исключённый менеджер должен пройти шаг без реестра лицензий,
-	// метаданных и обращения к внешним зависимостям.
-	for _, manager := range []string{"docker", "files", "git", "luarocks", "terraform"} {
+	// метаданных и обращения к внешним зависимостям. Git намеренно не входит
+	// в список: для репозитория лицензия должна быть проверена отдельно.
+	for _, manager := range []string{"docker", "files", "luarocks", "terraform"} {
 		t.Run(manager, func(t *testing.T) {
 			outcome, err := (pipeline.LicenseStep{}).Run(context.Background(), &pipeline.Context{
 				Package: &domain.Package{Manager: manager},
@@ -243,6 +244,18 @@ func TestLicenseIsNotApplicableToExcludedManagers(t *testing.T) {
 				t.Fatalf("details.manager = %#v, ожидался %q", outcome.Details["manager"], manager)
 			}
 		})
+	}
+}
+
+func TestGitQuarantineIsSkipped(t *testing.T) {
+	outcome, err := (pipeline.QuarantineStep{}).Run(context.Background(), &pipeline.Context{
+		Package: &domain.Package{Manager: "git"},
+	})
+	if err != nil {
+		t.Fatalf("QuarantineStep.Run: %v", err)
+	}
+	if outcome.Result != "pass" || outcome.Stop || outcome.Defer {
+		t.Fatalf("результат = %+v, ожидался pass без блокировки", outcome)
 	}
 }
 

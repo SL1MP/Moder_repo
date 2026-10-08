@@ -43,7 +43,7 @@ ARG INSTALL_SEMGREP=true
 # (там yara-python, cgo-биндинг) здесь используется тот же бинарь, что и для
 # semgrep: два внешних сканера запускаются единообразно.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl skopeo yara python3 python3-pip \
+ && apt-get install -y --no-install-recommends ca-certificates curl git skopeo yara python3 python3-pip \
  && rm -rf /var/lib/apt/lists/*
 
 # semgrep — шаг SAST. Ставится отдельно и НЕ фатально: без него шаг честно

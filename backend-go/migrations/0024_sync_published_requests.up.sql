@@ -1,7 +1,6 @@
--- A version is shared by all requests. If an earlier request failed only at
--- publish and a later request published that same version, the old request
--- must reflect the artifact that now exists. This backfills history; the Go
--- worker applies the same rule to future publications.
+-- A version is shared by all requests. If a later request published that
+-- version, every earlier non-cancelled request must reflect the artifact that
+-- now exists, even when the earlier run stopped on a different error.
 
 WITH approved_source AS (
     SELECT DISTINCT ON (ri.package_version_id)
@@ -18,7 +17,7 @@ WITH approved_source AS (
     SELECT ri.id, src.message, src.details, src.started_at, src.finished_at
     FROM request_item ri
     JOIN approved_source src ON src.package_version_id = ri.package_version_id
-    WHERE ri.status = 'failed' AND ri.current_step = 'publish'
+    WHERE ri.status <> 'approved' AND ri.status <> 'cancelled'
 )
 UPDATE pipeline_step ps
 SET result = 'pass',
@@ -52,8 +51,8 @@ SET status = 'approved',
     updated_at = CURRENT_TIMESTAMP
 FROM approved_source src
 WHERE ri.package_version_id = src.package_version_id
-  AND ri.status = 'failed'
-  AND ri.current_step = 'publish';
+  AND ri.status <> 'approved'
+  AND ri.status <> 'cancelled';
 
 -- Recalculate only requests participating in duplicate successful versions.
 -- The CASE is kept identical to Repo.RecomputeRequestStatus.

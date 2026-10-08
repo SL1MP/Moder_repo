@@ -171,7 +171,7 @@ func TestIdempotencyKey_NoDuplicate(t *testing.T) {
 	}
 }
 
-func TestApproveFailedPublicationSiblings(t *testing.T) {
+func TestApprovePublishedSiblings(t *testing.T) {
 	r, cleanup := mustPool(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -222,7 +222,8 @@ func TestApproveFailedPublicationSiblings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Неудача не на публикации не должна быть снята чужим успехом.
+	// Поздняя публикация исправляет и более раннюю ошибку другого шага:
+	// опубликованная версия уже доступна разработчику.
 	licenseReq := newRequest()
 	licenseItem := newItem(licenseReq)
 	license := "license"
@@ -247,12 +248,12 @@ func TestApproveFailedPublicationSiblings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requestIDs, err := r.ApproveFailedPublicationSiblings(ctx, successItem.ID)
+	requestIDs, err := r.ApprovePublishedSiblings(ctx, successItem.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(requestIDs) != 1 || requestIDs[0] != failedReq.ID {
-		t.Fatalf("синхронизированы заявки %v, ожидалась только #%d", requestIDs, failedReq.ID)
+	if len(requestIDs) != 2 {
+		t.Fatalf("синхронизированы заявки %v, ожидалось две старые заявки", requestIDs)
 	}
 	updated, err := r.GetRequestItem(ctx, failedItem.ID)
 	if err != nil || updated == nil {
@@ -265,9 +266,9 @@ func TestApproveFailedPublicationSiblings(t *testing.T) {
 	if err != nil || len(steps) != 1 || steps[0].Result != "pass" {
 		t.Fatalf("старый шаг публикации не синхронизирован: steps=%+v err=%v", steps, err)
 	}
-	untouched, err := r.GetRequestItem(ctx, licenseItem.ID)
-	if err != nil || untouched == nil || untouched.Status != "failed" {
-		t.Fatalf("чужая неудача была ошибочно снята: item=%+v err=%v", untouched, err)
+	updatedLicense, err := r.GetRequestItem(ctx, licenseItem.ID)
+	if err != nil || updatedLicense == nil || updatedLicense.Status != "approved" {
+		t.Fatalf("старая ошибка не была синхронизирована: item=%+v err=%v", updatedLicense, err)
 	}
 	status, err := r.RecomputeRequestStatus(ctx, failedReq.ID)
 	if err != nil || status != "approved" {

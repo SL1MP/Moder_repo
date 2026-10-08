@@ -319,7 +319,7 @@ func (w *pipelineWorker) handle(ctx context.Context, job queue.Job) {
 // Версия в базе общая, поэтому после успешной публикации оставлять прежнюю
 // заявку с ошибкой шага publish противоречиво: артефакт уже доступен.
 func (w *pipelineWorker) syncPublishedSiblings(ctx context.Context, itemID int64) {
-	requestIDs, err := w.repo.ApproveFailedPublicationSiblings(ctx, itemID)
+	requestIDs, err := w.repo.ApprovePublishedSiblings(ctx, itemID)
 	if err != nil {
 		w.logger.Error("старые заявки после публикации не синхронизированы",
 			"item", itemID, "error", err)

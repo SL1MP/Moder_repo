@@ -159,6 +159,53 @@ func TestNexusPublishUsesComponentsAPI(t *testing.T) {
 	}
 }
 
+func TestNexusPublishesComposerArchive(t *testing.T) {
+	fields := map[string]string{}
+	var uploadedName string
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindNexus},
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodHead {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			reader, err := r.MultipartReader()
+			if err != nil {
+				t.Fatalf("multipart: %v", err)
+			}
+			for {
+				part, nextErr := reader.NextPart()
+				if nextErr == io.EOF {
+					break
+				}
+				if nextErr != nil {
+					t.Fatalf("part: %v", nextErr)
+				}
+				body, _ := io.ReadAll(part)
+				if part.FileName() != "" {
+					uploadedName = part.FileName()
+				}
+				fields[part.FormName()] = string(body)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	url, err := store.Publish(context.Background(), artifactstore.Target{
+		Repo: "php-internal", Manager: "php", Name: "psr/log", Version: "3.0.0",
+		Filename: "psr-log-3.0.0.zip", Path: "psr/log/3.0.0/psr-log-3.0.0.zip",
+	}, []byte("zip-bytes"))
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if fields["asset"] != "zip-bytes" || uploadedName != "psr-log-3.0.0.zip" {
+		t.Fatalf("Composer asset = %q (%q), ожидался asset с zip", fields["asset"], uploadedName)
+	}
+	if fields["version"] != "3.0.0" {
+		t.Fatalf("Composer version = %q, ожидалась 3.0.0", fields["version"])
+	}
+	if !strings.HasSuffix(url, "/repository/php-internal/psr/log/3.0.0/psr-log-3.0.0") {
+		t.Fatalf("Composer URL = %q", url)
+	}
+}
+
 // go-модули Nexus хранит в raw-репозитории: каталог задаём сами, иначе
 // GOPROXY их не найдёт.
 func TestNexusPublishGoModuleAsRaw(t *testing.T) {
