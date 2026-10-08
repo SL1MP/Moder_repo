@@ -153,10 +153,11 @@ func findUser(ctx context.Context, tx pgx.Tx, claims UserClaims) (*domain.User, 
 
 func insertUser(ctx context.Context, tx pgx.Tx, claims UserClaims, now time.Time) (*domain.User, error) {
 	// Keycloak подтверждает личность, но не управляет правами приложения.
-	// OIDC-пользователь впервые появляется без ролей; администратор назначает
-	// их в web-интерфейсе. Роли из локального токена оставляем для сервисных
-	// учёток и тестовых/CLI-сценариев.
-	rolesValue := []string{}
+	// При первом входе обычный OIDC-пользователь получает минимальную роль
+	// developer. Последующие изменения ролей выполняются в web-интерфейсе;
+	// роли из Keycloak не должны перезаписывать права внутри приложения.
+	// Роли из локального токена оставляем для сервисных учёток.
+	rolesValue := []string{"developer"}
 	if claims.IsService {
 		rolesValue = claims.Roles
 	}

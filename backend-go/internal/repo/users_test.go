@@ -16,7 +16,7 @@ import (
 // (уникальность логина и subject, NOT NULL на roles), и на моке она
 // «работает» ровно до первого прода.
 
-func TestSyncUserOIDCRolesAreManagedInsideService(t *testing.T) {
+func TestSyncUserOIDCFirstLoginGetsDeveloperAndRolesRemainManagedInsideService(t *testing.T) {
 	r, closePool := mustPool(t)
 	defer closePool()
 	ctx := context.Background()
@@ -39,15 +39,15 @@ func TestSyncUserOIDCRolesAreManagedInsideService(t *testing.T) {
 	if !created.IsActive {
 		t.Fatal("новая учётка должна быть активной")
 	}
-	if len(created.Roles) != 0 {
-		t.Fatalf("роли Keycloak не должны выдаваться приложению автоматически: %v", created.Roles)
+	if strings.Join(created.Roles, ",") != "developer" {
+		t.Fatalf("новая OIDC-учётка должна получить только роль developer, а не роли Keycloak: %v", created.Roles)
 	}
 	if created.LastLoginAt == nil {
 		t.Fatal("время входа должно проставляться")
 	}
 
 	// Администратор назначает роли внутри приложения.
-	created, err = r.UpdateUserAccess(ctx, created.ID, []string{"developer"}, true, now)
+	created, err = r.UpdateUserAccess(ctx, created.ID, []string{"legal"}, true, now)
 	if err != nil {
 		t.Fatalf("назначение роли: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestSyncUserOIDCRolesAreManagedInsideService(t *testing.T) {
 	if updated.ID != created.ID {
 		t.Fatalf("должна обновляться та же учётка: было %d, стало %d", created.ID, updated.ID)
 	}
-	if strings.Join(updated.Roles, ",") != "developer" {
+	if strings.Join(updated.Roles, ",") != "legal" {
 		t.Fatalf("Keycloak перезаписал роли приложения: %v", updated.Roles)
 	}
 }
