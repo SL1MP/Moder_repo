@@ -294,7 +294,10 @@ func TestBadConstraintIsNamed(t *testing.T) {
 }
 
 func TestForKnowsEveryManager(t *testing.T) {
-	for _, manager := range []string{"pypi", "npm", "go", "nuget"} {
+	for _, manager := range []string{
+		"pypi", "npm", "go", "nuget", "conan",
+		"maven", "luarocks", "php", "terraform",
+	} {
 		scheme, err := For(manager)
 		if err != nil {
 			t.Fatalf("For(%q): %v", manager, err)
@@ -303,7 +306,9 @@ func TestForKnowsEveryManager(t *testing.T) {
 			t.Errorf("For(%q).Name() = %q", manager, scheme.Name())
 		}
 	}
-	if _, err := For("maven"); err == nil {
-		t.Error("для нереализованного менеджера ожидалась ошибка")
+	for _, manager := range []string{"docker", "git", "files"} {
+		if _, err := For(manager); err == nil {
+			t.Errorf("для менеджера без реестрового графа %q ожидалась ошибка", manager)
+		}
 	}
 }
