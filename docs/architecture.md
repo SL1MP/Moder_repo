@@ -291,8 +291,10 @@ packages.lock.json, корневой `packages[""]` в package-lock.json). Тр�
 
 - Структурные JSON-логи содержат `request_id`; nginx возвращает его в
   `X-Request-Id`.
-- `/metrics` отдаёт метрики HTTP, шагов конвейера, внешних вызовов, возраста
-  OSV, очереди и сторожа.
+- `/metrics` процесса API отдаёт метрики состояния очереди и сторожа;
+  внутренний `worker-go:9091/metrics` — результаты и длительность реальных
+  шагов конвейера, обращения к внешним интеграциям и возраст OSV. Профиль `monitoring`
+  собирает оба target'а в Prometheus и автоматически provision'ит Grafana.
 - `/health` проверяет живость процесса API, `/ready` — доступность PostgreSQL;
   состояние worker доступно через `/api/v1/system/status`.
 - Внешние вызовы используют таймауты, повторные попытки и circuit breaker.

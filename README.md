@@ -73,12 +73,40 @@ docker compose run --rm migrate-go schema   # схема базы против �
 | Liveness | http://localhost:8080/health |
 | Readiness (включая PostgreSQL) | http://localhost:8080/ready |
 | Метрики Prometheus | http://localhost:8080/metrics |
+| Prometheus UI (профиль `monitoring`) | http://localhost:9090 |
+| Grafana (профиль `monitoring`) | http://localhost:3000 |
 | Keycloak (профиль `sso`) | http://localhost:8081 |
 | Nexus (профиль `nexus`) | http://localhost:8082 |
 
 Тестовые учётные записи для локального стенда создавайте через bootstrap или
 страницу «Настройка → Пользователи и роли»; готовые пароли в репозитории не
 публикуются.
+
+### Prometheus и Grafana
+
+Готовый профиль наблюдаемости запускается отдельно и не обязателен для работы
+конвейера:
+
+```bash
+make monitoring-up
+```
+
+Prometheus собирает API (`api-go:8000/metrics`) и worker
+(`worker-go:9091/metrics`). В Grafana автоматически подключается datasource и
+dashboard **Moderation → Moderation — обзор**. Правила предупреждают о
+недоступности API/worker, зависшей очереди, серии ошибок шагов, открытом
+circuit breaker и устаревшем OSV.
+
+Оба UI по умолчанию публикуются только на `127.0.0.1`. Для удалённого сервера
+используйте SSH tunnel:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 user@server
+```
+
+Перед запуском смените `GRAFANA_ADMIN_PASSWORD` в `.env`. Остановка без
+удаления истории: `make monitoring-down`. Диагностика каждого алерта описана
+в [`docs/runbooks/monitoring.md`](docs/runbooks/monitoring.md).
 
 ### Вход через Keycloak
 
@@ -403,6 +431,7 @@ PostgreSQL уведомляет оба процесса: `api-go` в фоне с
 - [`docs/migration-from-ci.md`](docs/migration-from-ci.md) — переход с `package_list.txt` и CI-проверок
 - [`docs/migration-to-go.md`](docs/migration-to-go.md) — исторический план завершённого переноса backend с Python на Go
 - [`docs/scanning-and-reports.md`](docs/scanning-and-reports.md) — как устроены проверки на SAST и политический контент и где брать файлы отчётов (JSON и HTML)
+- [`docs/runbooks/monitoring.md`](docs/runbooks/monitoring.md) — Prometheus/Grafana и действия по каждому штатному алерту
 
 ## Что сервис намеренно не делает
 

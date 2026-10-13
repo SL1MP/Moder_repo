@@ -65,8 +65,8 @@ server-side сессиями, см. `docs/auth.md`. До переноса на G
 - Если меняется API — обновлён `docs/api.md`.
 - Если меняется набор ролей/прав — обновлены `docs/stakeholders.md`/`docs/auth.md` и правки
   прав пишутся в `audit_log` (см. `docs/auth.md`, разрыв про `sync_user`).
-- Если добавлена новая метрика Prometheus — добавлен алерт/панель (по аналогии с
-  `deploy/prometheus/alerts.yml`/`deploy/grafana/...` у sentrix — у этого сервиса пока нет
-  собственных provisioning-файлов дашборда, завести при переносе на Go).
+- Если добавлена новая метрика Prometheus — одновременно добавлены панель,
+  осмысленный alert (если событие требует реакции) и runbook. Эталонные файлы:
+  `monitoring/prometheus/rules/moderation.yml` и `monitoring/grafana/`.
 - Для критичного преобразования данных — golden-file с зафиксированным ожидаемым результатом до
   отключения старого пути (см. `migration-to-go.md`).

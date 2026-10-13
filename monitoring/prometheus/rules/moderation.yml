@@ -1,0 +1,116 @@
+groups:
+  - name: moderation.availability
+    rules:
+      - alert: ModerationAPIDown
+        expr: up{job="moderation-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: moderation
+        annotations:
+          summary: API сервиса модерации недоступен
+          description: Prometheus не может получить /metrics у api-go более двух минут.
+          runbook_url: docs/runbooks/monitoring.md#moderationapidown
+
+      - alert: ModerationWorkerDown
+        expr: up{job="moderation-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: moderation
+        annotations:
+          summary: Worker сервиса модерации недоступен
+          description: Prometheus не может получить метрики worker-go более двух минут; новые пакеты могут накапливаться в очереди.
+          runbook_url: docs/runbooks/monitoring.md#moderationworkerdown
+
+      - alert: ModerationWorkerNotProcessing
+        expr: moderation_worker_alive{job="moderation-api"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: moderation
+        annotations:
+          summary: Worker не разбирает очередь
+          description: API видит залежавшиеся пакеты; worker-go не успевает или не работает.
+          runbook_url: docs/runbooks/monitoring.md#moderationworkernotprocessing
+
+  - name: moderation.pipeline
+    rules:
+      - alert: ModerationPipelineItemsStuck
+        expr: moderation_pipeline_stuck_items{job="moderation-api"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: moderation
+        annotations:
+          summary: В очереди есть зависшие пакеты
+          description: "Зависших элементов: {{ $value }}. Проверьте worker-go и внешние интеграции."
+          runbook_url: docs/runbooks/monitoring.md#moderationpipelineitemsstuck
+
+      - alert: ModerationPipelineFailuresBurst
+        expr: sum(increase(moderation_pipeline_step_total{result="fail"}[10m])) >= 5
+        for: 2m
+        labels:
+          severity: warning
+          component: moderation
+        annotations:
+          summary: Серия ошибок в конвейере модерации
+          description: "За десять минут зафиксировано {{ $value }} неуспешных шагов."
+          runbook_url: docs/runbooks/monitoring.md#moderationpipelinefailuresburst
+
+      - alert: ModerationWatchdogRecoveringItems
+        expr: increase(moderation_watchdog_recovered_total{job="moderation-api"}[15m]) > 0
+        labels:
+          severity: warning
+          component: moderation
+        annotations:
+          summary: Сторож API подхватывает работу worker
+          description: Worker не забрал часть пакетов вовремя; их начал обрабатывать страховочный процесс API.
+          runbook_url: docs/runbooks/monitoring.md#moderationwatchdogrecoveringitems
+
+  - name: moderation.integrations
+    rules:
+      - alert: ModerationCircuitBreakerOpen
+        expr: moderation_circuit_state == 1
+        for: 1m
+        labels:
+          severity: critical
+          component: moderation
+        annotations:
+          summary: Отключена внешняя интеграция {{ $labels.service }}
+          description: Circuit breaker остаётся открытым более минуты после серии ошибок внешнего сервиса.
+          runbook_url: docs/runbooks/monitoring.md#moderationcircuitbreakeropen
+
+      - alert: ModerationExternalCallsFailing
+        expr: sum by (service) (increase(moderation_external_call_total{outcome=~"error|failed|circuit_open"}[10m])) >= 5
+        for: 2m
+        labels:
+          severity: warning
+          component: moderation
+        annotations:
+          summary: Ошибки интеграции {{ $labels.service }}
+          description: "За десять минут накопилось {{ $value }} ошибок обращения к внешней системе."
+          runbook_url: docs/runbooks/monitoring.md#moderationexternalcallsfailing
+
+      - alert: ModerationOSVSnapshotMissing
+        expr: absent(moderation_osv_index_age_days{job="moderation-worker"})
+        for: 15m
+        labels:
+          severity: warning
+          component: moderation
+        annotations:
+          summary: Возраст снапшота OSV неизвестен
+          description: Worker не опубликовал метрику возраста OSV; проверьте первоначальную синхронизацию базы.
+          runbook_url: docs/runbooks/monitoring.md#moderationosvsnapshotmissing
+
+      - alert: ModerationOSVSnapshotStale
+        expr: moderation_osv_index_age_days{job="moderation-worker"} > 3
+        for: 30m
+        labels:
+          severity: warning
+          component: moderation
+        annotations:
+          summary: Снапшот OSV устарел
+          description: "Возраст снапшота OSV — {{ $value }} дн.; автоматическое решение по уязвимостям может быть недоступно."
+          runbook_url: docs/runbooks/monitoring.md#moderationosvsnapshotstale
+

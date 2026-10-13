@@ -7,7 +7,7 @@ PROFILES ?= --profile nexus --profile sso
 .PHONY: help env up up-all down restart logs ps build bootstrap migrate migrate-status schema \
         test lint fmt shell cli sync-osv rescan quarantine import-list run-pending \
         service-account api-smoke certs wait-nexus check-dockerfiles \
-        prod-up prod-down clean
+        monitoring-up monitoring-down prod-up prod-down clean
 
 help: ## Список команд
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -90,6 +90,14 @@ quarantine: ## Снять истёкший карантин
 
 run-pending: ## Разобрать очередь синхронно, не дожидаясь сторожа
 	$(COMPOSE) run --rm worker-go worker --once
+
+monitoring-up: env ## Поднять Prometheus и Grafana (профиль monitoring)
+	$(COMPOSE) --profile monitoring up -d --build api-go worker-go prometheus grafana
+	@echo "Prometheus: http://localhost:$${PROMETHEUS_PORT:-9090}"
+	@echo "Grafana:    http://localhost:$${GRAFANA_PORT:-3000}"
+
+monitoring-down: ## Остановить Prometheus и Grafana без удаления данных
+	$(COMPOSE) --profile monitoring stop prometheus grafana
 
 service-account: ## Сервисная учётка для CI: make service-account USER=ci.gitlab ROLES=developer
 	@# Пароль — через MODERATION_SERVICE_PASSWORD или стандартный ввод: значение

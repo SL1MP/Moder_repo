@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"moderation/internal/config"
 	"moderation/internal/db"
@@ -56,6 +59,7 @@ func runWorker(args []string, logger *slog.Logger) int {
 	fs := flag.NewFlagSet("worker", flag.ContinueOnError)
 	concurrency := fs.Int("concurrency", defaultWorkerConcurrency, "сколько пакетов обрабатывать разом")
 	once := fs.Bool("once", false, "разобрать очередь и выйти (для CI и ручной прогонки)")
+	metricsAddr := fs.String("metrics-addr", ":9091", "адрес внутреннего HTTP endpoint метрик")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -103,6 +107,12 @@ func runWorker(args []string, logger *slog.Logger) int {
 		logger.Info("очередь разобрана", "обработано", n)
 		return 0
 	}
+	stopMetrics, err := startWorkerMetricsServer(ctx, *metricsAddr, logger)
+	if err != nil {
+		logger.Error("endpoint метрик worker не запущен", "addr", *metricsAddr, "error", err)
+		return 1
+	}
+	defer stopMetrics()
 	restartOnStoredSettingsChange(ctx, settingsChanged, stop, logger)
 
 	queued, running, err := w.queue.Depth(ctx)
@@ -132,6 +142,57 @@ func runWorker(args []string, logger *slog.Logger) int {
 	wg.Wait()
 	logger.Info("воркер остановлен")
 	return 0
+}
+
+// startWorkerMetricsServer отдаёт метрики именно процесса worker.
+//
+// Реестр Prometheus локален процессу: счётчики шагов, обновлённые worker-go,
+// невозможно прочитать через /metrics процесса api-go. Отдельный внутренний
+// listener устраняет этот разрыв; наружу порт не публикуется.
+func startWorkerMetricsServer(ctx context.Context, addr string, logger *slog.Logger) (func(), error) {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	server := &http.Server{
+		Handler:           workerMetricsHandler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		logger.Info("endpoint метрик worker запущен", "addr", listener.Addr().String())
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("endpoint метрик worker завершился с ошибкой", "error", err)
+		}
+	}()
+
+	var once sync.Once
+	shutdown := func() {
+		once.Do(func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				logger.Warn("endpoint метрик worker не остановлен штатно", "error", err)
+			}
+		})
+	}
+	go func() {
+		<-ctx.Done()
+		shutdown()
+	}()
+	return shutdown, nil
+}
+
+func workerMetricsHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	return mux
 }
 
 // pipelineWorker — зависимости обработки.
