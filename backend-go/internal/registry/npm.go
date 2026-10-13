@@ -202,7 +202,11 @@ func npmChecksum(integrity, shasum string) (string, string) {
 }
 
 func (p *Npm) InstallCommand(ref Ref, baseURL, repo string) string {
-	registry := fmt.Sprintf("%s/repository/%s/", strings.TrimRight(baseURL, "/"), repo)
+	baseURL = strings.TrimRight(baseURL, "/")
+	registry := baseURL + "/"
+	if repo != "" {
+		registry = fmt.Sprintf("%s/repository/%s/", baseURL, repo)
+	}
 	return fmt.Sprintf("npm i --registry=%s %s@%s", registry, ref.DisplayName, ref.RawVersion)
 }
 

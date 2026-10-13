@@ -130,6 +130,37 @@ func TestDockerInstallLocationUsesPublicRegistryPrefix(t *testing.T) {
 	}
 }
 
+func TestGenericInstallLocationsUseJFrogFormatAPIs(t *testing.T) {
+	cfg, err := Load(func(key string) string {
+		values := map[string]string{
+			"DATABASE_URL":             "postgres://localhost/x",
+			"ARTIFACT_STORE":           "generic",
+			"ARTIFACT_BASE_URL":        "https://repo.internal/artifactory",
+			"ARTIFACT_PUBLIC_BASE_URL": "https://repo.example/artifactory/",
+			"ARTIFACT_REPO_PYPI":       "pypi-external-moderated",
+			"ARTIFACT_REPO_NPM":        "npm-external-moderated",
+			"ARTIFACT_REPO_GO":         "go-external-moderated",
+		}
+		return values[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := map[string]string{
+		"pypi": "https://repo.example/artifactory/api/pypi/pypi-external-moderated",
+		"npm":  "https://repo.example/artifactory/api/npm/npm-external-moderated",
+		"go":   "https://repo.example/artifactory/api/go/go-external-moderated",
+	}
+	for manager, wantBase := range cases {
+		base, repo := cfg.ArtifactInstallLocation(manager)
+		if base != wantBase || repo != "" {
+			t.Errorf("%s install location = (%q, %q), ожидалось (%q, пусто)",
+				manager, base, repo, wantBase)
+		}
+	}
+}
+
 func TestPublicArtifactURLAndWebOverrides(t *testing.T) {
 	cfg, err := Load(func(key string) string {
 		if key == "DATABASE_URL" {

@@ -156,7 +156,11 @@ func goLicenses(body []byte) (raw, spdx string) {
 }
 
 func (p *Go) InstallCommand(ref Ref, baseURL, repo string) string {
-	proxy := fmt.Sprintf("%s/repository/%s", strings.TrimRight(baseURL, "/"), repo)
+	baseURL = strings.TrimRight(baseURL, "/")
+	proxy := baseURL
+	if repo != "" {
+		proxy = fmt.Sprintf("%s/repository/%s", baseURL, repo)
+	}
 	return fmt.Sprintf("GOPROXY=%s GONOSUMDB=* GONOSUMCHECK=1 go get %s@%s",
 		proxy, ref.DisplayName, ref.Version)
 }

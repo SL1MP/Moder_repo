@@ -679,7 +679,24 @@ func (c *Config) ArtifactInstallLocation(manager string) (baseURL, repo string) 
 	if baseURL == "" {
 		baseURL = c.ArtifactBaseURL
 	}
-	return baseURL, c.ArtifactRepo(manager)
+	repo = c.ArtifactRepo(manager)
+
+	// JFrog принимает загрузку файлов по /artifactory/{repo}/..., но штатные
+	// клиенты пакетных менеджеров читают репозитории через format-specific API.
+	// Nexus, напротив, использует /repository/{repo}. Передаём готовый JFrog
+	// endpoint и пустое имя repo: плагины воспринимают такую пару как уже
+	// собранный адрес и не добавляют Nexus-префикс.
+	if strings.EqualFold(strings.TrimSpace(c.ArtifactStore), "generic") {
+		switch manager {
+		case "pypi":
+			return fmt.Sprintf("%s/api/pypi/%s", strings.TrimRight(baseURL, "/"), repo), ""
+		case "npm":
+			return fmt.Sprintf("%s/api/npm/%s", strings.TrimRight(baseURL, "/"), repo), ""
+		case "go":
+			return fmt.Sprintf("%s/api/go/%s", strings.TrimRight(baseURL, "/"), repo), ""
+		}
+	}
+	return baseURL, repo
 }
 
 // PublicArtifactURL заменяет внутренний origin артефактори на внешний.

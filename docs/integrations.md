@@ -133,6 +133,15 @@ ARTIFACT_PATH_TEMPLATE_MAVEN={repo}/{name}/{version}/{filename}
 `ARTIFACT_REPO_OSV`, `OSV_PYPI_SNAPSHOT_PATH` и
 `OSV_NPM_SNAPSHOT_PATH` работают одинаково для обеих реализаций.
 
+Команды установки используют format-specific API JFrog, а не Nexus-путь
+`/repository/{repo}`:
+
+```text
+PyPI: {ARTIFACT_PUBLIC_BASE_URL}/api/pypi/{repo}/simple
+npm:  {ARTIFACT_PUBLIC_BASE_URL}/api/npm/{repo}/
+Go:   {ARTIFACT_PUBLIC_BASE_URL}/api/go/{repo}
+```
+
 ### Добавление третьей реализации
 
 Реализуйте `ArtifactStore` (`app/adapters/artifact_store.py`) и подключите в

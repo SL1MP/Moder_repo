@@ -593,6 +593,40 @@ func TestInstallCommands(t *testing.T) {
 	}
 }
 
+func TestJFrogInstallCommands(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{}}
+	cases := map[string]struct {
+		entry, base, want string
+	}{
+		"pypi": {
+			"requests==2.31.0",
+			"https://repo.test/artifactory/api/pypi/pypi-external-moderated",
+			"pip install -i https://repo.test/artifactory/api/pypi/pypi-external-moderated/simple requests==2.31.0",
+		},
+		"npm": {
+			"lodash@4.17.21",
+			"https://repo.test/artifactory/api/npm/npm-external-moderated",
+			"npm i --registry=https://repo.test/artifactory/api/npm/npm-external-moderated/ lodash@4.17.21",
+		},
+		"go": {
+			"github.com/x/y@v1.0.0",
+			"https://repo.test/artifactory/api/go/go-external-moderated",
+			"GOPROXY=https://repo.test/artifactory/api/go/go-external-moderated",
+		},
+	}
+	for manager, tc := range cases {
+		p := pluginFor(t, manager, f)
+		ref, err := registry.ParseEntry(p, tc.entry)
+		if err != nil {
+			t.Fatalf("%s: %v", manager, err)
+		}
+		got := p.InstallCommand(ref, tc.base, "")
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("%s: InstallCommand = %q, ожидалось вхождение %q", manager, got, tc.want)
+		}
+	}
+}
+
 func TestOSVEcosystems(t *testing.T) {
 	f := &fakeRegistry{responses: map[string]string{}}
 	want := map[string]string{"pypi": "PyPI", "npm": "npm"}

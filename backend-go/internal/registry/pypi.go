@@ -253,7 +253,11 @@ func choosePypiDist(urls []pypiDist) *pypiDist {
 }
 
 func (p *PyPI) InstallCommand(ref Ref, baseURL, repo string) string {
-	index := fmt.Sprintf("%s/repository/%s/simple", strings.TrimRight(baseURL, "/"), repo)
+	baseURL = strings.TrimRight(baseURL, "/")
+	index := baseURL + "/simple"
+	if repo != "" {
+		index = fmt.Sprintf("%s/repository/%s/simple", baseURL, repo)
+	}
 	return fmt.Sprintf("pip install -i %s %s==%s", index, ref.DisplayName, ref.RawVersion)
 }
 
