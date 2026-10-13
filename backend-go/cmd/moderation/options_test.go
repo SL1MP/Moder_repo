@@ -3,6 +3,8 @@ package main
 import (
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"moderation/internal/config"
@@ -13,9 +15,22 @@ import (
 // здесь — сервис поднимался, а /api/v1/managers отвечал 404. Компилятор такое
 // не ловит: незаполненное поле структуры остаётся nil и это законно.
 func TestBuildOptionsMountsEverything(t *testing.T) {
+	policyDir := t.TempDir()
+	blacklistFile := filepath.Join(policyDir, "blacklist.yml")
+	licensesFile := filepath.Join(policyDir, "licenses.yml")
+	if err := os.WriteFile(blacklistFile, []byte("rules: []\n"), 0o600); err != nil {
+		t.Fatalf("не создан тестовый blacklist: %v", err)
+	}
+	if err := os.WriteFile(licensesFile, []byte(`allowed:
+  - spdx_id: MIT
+    name: MIT License
+forbidden: []
+`), 0o600); err != nil {
+		t.Fatalf("не создан тестовый справочник лицензий: %v", err)
+	}
 	cfg := testConfig(t, map[string]string{
-		"BLACKLIST_FILE":        "../../../config/blacklist.yml",
-		"ALLOWED_LICENSES_FILE": "../../../config/licenses.yml",
+		"BLACKLIST_FILE":        blacklistFile,
+		"ALLOWED_LICENSES_FILE": licensesFile,
 	})
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -47,8 +62,10 @@ func TestBuildOptionsMountsEverything(t *testing.T) {
 	if blacklist == nil {
 		t.Fatal("правила blacklist не загружены вовсе")
 	}
-	// Файлы политик лежат в репозитории и обязаны читаться: если этот тест
-	// краснеет, значит сломан их формат, а не путь в тесте.
+	// Тестовые политики создаются рядом с тестом, а не читаются из ../config:
+	// Docker-образ для go test собирается с context=backend-go и намеренно не
+	// содержит соседний каталог репозитория. Проверяем именно сборку зависимостей,
+	// не расположение файлов на машине, где запущен тест.
 	if blacklist.Failed() {
 		t.Errorf("blacklist не прочитан: %s", blacklist.Err)
 	}
