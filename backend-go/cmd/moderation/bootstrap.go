@@ -56,6 +56,9 @@ func openBootstrapEnv(logger *slog.Logger) (*bootstrapEnv, error) {
 	if err != nil {
 		return nil, fmt.Errorf("конфигурация невалидна: %w", err)
 	}
+	if err := installCorporateCAs(cfg, logger); err != nil {
+		return nil, err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	pool, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {

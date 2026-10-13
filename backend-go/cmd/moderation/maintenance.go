@@ -213,6 +213,9 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 		logger.Error("конфигурация невалидна", "error", err)
 		return 1
 	}
+	if err := installCorporateCAs(cfg, logger); err != nil {
+		return 1
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

@@ -80,6 +80,9 @@ func runScan(args []string, logger *slog.Logger) int {
 		logger.Error("конфигурация невалидна", "error", err)
 		return 1
 	}
+	if err := installCorporateCAs(cfg, logger); err != nil {
+		return 1
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
