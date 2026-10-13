@@ -1,60 +1,76 @@
-/* Базовая палитра совпадает с другими DevSecOps-сервисами компании:
-   PT black/red/white + frost/sky. Семантические состояния — производные этих
-   цветов, поэтому темы остаются узнаваемыми и не зависят от случайных цветов. */
+/* Контрастная PT-палитра: нейтральный фон отделён от карточек, а состояния
+   используют собственные цвета. Красный остаётся фирменным акцентом, но не
+   заменяет зелёный/жёлтый/синий в статусах. */
 :root {
-  --bg: #212121;
-  --bg-elev: #2a2a2a;
-  --bg-elev-1: #2a2a2a;
-  --bg-elev-2: #353535;
-  --border: rgba(255, 255, 255, 0.14);
-  --border-strong: rgba(255, 255, 255, 0.28);
-  --text: #ffffff;
-  --text-dim: #bccbdd;
-  --text-faint: #8e98a5;
+  --bg: #0f1115;
+  --sidebar-bg: #15181e;
+  --bg-elev: #1b1f27;
+  --bg-elev-1: #202630;
+  --bg-elev-2: #272e39;
+  --input-bg: #12161c;
+  --row-hover: #242c37;
+  --border: #343d4a;
+  --border-strong: #526071;
+  --text: #f7f9fc;
+  --text-dim: #d3dbe6;
+  --text-faint: #9ba8b8;
   --accent: #ff0000;
   --accent-hover: #ff3d3d;
-  --accent-dim: rgba(255, 0, 0, 0.14);
+  --accent-dim: rgba(255, 0, 0, 0.16);
   --accent-shadow: rgba(255, 0, 0, 0.24);
-  --pass: #bccbdd;
-  --warn: #d8e0eb;
-  --fail: #ff5c5c;
-  --skip: #8e98a5;
+  --pass: #55d98b;
+  --pass-bg: rgba(36, 185, 99, 0.14);
+  --warn: #ffd166;
+  --warn-bg: rgba(255, 193, 7, 0.13);
+  --fail: #ff6b70;
+  --fail-bg: rgba(255, 55, 64, 0.14);
+  --skip: #aab5c3;
   /* info — шаг выполнен и публикацию не держит, но сказать по нему есть что
      (находки SAST). Не зелёный: «пройден» рядом с находками читается как
      «чисто». Не жёлтый: жёлтый в карточке значит «ждём решения». */
-  --info: #bccbdd;
-  --details-bg: #262626;
-  --code-bg: #171717;
+  --info: #73b9ff;
+  --info-bg: rgba(58, 151, 255, 0.14);
+  --details-bg: #161b22;
+  --code-bg: #0a0d11;
   --overlay: rgba(0, 0, 0, 0.6);
   --on-accent: #ffffff;
+  --card-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   --radius: 8px;
   color-scheme: dark;
 }
 
 [data-theme='light'] {
-  --bg: #ffffff;
+  --bg: #f3f6fa;
+  --sidebar-bg: #ffffff;
   --bg-elev: #ffffff;
   --bg-elev-1: #ffffff;
-  --bg-elev-2: #d8e0eb;
-  --border: #d8e0eb;
-  --border-strong: #bccbdd;
-  --text: #212121;
-  --text-dim: #535c67;
-  --text-faint: #747f8c;
+  --bg-elev-2: #edf2f7;
+  --input-bg: #ffffff;
+  --row-hover: #edf3f9;
+  --border: #d5dde8;
+  --border-strong: #aab7c7;
+  --text: #171b22;
+  --text-dim: #3d4857;
+  --text-faint: #667486;
   --accent: #ff0000;
   --accent-hover: #d90000;
   --accent-dim: rgba(255, 0, 0, 0.08);
   --accent-shadow: rgba(255, 0, 0, 0.16);
-  --pass: #5f6874;
-  --warn: #535353;
+  --pass: #087a3f;
+  --pass-bg: #e8f7ee;
+  --warn: #8a5b00;
+  --warn-bg: #fff6dc;
   --fail: #d90000;
-  --skip: #747f8c;
-  --info: #535c67;
-  --details-bg: #f5f7fa;
-  --code-bg: #f5f7fa;
+  --fail-bg: #fff0f0;
+  --skip: #667486;
+  --info: #075ea8;
+  --info-bg: #e9f4ff;
+  --details-bg: #f8fafc;
+  --code-bg: #f2f5f8;
   --overlay: rgba(33, 33, 33, 0.45);
   --on-accent: #ffffff;
+  --card-shadow: 0 4px 14px rgba(35, 55, 80, 0.08);
   color-scheme: light;
 }
 
@@ -80,7 +96,7 @@ h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; color: var(--text-dim);
 .layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); min-height: 100vh; }
 
 .sidebar {
-  background: var(--bg-elev);
+  background: var(--sidebar-bg);
   border-right: 1px solid var(--border);
   padding: 18px 12px;
   display: flex;
@@ -122,6 +138,7 @@ h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; color: var(--text-dim);
   border-radius: var(--radius);
   padding: 12px 14px;
   margin-bottom: 12px;
+  box-shadow: var(--card-shadow);
 }
 .card.tight { padding: 10px 12px; }
 .grid { display: grid; gap: 12px; }
@@ -132,9 +149,9 @@ h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; color: var(--text-dim);
 .spacer { flex: 1; }
 
 table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
-th { color: var(--text-faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
-tr:hover td { background: var(--bg-elev-2); }
+th, td { text-align: left; padding: 8px 9px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--text-dim); background: var(--bg-elev-1); font-weight: 650; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
+tr:hover td { background: var(--row-hover); }
 tr.selected-row td { background: var(--accent-dim); border-bottom-color: transparent; }
 tr.details-row:hover td, tr.details-row td { background: transparent; padding: 0 8px 12px; }
 .package-details {
@@ -145,7 +162,7 @@ td.num { text-align: right; font-family: var(--mono); }
 
 input, select, textarea, button {
   font: inherit; color: var(--text);
-  background: var(--bg-elev-2);
+  background: var(--input-bg);
   border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 5px 8px;
@@ -172,15 +189,15 @@ button.small { padding: 3px 7px; font-size: 12px; }
   font-size: 11px; font-weight: 500; border: 1px solid var(--border-strong);
   background: var(--bg-elev-2); color: var(--text-dim); white-space: nowrap;
 }
-.badge.pass, .badge.approved { background: rgba(188, 203, 221, .14); border-color: var(--pass); color: var(--pass); }
+.badge.pass, .badge.approved { background: var(--pass-bg); border-color: var(--pass); color: var(--pass); }
 .badge.warn, .badge.running, .badge.quarantined, .badge.awaiting_legal, .badge.license_claimed,
 .badge.awaiting_security, .badge.partially_approved, .badge.pending {
-  background: var(--bg-elev-2); border-color: var(--warn); color: var(--warn);
+  background: var(--warn-bg); border-color: var(--warn); color: var(--warn);
 }
 .badge.fail, .badge.rejected, .badge.revoked, .badge.blacklisted, .badge.failed {
-  background: var(--accent-dim); border-color: var(--accent); color: var(--fail);
+  background: var(--fail-bg); border-color: var(--fail); color: var(--fail);
 }
-.badge.info { background: rgba(188, 203, 221, .14); border-color: var(--info); color: var(--info); }
+.badge.info { background: var(--info-bg); border-color: var(--info); color: var(--info); }
 .badge.cancelled, .badge.skipped { background: var(--bg-elev-2); border-color: var(--border-strong); color: var(--skip); }
 .badge.mono { font-family: var(--mono); border-radius: 4px; }
 
@@ -216,9 +233,10 @@ button.small { padding: 3px 7px; font-size: 12px; }
 .role-checks label > span, .active-toggle > span { margin: 0; font-size: 11px; }
 
 .alert { border-radius: var(--radius); padding: 8px 11px; margin-bottom: 10px; border: 1px solid; font-size: 12px; }
-.alert.error { background: var(--accent-dim); border-color: var(--accent); color: var(--fail); }
-.alert.warn { background: var(--bg-elev-2); border-color: var(--warn); color: var(--warn); }
-.alert.info, .alert.ok { background: rgba(188, 203, 221, .14); border-color: var(--info); color: var(--text-dim); }
+.alert.error { background: var(--fail-bg); border-color: var(--fail); color: var(--fail); }
+.alert.warn { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
+.alert.info { background: var(--info-bg); border-color: var(--info); color: var(--text); }
+.alert.ok { background: var(--pass-bg); border-color: var(--pass); color: var(--text); }
 
 .muted { color: var(--text-faint); }
 .dim { color: var(--text-dim); }
@@ -234,12 +252,18 @@ button.small { padding: 3px 7px; font-size: 12px; }
 .command code { white-space: pre; }
 
 /* --------------------------------------------------------------- конвейер */
-.pipeline { display: flex; flex-direction: column; gap: 1px; }
+.pipeline { display: flex; flex-direction: column; gap: 4px; }
 .step {
   display: grid; grid-template-columns: 26px 1fr max-content; gap: 10px;
-  padding: 7px 9px; background: var(--bg-elev-2); border-left: 3px solid var(--skip);
+  padding: 9px 10px; background: var(--details-bg); border: 1px solid var(--border); border-left: 3px solid var(--skip);
+  border-radius: 4px;
   align-items: start;
 }
+.step.pass { background: var(--pass-bg); }
+.step.warn { background: var(--warn-bg); }
+.step.fail { background: var(--fail-bg); }
+.step.info { background: var(--info-bg); }
+.step.pending { background: var(--accent-dim); }
 .step.pass { border-left-color: var(--pass); }
 .step.warn { border-left-color: var(--warn); }
 .step.fail { border-left-color: var(--fail); }
@@ -250,7 +274,7 @@ button.small { padding: 3px 7px; font-size: 12px; }
 .step .msg { color: var(--text-dim); font-size: 12px; margin-top: 2px; }
 .step .details { margin-top: 4px; font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); }
 
-.next-action { background: rgba(188, 203, 221, .14); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 8px 11px; }
+.next-action { background: var(--info-bg); border: 1px solid var(--info); border-radius: var(--radius); padding: 8px 11px; }
 .next-action strong { color: var(--text); }
 
 .cve-list { display: flex; flex-direction: column; gap: 4px; }
@@ -287,11 +311,11 @@ button.small { padding: 3px 7px; font-size: 12px; }
 .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 1.2px; font-size: 10.5px; font-weight: 700; }
 .hero-status {
   min-width: 220px; display: flex; gap: 10px; align-items: center; padding: 13px 15px;
-  border: 1px solid var(--border); border-radius: 10px; background: rgba(0,0,0,.18);
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev-1);
 }
 .hero-status strong, .hero-status small { display: block; }
 .hero-status small { color: var(--text-faint); margin-top: 2px; }
-.status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--pass); box-shadow: 0 0 0 4px rgba(188,203,221,.14); }
+.status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--pass); box-shadow: 0 0 0 4px var(--pass-bg); }
 .section-heading { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin: 18px 0 10px; }
 .section-heading h2 { font-size: 18px; margin-bottom: 3px; }
 .text-link { color: var(--text-dim); }
