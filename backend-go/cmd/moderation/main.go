@@ -73,17 +73,10 @@ func main() {
 		logger.Error("конфигурация невалидна", "error", err)
 		os.Exit(1)
 	}
-	// OIDC discovery, authorization-code exchange and JWKS loading all use
-	// http.DefaultTransport. Install the corporate CA before any of those
-	// requests can be made. A bad path is fatal so SSO cannot silently start
-	// with a different trust policy than the administrator configured.
-	if count, err := tlsconf.Install(cfg.CACerts); err != nil {
-		logger.Error("корпоративные CA не загружены", "path", cfg.CACerts, "error", err)
+	// OIDC, GitLab, реестры и артефактори используют общий trust store.
+	// Устанавливаем корпоративную цепочку до создания любого HTTP-клиента.
+	if err := installCorporateCAs(cfg, logger); err != nil {
 		os.Exit(1)
-	} else if count > 0 {
-		logger.Info("корпоративные CA загружены", "path", cfg.CACerts, "count", count)
-	} else if cfg.CACerts != "" {
-		logger.Warn("каталог корпоративных CA пуст; используются только системные корни", "path", cfg.CACerts)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -154,6 +147,23 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("ошибка при остановке HTTP-сервера", "error", err)
 	}
+}
+
+// installCorporateCAs дополняет системный trust store процесса. Функция
+// общая для API и worker: публикацию в артефактори выполняет worker, поэтому
+// доверия сертификату только в api-go недостаточно.
+func installCorporateCAs(cfg *config.Config, logger *slog.Logger) error {
+	count, err := tlsconf.Install(cfg.CACerts)
+	if err != nil {
+		logger.Error("корпоративные CA не загружены", "path", cfg.CACerts, "error", err)
+		return err
+	}
+	if count > 0 {
+		logger.Info("корпоративные CA загружены", "path", cfg.CACerts, "count", count)
+	} else if cfg.CACerts != "" {
+		logger.Warn("каталог корпоративных CA пуст; используются только системные корни", "path", cfg.CACerts)
+	}
+	return nil
 }
 
 // startLoginThrottleCleanup обслуживает таблицу защиты входа от перебора:

@@ -65,18 +65,19 @@ code выполняются по внутреннему `OIDC_ISSUER`, а author
 2. Положите туда публичные Root и Issuer CA в PEM-формате с расширением
    `.crt`, `.cer` или `.pem`. Закрытый ключ не нужен.
 3. Оставьте `CA_CERTS_HOST=./certs/ca` либо укажите абсолютный каталог хоста.
-4. Пересоздайте `api-go`, чтобы процесс перечитал trust store:
+4. Пересоздайте `api-go` и `worker-go`, чтобы оба процесса перечитали trust store:
 
 ```bash
-sudo docker compose up -d --no-deps --force-recreate api-go
-sudo docker compose logs --tail=100 api-go
+sudo docker compose up -d --no-deps --force-recreate api-go worker-go
+sudo docker compose logs --tail=100 api-go worker-go
 ```
 
-В контейнере Compose всегда задаёт `CA_CERTS=/etc/moderation/ca`; значение
+В контейнерах Compose всегда задаёт `CA_CERTS=/etc/moderation/ca`; значение
 `CA_CERTS` из `.env` используется только при локальном запуске Go-процесса без
 Docker. Пустой каталог означает доверие только системным CA. Несуществующий
-путь или повреждённый сертификат останавливает backend при старте с явной
-ошибкой `корпоративные CA не загружены`.
+путь или повреждённый сертификат останавливает API/worker при старте с явной
+ошибкой `корпоративные CA не загружены`. Worker использует этот trust store
+для HTTPS-публикации в корпоративный JFrog.
 
 На стороне корпоративного Keycloak нужен OIDC-клиент:
 

@@ -183,9 +183,13 @@ services:
     env_file: [.env]
     environment:
       <<: *proxy-env
+      # Worker скачивает и публикует пакеты в корпоративный JFrog, поэтому
+      # использует ту же цепочку доверия, что API для OIDC/GitLab.
+      CA_CERTS: /etc/moderation/ca
       DATABASE_URL: postgres://${POSTGRES_USER:-moderation}:${POSTGRES_PASSWORD:-moderation}@db:5432/${POSTGRES_DB:-moderation}
     volumes:
       - ./config:/config:ro
+      - ${CA_CERTS_HOST:-./certs/ca}:/etc/moderation/ca:ro
       - osv-db:/var/lib/osv-db
     depends_on:
       db:

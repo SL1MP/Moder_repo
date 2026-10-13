@@ -69,6 +69,12 @@ func runWorker(args []string, logger *slog.Logger) int {
 		logger.Error("конфигурация невалидна", "error", err)
 		return 1
 	}
+	// Основная работа с staging и финальными репозиториями выполняется здесь,
+	// а не в API. Без корпоративного CA HTTPS JFrog был доступен с хоста и из
+	// api-go, но каждый пакет падал в worker на проверке сертификата.
+	if err := installCorporateCAs(cfg, logger); err != nil {
+		return 1
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
