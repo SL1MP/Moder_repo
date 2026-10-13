@@ -1,0 +1,70 @@
+allowed:
+  - MIT
+  - Apache-2.0
+
+# Фикстура повторяет безусловный denylist из config/licenses.yml. Имена нужны
+# для проверки нормализации метаданных реестров, SPDX ID — для принятия решения.
+forbidden:
+  - AGPL-1.0
+  - AGPL-1.0-only
+  - AGPL-1.0-or-later
+  - Aladdin
+  - BUSL-1.1
+  - CDLA-Sharing-1.0
+  - CC-BY-ND-1.0
+  - CC-BY-ND-2.0
+  - CC-BY-ND-2.5
+  - CC-BY-ND-3.0-DE
+  - CC-BY-ND-3.0
+  - CC-BY-ND-4.0
+  - CC-BY-NC-1.0
+  - CC-BY-NC-2.0
+  - CC-BY-NC-2.5
+  - CC-BY-NC-3.0-DE
+  - CC-BY-NC-3.0
+  - CC-BY-NC-4.0
+  - CC-BY-NC-ND-1.0
+  - CC-BY-NC-ND-2.0
+  - CC-BY-NC-ND-2.5
+  - CC-BY-NC-ND-3.0-DE
+  - CC-BY-NC-ND-3.0-IGO
+  - CC-BY-NC-ND-3.0
+  - CC-BY-NC-ND-4.0
+  - CC-BY-NC-SA-1.0
+  - CC-BY-NC-SA-2.0-UK
+  - CC-BY-NC-SA-2.0-FR
+  - CC-BY-NC-SA-2.0
+  - CC-BY-NC-SA-2.0-DE
+  - CC-BY-NC-SA-2.5
+  - CC-BY-NC-SA-3.0-DE
+  - CC-BY-NC-SA-3.0-IGO
+  - CC-BY-NC-SA-3.0
+  - spdx_id: CC-BY-NC-SA-4.0
+    name: Creative Commons Attribution Non Commercial Share Alike 4.0 International
+  - CC-BY-SA-1.0
+  - CC-BY-SA-2.0-UK
+  - CC-BY-SA-2.0
+  - CC-BY-SA-2.1-JP
+  - CC-BY-SA-2.5
+  - CC-BY-SA-3.0-AT
+  - CC-BY-SA-3.0-DE
+  - CC-BY-SA-3.0-IGO
+  - CC-BY-SA-3.0
+  - CC-BY-SA-4.0
+  - AGPL-3.0
+  - AGPL-3.0-only
+  - AGPL-3.0-or-later
+  - GPL-1.0-only
+  - GPL-1.0-or-later
+  - GPL-2.0-only
+  - GPL-2.0-or-later
+  - GPL-3.0-only
+  - GPL-3.0-or-later
+  - LGPL-2.0-only
+  - LGPL-2.0-or-later
+  - MS-RL
+  - RPL-1.1
+  - RPL-1.5
+  - SimPL-2.0
+  - SSPL-1.0
+  - LicenseRef-Proprietary

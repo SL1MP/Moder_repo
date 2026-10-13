@@ -1,0 +1,14 @@
+rules:
+  - manager: pypi
+    name: colourama
+    versions: "*"
+    reason: Тайпсквоттинг пакета colorama, содержит вредоносный код.
+
+  - manager: npm
+    name: event-stream
+    versions: "==3.3.6"
+    reason: Версия 3.3.6 содержала внедрённый бэкдор.
+
+  - name: "internal-*"
+    versions: "*"
+    reason: Имена internal-* зарезервированы под внутренние пакеты.

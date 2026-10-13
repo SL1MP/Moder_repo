@@ -7,11 +7,12 @@ import (
 	"testing"
 )
 
-// Файлы политик из репозитория — не выдуманные фикстуры: тесты проверяют
-// тот же источник, который используется в runtime.
+// Unit-тесты используют локальные фикстуры: Docker-образ build-стадии
+// собирается с context=backend-go и не содержит корневой каталог config.
+// Рабочие политики по-прежнему читаются из /config при запуске сервиса.
 const (
-	repoLicenses  = "../../../config/licenses.yml"
-	repoBlacklist = "../../../config/blacklist.yml"
+	repoLicenses  = "testdata/licenses.yml"
+	repoBlacklist = "testdata/blacklist.yml"
 )
 
 func TestLoadsRepositoryLicenses(t *testing.T) {
