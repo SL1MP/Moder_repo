@@ -23,6 +23,7 @@ import RequestCard from './pages/RequestCard'
 import RequestList from './pages/RequestList'
 import SettingsPage from './pages/SettingsPage'
 import Home from './pages/Home'
+import { useTheme } from './theme'
 
 export default function App() {
   const [config, setConfig] = useState<AuthConfig | null>(null)
@@ -193,6 +194,7 @@ function Sidebar({
   config: AuthConfig
   counters: Record<string, number>
 }) {
+  const { theme, toggle } = useTheme()
   const isSec = me.roles.includes('devsecops') || me.roles.includes('admin')
   const isLegal = me.roles.includes('legal') || me.roles.includes('admin')
   const isAdmin = me.roles.includes('admin')
@@ -232,6 +234,9 @@ function Sidebar({
       />
 
       <div className="spacer" />
+      <button className="ghost theme-toggle" onClick={toggle} aria-label="Переключить цветовую тему">
+        {theme === 'dark' ? '◐ Светлая тема' : '◑ Тёмная тема'}
+      </button>
       <div className="nav-group">{me.display_name}</div>
       <div className="nav-link" style={{ cursor: 'default' }}>
         <span className="small muted">{me.roles.join(', ') || 'без ролей'}</span>
@@ -273,6 +278,7 @@ function Login({
   onError: (message: string) => void
   onSession: (session: Session) => void
 }) {
+  const { theme, toggle } = useTheme()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -280,6 +286,9 @@ function Login({
 
   return (
     <div className="content login">
+      <button className="ghost theme-toggle login-theme-toggle" onClick={toggle}>
+        {theme === 'dark' ? '◐ Светлая тема' : '◑ Тёмная тема'}
+      </button>
       <h1>{config.app_name}</h1>
       <p className="page-hint">
         Вход через SSO. Заводить пакеты можно только здесь — правка <code>package_list.txt</code> и

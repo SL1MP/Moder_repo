@@ -58,6 +58,7 @@ func TestOpenAPISpecDocumentsGoAPI(t *testing.T) {
 		t.Errorf("openapi=%q", spec.OpenAPI)
 	}
 	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/ready"},
 		{http.MethodPost, "/api/v1/auth/token"},
 		{http.MethodPost, "/api/v1/auth/refresh"},
 		{http.MethodGet, "/api/v1/auth/oidc/login"},

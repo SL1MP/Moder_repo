@@ -423,7 +423,9 @@ curl -sS -X POST http://localhost:8080/api/v1/license-claims/5/decision \
 
 | Путь | Назначение |
 | --- | --- |
-| `GET /health` | живость, связность с БД и наличие живого worker'а (`checks.worker`) |
+| `GET /health` | живость процесса API; не зависит от внешних систем |
+| `GET /ready` | готовность API к запросам: подключение к PostgreSQL |
+| `GET /api/v1/system/status` | состояние worker, очереди и интеграций |
 | `GET /metrics` | метрики Prometheus |
 | `GET /api/v1/auth/config` | параметры OIDC для SPA |
 | `GET /api/v1/auth/me` | текущий пользователь и его роли |

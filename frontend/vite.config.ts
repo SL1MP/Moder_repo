@@ -10,6 +10,7 @@ export default defineConfig({
     proxy: {
       '/api': { target: process.env.API_URL ?? 'http://localhost:8000', changeOrigin: true },
       '/health': { target: process.env.API_URL ?? 'http://localhost:8000', changeOrigin: true },
+      '/ready': { target: process.env.API_URL ?? 'http://localhost:8000', changeOrigin: true },
     },
   },
   build: { outDir: 'dist', sourcemap: false, chunkSizeWarningLimit: 900 },

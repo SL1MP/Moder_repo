@@ -4,11 +4,10 @@
 package api
 
 import (
-	"log"
-	"os"
-
 	"context"
+	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +17,23 @@ import (
 )
 
 const pingTimeout = 3 * time.Second
+
+func databaseReadiness(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if pool == nil {
+			http.Error(w, "пул подключений к БД не настроен", http.StatusServiceUnavailable)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), pingTimeout)
+		defer cancel()
+		if err := pool.Ping(ctx); err != nil {
+			http.Error(w, "Postgres недоступен: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	}
+}
 
 // Options — что подключать в роутер помимо health и metrics. Nil-поля просто
 // не подключаются: сервис должен подниматься и без хранилища отчётов, отдавая
@@ -60,20 +76,13 @@ func NewRouter(pool *pgxpool.Pool, opts ...Options) http.Handler {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	r.Get("/health/db", func(w http.ResponseWriter, r *http.Request) {
-		if pool == nil {
-			http.Error(w, "пул подключений к БД не настроен", http.StatusServiceUnavailable)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), pingTimeout)
-		defer cancel()
-		if err := pool.Ping(ctx); err != nil {
-			http.Error(w, "Postgres недоступен: "+err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
+	// /health проверяет только, что процесс и HTTP listener живы. /ready
+	// дополнительно требует рабочее подключение к Postgres: без него API не
+	// может ни авторизовать пользователя, ни принять заявку. Старый /health/db
+	// оставлен совместимым алиасом для существующего мониторинга.
+	readiness := databaseReadiness(pool)
+	r.Get("/ready", readiness)
+	r.Get("/health/db", readiness)
 
 	r.Handle("/metrics", promhttp.Handler())
 

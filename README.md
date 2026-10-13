@@ -70,7 +70,8 @@ docker compose run --rm migrate-go schema   # схема базы против �
 | --- | --- |
 | Web UI | http://localhost:8080 |
 | OpenAPI (Swagger) | http://localhost:8080/api/docs |
-| Healthcheck | http://localhost:8080/health |
+| Liveness | http://localhost:8080/health |
+| Readiness (включая PostgreSQL) | http://localhost:8080/ready |
 | Метрики Prometheus | http://localhost:8080/metrics |
 | Keycloak (профиль `sso`) | http://localhost:8081 |
 | Nexus (профиль `nexus`) | http://localhost:8082 |

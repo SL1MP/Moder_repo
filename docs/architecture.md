@@ -293,8 +293,8 @@ packages.lock.json, корневой `packages[""]` в package-lock.json). Тр�
   `X-Request-Id`.
 - `/metrics` отдаёт метрики HTTP, шагов конвейера, внешних вызовов, возраста
   OSV, очереди и сторожа.
-- `/health` проверяет API и PostgreSQL; состояние worker доступно также через
-  `/api/v1/system/status`.
+- `/health` проверяет живость процесса API, `/ready` — доступность PostgreSQL;
+  состояние worker доступно через `/api/v1/system/status`.
 - Внешние вызовы используют таймауты, повторные попытки и circuit breaker.
 - Недоступный обязательный сканер не трактуется как результат «чисто».
 

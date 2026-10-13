@@ -8,6 +8,25 @@ import (
 	"moderation/internal/policy"
 )
 
+func TestLivenessDoesNotClaimDatabaseReadiness(t *testing.T) {
+	router := NewRouter(nil)
+
+	health := httptest.NewRecorder()
+	router.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if health.Code != http.StatusOK {
+		t.Fatalf("health=%d body=%s", health.Code, health.Body.String())
+	}
+
+	for _, path := range []string{"/ready", "/health/db"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s=%d, ожидался 503 без Postgres", path, rec.Code)
+		}
+	}
+}
+
 // Все маршруты должны собираться в один роутер: chi падает паникой на попытке
 // смонтировать два обработчика на один путь, и увидеть это в бою — худший
 // вариант, потому что падает весь сервис на старте.

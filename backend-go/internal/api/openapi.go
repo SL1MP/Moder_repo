@@ -316,6 +316,7 @@ func openAPIRoutes() []openAPIRoute {
 
 	return []openAPIRoute{
 		{Method: "GET", Path: "/health", OperationID: "health", Summary: "Проверить процесс API", Tag: "Система", Public: true, Response: map[string]any{"text/plain": map[string]any{"schema": map[string]any{"type": "string"}}}},
+		{Method: "GET", Path: "/ready", OperationID: "readiness", Summary: "Проверить готовность API и PostgreSQL", Tag: "Система", Public: true, Response: map[string]any{"text/plain": map[string]any{"schema": map[string]any{"type": "string"}}}},
 		{Method: "GET", Path: "/health/db", OperationID: "healthDatabase", Summary: "Проверить подключение к PostgreSQL", Tag: "Система", Public: true, Response: map[string]any{"text/plain": map[string]any{"schema": map[string]any{"type": "string"}}}},
 		{Method: "GET", Path: "/metrics", OperationID: "metrics", Summary: "Получить метрики Prometheus", Tag: "Система", Public: true, Response: map[string]any{"text/plain": map[string]any{"schema": map[string]any{"type": "string"}}}},
 

@@ -110,9 +110,10 @@ docker compose run --rm worker-go maintenance --osv-sync --force
 
 ## Наблюдаемость
 
-- `GET /health` — готовность API, БД и worker;
+- `GET /health` — живость процесса API;
+- `GET /ready` — готовность API и доступность PostgreSQL;
+- `GET /api/v1/system/status` — состояние worker, очереди и интеграций;
 - `GET /metrics` — метрики Prometheus;
-- `GET /api/v1/system/status` — состояние очереди и интеграций;
 - JSON-логи содержат `request_id`, который nginx возвращает в
   `X-Request-Id`.
 
