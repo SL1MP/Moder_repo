@@ -294,11 +294,11 @@ func (g DefaultGenerator) generateDocker(ctx context.Context, in Input) ([]Docum
 		})
 		if err != nil { return nil, err }
 		if err := os.WriteFile(indexPath, platformIndex, 0o600); err != nil { return nil, err }
-		args := []string{"oci-dir:" + dir}
-		if platform.Platform.OS != "" && platform.Platform.Architecture != "" {
-			args = append(args, "--platform", platformName)
-		}
-		args = append(args, "-o", "cyclonedx-json")
+		// Syft's OciDirectory source does not support --platform (including
+		// the version bundled in our image). index.json has already been
+		// reduced to the exact manifest above, so asking Syft to select a
+		// platform is both unnecessary and rejected before scanning starts.
+		args := []string{"oci-dir:" + dir, "-o", "cyclonedx-json"}
 		cmd := exec.CommandContext(ctx, g.SyftBinary, args...)
 		out, runErr := cmd.CombinedOutput()
 		if runErr != nil {

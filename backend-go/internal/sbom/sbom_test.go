@@ -51,7 +51,9 @@ func TestDockerProducesDocumentPerPlatformAndSkipsAttestation(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "calls.log")
 	syft := filepath.Join(dir, "syft")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"" + logFile + "\"\n" +
+	script := "#!/bin/sh\n" +
+		"case \" $* \" in *\" --platform \"*) echo 'oci-dir does not support selecting platform' >&2; exit 2;; esac\n" +
+		"printf '%s\\n' \"$*\" >> \"" + logFile + "\"\n" +
 		"printf '%s' '{\"bomFormat\":\"CycloneDX\",\"specVersion\":\"1.4\",\"version\":1,\"metadata\":{},\"components\":[]}'\n"
 	if err := os.WriteFile(syft, []byte(script), 0o755); err != nil { t.Fatal(err) }
 
@@ -76,6 +78,9 @@ func TestDockerProducesDocumentPerPlatformAndSkipsAttestation(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if lines := strings.Count(strings.TrimSpace(string(calls)), "\n") + 1; lines != 2 {
 		t.Errorf("Syft вызван %d раз, ожидалось 2", lines)
+	}
+	if bytes.Contains(calls, []byte("--platform")) {
+		t.Errorf("для oci-dir нельзя передавать --platform: %s", calls)
 	}
 }
 

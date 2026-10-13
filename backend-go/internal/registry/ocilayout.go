@@ -39,6 +39,17 @@ type ociDescriptor struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
+// OCI-архив распаковывает skopeo внутри worker-контейнера от пользователя
+// moderation (UID/GID 10001). Нулевые значения tar.Header по умолчанию
+// означают root; skopeo пытается восстановить их через chown и непривилегированный
+// процесс получает EPERM на /var/tmp/oci.../blobs/sha256. Фиксируем владельца
+// раскладки на сервисного пользователя: архив остаётся переносимым, а его
+// содержимое можно безопасно распаковать без root.
+const (
+	ociArchiveUID = 10001
+	ociArchiveGID = 10001
+)
+
 func newOCILayout() *ociLayout {
 	return &ociLayout{
 		blobs: make(map[string][]byte),
@@ -107,6 +118,7 @@ func (l *ociLayout) tarGz(limit int64) ([]byte, error) {
 		body := files[name]
 		if err := tw.WriteHeader(&tar.Header{
 			Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg,
+			Uid:  ociArchiveUID, Gid: ociArchiveGID,
 		}); err != nil {
 			return nil, err
 		}

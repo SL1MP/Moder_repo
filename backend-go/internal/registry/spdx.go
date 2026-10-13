@@ -20,6 +20,7 @@ var spdxAliases = map[string]string{
 	"mit":                         "MIT",
 	"mit license":                 "MIT",
 	"the mit license":             "MIT",
+	"the mit license (mit)":       "MIT",
 	"apache 2.0":                  "Apache-2.0",
 	"apache-2.0":                  "Apache-2.0",
 	"apache license 2.0":          "Apache-2.0",
@@ -40,19 +41,60 @@ var spdxAliases = map[string]string{
 	"isc license":                 "ISC",
 	"mpl-2.0":                     "MPL-2.0",
 	"mozilla public license 2.0":  "MPL-2.0",
+	"epl-1.0":                     "EPL-1.0",
+	"epl-2.0":                     "EPL-2.0",
+	"eclipse public license":      "EPL-1.0",
+	"eclipse public license 1.0":  "EPL-1.0",
+	"eclipse public license - v 1.0": "EPL-1.0",
+	"eclipse public license 2.0":  "EPL-2.0",
+	"eclipse public license v2.0": "EPL-2.0",
+	"eclipse public license - v 2.0": "EPL-2.0",
+	"common public license version 1.0": "CPL-1.0",
+	"zpl 2.1":                     "ZPL-2.1",
+	"vsl":                         "VSL-1.0",
+	"cc0":                         "CC0-1.0",
+	"wxwindows library licence, version 3.1": "wxWindows",
+	"unrar license":               "UnRAR",
+	"2-clause bsd license":        "BSD-2-Clause",
+	"bsd 2-clause license":        "BSD-2-Clause",
+	"3-clause bsd license":        "BSD-3-Clause",
+	"bsd 3-clause license":        "BSD-3-Clause",
 	"gpl-2.0":                     "GPL-2.0-only",
 	"gplv2":                       "GPL-2.0-only",
+	"gpl 2":                       "GPL-2.0-only",
+	"gpl v2":                      "GPL-2.0-only",
+	"gpl2":                        "GPL-2.0-only",
+	"gnu gplv2":                   "GPL-2.0-only",
+	"gplv2+":                      "GPL-2.0-or-later",
+	"gnu gplv2 or any later version": "GPL-2.0-or-later",
+	"gpl 2.0/lgpl 2.1":            "GPL-2.0-only OR LGPL-2.1-only",
 	"gpl-3.0":                     "GPL-3.0-only",
 	"gplv3":                       "GPL-3.0-only",
+	"gnu gpl 3":                   "GPL-3.0-only",
+	"gpl v3":                      "GPL-3.0-only",
+	"gplv3+":                      "GPL-3.0-or-later",
+	"gnu gplv3+":                  "GPL-3.0-or-later",
 	"lgpl-2.1":                    "LGPL-2.1-only",
+	"lgplv2.1":                    "LGPL-2.1-only",
+	"lgpl 2.1":                    "LGPL-2.1-only",
+	"gnu lesser general public license": "LGPL-2.1-only",
+	"lgplv2":                      "LGPL-2.0-only",
 	"lgpl-3.0":                    "LGPL-3.0-only",
+	"lgpl v3":                     "LGPL-3.0-only",
+	"lgplv3+":                     "LGPL-3.0-or-later",
+	"lesser general public license, version 3 or greater": "LGPL-3.0-or-later",
 	"agpl-3.0":                    "AGPL-3.0-only",
+	"agpl-v3":                     "AGPL-3.0-only",
+	"agplv3":                      "AGPL-3.0-only",
+	"agplv3+":                     "AGPL-3.0-or-later",
 	"unlicense":                   "Unlicense",
 	"the unlicense":               "Unlicense",
 	"cc0-1.0":                     "CC0-1.0",
 	"python-2.0":                  "Python-2.0",
-	"psf":                         "Python-2.0",
-	"psf-2.0":                     "Python-2.0",
+	"psf":                         "PSF-2.0",
+	"psf-2.0":                     "PSF-2.0",
+	"python software foundation license": "PSF-2.0",
+	"psf license":                 "PSF-2.0",
 	"zlib":                        "Zlib",
 	"artistic-2.0":                "Artistic-2.0",
 	"ms-pl":                       "MS-PL",
@@ -89,6 +131,9 @@ var spdxURLAliases = []struct {
 	{"opensource.org/license/bsd-3-clause", "BSD-3-Clause"},
 	{"opensource.org/licenses/bsd-3-clause", "BSD-3-Clause"},
 	{"mozilla.org/mpl/2.0", "MPL-2.0"},
+	{"eclipse.org/legal/epl-2.0", "EPL-2.0"},
+	{"eclipse.org/legal/epl-v20", "EPL-2.0"},
+	{"eclipse.org/legal/epl-1.0", "EPL-1.0"},
 	{"gnu.org/licenses/gpl-3.0", "GPL-3.0-only"},
 	{"gnu.org/licenses/gpl-2.0", "GPL-2.0-only"},
 }
@@ -99,12 +144,16 @@ var classifierMap = map[string]string{
 	"bsd license":                                   "BSD-3-Clause",
 	"isc license (iscl)":                            "ISC",
 	"mozilla public license 2.0 (mpl 2.0)":          "MPL-2.0",
+	"eclipse public license 1.0 (epl-1.0)":          "EPL-1.0",
+	"eclipse public license 2.0 (epl-2.0)":          "EPL-2.0",
+	"common public license 1.0 (cpl-1.0)":           "CPL-1.0",
+	"postgresql license":                            "PostgreSQL",
 	"gnu general public license v2 (gplv2)":         "GPL-2.0-only",
 	"gnu general public license v3 (gplv3)":         "GPL-3.0-only",
 	"gnu lesser general public license v2 (lgplv2)": "LGPL-2.1-only",
 	"gnu lesser general public license v3 (lgplv3)": "LGPL-3.0-only",
 	"gnu affero general public license v3":          "AGPL-3.0-only",
-	"python software foundation license":            "Python-2.0",
+	"python software foundation license":            "PSF-2.0",
 	"the unlicense (unlicense)":                     "Unlicense",
 	"zope public license":                           "ZPL-2.1",
 }
@@ -132,6 +181,18 @@ func NormalizeSPDX(value string) string {
 	}
 	if canonical, ok := spdxAliases[lowered]; ok {
 		return canonical
+	}
+	// A few registries append a copyright note to an otherwise recognizable
+	// license label. Keep the same conservative prefixes as the supplied
+	// corporate spdx.py; arbitrary long license text is rejected above.
+	if strings.HasPrefix(lowered, "mit license") {
+		return "MIT"
+	}
+	if strings.HasPrefix(lowered, "gnu general public license version 2") {
+		return "GPL-2.0-only"
+	}
+	if strings.HasPrefix(lowered, "gnu general public license version 3") {
+		return "GPL-3.0-only"
 	}
 	// Составные выражения (`MIT OR Apache-2.0`) оставляем как есть: решение по
 	// ним всё равно принимает юрист.

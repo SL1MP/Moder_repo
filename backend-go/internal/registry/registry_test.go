@@ -621,6 +621,10 @@ func TestNormalizeSPDX(t *testing.T) {
 		"Apache License Version 2.0":                    "Apache-2.0",
 		"https://licenses.nuget.org/Apache-2.0":         "Apache-2.0",
 		"https://spdx.org/licenses/MIT.html":             "MIT",
+		"Eclipse Public License v2.0":                    "EPL-2.0",
+		"Eclipse Public License - v 1.0":                 "EPL-1.0",
+		"https://www.eclipse.org/legal/epl-2.0/":          "EPL-2.0",
+		"Python Software Foundation License":             "PSF-2.0",
 		"BSD":               "BSD-3-Clause",
 		"MIT OR Apache-2.0": "MIT OR Apache-2.0", // составное оставляем как есть
 		"":                  "",

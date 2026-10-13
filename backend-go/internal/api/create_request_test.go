@@ -210,6 +210,37 @@ func TestCreateRequestSkipsApproved(t *testing.T) {
 	}
 }
 
+// Если все записи уже лежат в базе, API не создаёт заявку без request_item:
+// такую заявку невозможно обработать, и она только засоряет очередь.
+func TestCreateRequestRejectsWhenNothingIsNew(t *testing.T) {
+	f := newCreateFixture(t)
+	ctx := context.Background()
+	pkg, err := f.repo.GetOrCreatePackage(ctx, "pypi", "only-approved-"+f.slug, "only-approved-"+f.slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ver, err := f.repo.CreatePackageVersion(ctx, pkg.ID, "1.0.0", "1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.UpdatePackageVersionStatus(ctx, ver.ID, "approved", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf(`{"manager":"pypi","packages":["only-approved-%s==1.0.0"]}`, f.slug)
+	rec := f.post(t, body, nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("код %d, ожидался 422: %s", rec.Code, rec.Body.String())
+	}
+	rows, err := f.repo.ListRequests(ctx, repo.RequestFilter{AuthorID: &f.user.ID, Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("создана пустая заявка: %d", len(rows))
+	}
+}
+
 func TestCreateRequestInvalidEntries(t *testing.T) {
 	f := newCreateFixture(t)
 	// Имя валидного пакета — латиницей: PEP 503 разрешает только буквы

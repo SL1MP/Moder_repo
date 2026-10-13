@@ -33,6 +33,16 @@ type dockerRegistry struct {
 	registryRequests     []string
 }
 
+type recordingDockerDoer struct {
+	next *dockerRegistry
+	urls []string
+}
+
+func (d *recordingDockerDoer) Do(req *http.Request) (*http.Response, error) {
+	d.urls = append(d.urls, req.URL.String())
+	return d.next.Do(req)
+}
+
 func newDockerRegistry() *dockerRegistry {
 	return &dockerRegistry{
 		blobs:     map[string][]byte{},
@@ -291,6 +301,39 @@ func TestDockerAnonymousToken(t *testing.T) {
 	}
 	if d.tokenIssued == 0 {
 		t.Error("токен не запрашивался — на реестре, требующем авторизации, это 401 на каждом образе")
+	}
+}
+
+// Явный registry-host нельзя отправлять в Docker Hub как часть имени
+// репозитория: для mcr.microsoft.com/dotnet/aspnet нужен путь
+// https://mcr.microsoft.com/v2/dotnet/aspnet/....
+func TestDockerExplicitRegistryHostUsesItsOwnEndpoint(t *testing.T) {
+	d := newDockerRegistry()
+	singleImage(d, "10.0", "2024-01-15T10:00:00Z", "MIT")
+	recording := &recordingDockerDoer{next: d}
+	reg := registry.New(registry.Config{
+		DockerURL: "https://registry.test", DockerAuthURL: "https://auth.test/token",
+		DockerService: "registry.test", HTTP: recording,
+	})
+	plugin, err := reg.Get("docker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := registry.ParseEntry(plugin, "mcr.microsoft.com/dotnet/aspnet:10.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plugin.FetchMetadata(context.Background(), ref); err != nil {
+		t.Fatalf("FetchMetadata: %v", err)
+	}
+	if len(recording.urls) == 0 {
+		t.Fatal("реестр не получил запросов")
+	}
+	for _, got := range recording.urls {
+		if !strings.HasPrefix(got, "https://mcr.microsoft.com/v2/dotnet/aspnet/") &&
+			!strings.Contains(got, "https://auth.test/token") {
+			t.Fatalf("запрос отправлен не в явный registry host: %s", got)
+		}
 	}
 }
 

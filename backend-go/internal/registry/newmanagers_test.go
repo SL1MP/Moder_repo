@@ -239,6 +239,24 @@ func TestMavenCommonsLangLicenseInheritedFromParent(t *testing.T) {
 	}
 }
 
+// JUnit publishes the human-readable Maven license name rather than the SPDX
+// identifier shown by repository browsers. It must still normalize to
+// EPL-2.0 instead of being treated as an absent license.
+func TestMavenJUnitJupiterEPLLicense(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://maven.test/org/junit/jupiter/junit-jupiter/5.11.4/junit-jupiter-5.11.4.pom": `
+			<project><licenses><license>
+			<name>Eclipse Public License v2.0</name>
+			<url>https://www.eclipse.org/legal/epl-2.0/</url>
+			</license></licenses></project>`,
+	}}
+	meta := metaFor(t, "maven", "org.junit.jupiter:junit-jupiter:5.11.4", f)
+	if meta.LicenseSPDX != "EPL-2.0" {
+		t.Errorf("лицензия JUnit Jupiter = %q, ожидалась EPL-2.0 (raw=%q)",
+			meta.LicenseSPDX, meta.LicenseRaw)
+	}
+}
+
 func TestMavenSkipsRateLimitedSource(t *testing.T) {
 	blocked := "https://central.test/com/example/lib/1.0.0/lib-1.0.0.pom"
 	f := &fakeRegistry{

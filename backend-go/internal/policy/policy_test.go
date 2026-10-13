@@ -22,6 +22,9 @@ func TestLoadsRepositoryLicenses(t *testing.T) {
 	if len(p.Allowed) == 0 || len(p.Forbidden) == 0 {
 		t.Fatalf("разделы пусты: разрешено %d, запрещено %d", len(p.Allowed), len(p.Forbidden))
 	}
+	if len(p.Allowed) < 650 {
+		t.Fatalf("каталог SPDX перенесён не полностью: разрешено только %d лицензий", len(p.Allowed))
+	}
 	if !p.IsAllowed("MIT") {
 		t.Error("MIT должна быть разрешена")
 	}
@@ -31,6 +34,12 @@ func TestLoadsRepositoryLicenses(t *testing.T) {
 	}
 	if p.IsAllowed("AGPL-3.0-only") {
 		t.Error("AGPL-3.0-only в разделе forbidden — разрешать нельзя")
+	}
+	if p.IsAllowed("GPL-2.0") || !p.IsForbidden("GPL-2.0") {
+		t.Error("устаревший SPDX GPL-2.0 обязан наследовать запрет GPL-2.0-only")
+	}
+	if !p.IsAllowed("EPL-2.0") || !p.IsAllowed("PostgreSQL") {
+		t.Error("известные SPDX вне короткого YAML-списка должны быть разрешены")
 	}
 	if p.IsAllowed("Нет-такой-лицензии") {
 		t.Error("неизвестная лицензия не разрешается")

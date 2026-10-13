@@ -83,6 +83,19 @@ func (h *RequestsHandler) createFrom(
 		}
 	}
 
+	// Не создаём «пустую» заявку. Такое случалось, когда файл разбирался
+	// успешно, но все записи оказывались уже одобренными (или все были
+	// отброшены как invalid_format). Созданная без request_item заявка не может
+	// попасть в очередь и навсегда остаётся лишней строкой в списке.
+	if len(parsed.New()) == 0 {
+		message := "В заявке нет новых пакетов для модерации."
+		if len(parsed.Packages) > 0 {
+			message += " Уже одобренные, запрещённые или некорректные записи повторно не ставятся в очередь."
+		}
+		writeError(w, r, errValidation(message))
+		return
+	}
+
 	source := "api"
 	if r.Header.Get("x-client") == "web" {
 		source = "ui"

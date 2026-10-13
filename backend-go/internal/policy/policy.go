@@ -214,7 +214,38 @@ func splitExpression(key, sep string) []string {
 }
 
 func normalizeSPDX(spdx string) string {
-	return strings.ToLower(strings.TrimSpace(spdx))
+	key := strings.ToLower(strings.TrimSpace(spdx))
+	// SPDX kept these identifiers as deprecated aliases. Canonicalize them
+	// before building the automatic allow-list; otherwise GPL-2.0 could appear
+	// allowed next to the explicitly forbidden GPL-2.0-only.
+	switch key {
+	case "gpl-1.0":
+		return "gpl-1.0-only"
+	case "gpl-1.0+":
+		return "gpl-1.0-or-later"
+	case "gpl-2.0":
+		return "gpl-2.0-only"
+	case "gpl-2.0+":
+		return "gpl-2.0-or-later"
+	case "gpl-3.0":
+		return "gpl-3.0-only"
+	case "gpl-3.0+":
+		return "gpl-3.0-or-later"
+	case "lgpl-2.0":
+		return "lgpl-2.0-only"
+	case "lgpl-2.0+":
+		return "lgpl-2.0-or-later"
+	case "lgpl-2.1":
+		return "lgpl-2.1-only"
+	case "lgpl-2.1+":
+		return "lgpl-2.1-or-later"
+	case "lgpl-3.0":
+		return "lgpl-3.0-only"
+	case "lgpl-3.0+":
+		return "lgpl-3.0-or-later"
+	default:
+		return key
+	}
 }
 
 func normalizeLicenseName(name string) string {
@@ -344,7 +375,34 @@ func LoadLicensePolicy(filePath string) *LicensePolicy {
 	}
 	collect(policy.Allowed, doc.Allowed, true)
 	collect(policy.Forbidden, doc.Forbidden, false)
+	addKnownSPDX(policy)
 	return policy
+}
+
+// addKnownSPDX turns the supplied SPDX catalogue into the default allow-list.
+// The corporate policy is expressed by the explicit forbidden section: a
+// forbidden entry always wins and is therefore never inserted here. Entries
+// written out in allowed keep their richer display name, URL and notes.
+func addKnownSPDX(policy *LicensePolicy) {
+	for _, spdx := range strings.Fields(knownSPDXText) {
+		key := normalizeSPDX(spdx)
+		if key == "" {
+			continue
+		}
+		if _, forbidden := policy.Forbidden[key]; forbidden {
+			delete(policy.Allowed, key)
+			continue
+		}
+		if _, exists := policy.Allowed[key]; exists {
+			continue
+		}
+		policy.Allowed[key] = LicenseEntry{
+			SPDXID: spdx,
+			Name:    spdx,
+			URL:     "https://spdx.org/licenses/" + spdx + ".html",
+			Allowed: true,
+		}
+	}
 }
 
 // licenseNode — запись справочника. В файле она бывает и строкой («MIT»), и
