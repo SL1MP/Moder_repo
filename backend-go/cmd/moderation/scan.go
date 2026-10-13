@@ -106,7 +106,7 @@ func runScan(args []string, logger *slog.Logger) int {
 		return explainItem(ctx, r, *why)
 	}
 
-	st, err := newStores(cfg, newHTTPClient())
+	st, err := newStores(cfg, newArtifactHTTPClient())
 	if err != nil {
 		logger.Error("хранилище не настроено — отчёты некуда положить", "error", err)
 		return 1

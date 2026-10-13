@@ -338,7 +338,7 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	// где артефактори не поднято или репозитория не существует. Тогда вместо
 	// честного «выдача отчётов отключена» в логе пользователь получал бы
 	// ошибку на каждой попытке открыть отчёт.
-	st, storesErr := newStores(cfg, newHTTPClient())
+	st, storesErr := newStores(cfg, newArtifactHTTPClient())
 	if storesErr == nil {
 		probe, cancel := context.WithTimeout(context.Background(), storeProbeTimeout)
 		storesErr = st.Reports.EnsureBucket(probe)

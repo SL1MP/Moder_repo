@@ -191,7 +191,7 @@ func runBootstrap(args []string, logger *slog.Logger) int {
 // штатное состояние только что заведённого стенда, и путать его с
 // отсутствующим нельзя.
 func checkRepositories(env *bootstrapEnv) bool {
-	store, err := newArtifactStore(env.cfg, newHTTPClient())
+	store, err := newArtifactStore(env.cfg, newArtifactHTTPClient())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Артефактори не настроено: %v\n", err)
 		return false

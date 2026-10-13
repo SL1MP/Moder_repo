@@ -151,7 +151,7 @@ func newPipelineWorker(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logg
 	// Хранилище обязательно: без него шагу скачивания некуда класть артефакт, и
 	// каждый пакет упал бы на нём. Здесь это повод не стартовать, в отличие от
 	// HTTP-сервиса, который и без хранилища обязан отвечать health.
-	st, err := newStores(cfg, newHTTPClient())
+	st, err := newStores(cfg, newArtifactHTTPClient())
 	if err != nil {
 		return nil, fmt.Errorf("хранилище: %w", err)
 	}

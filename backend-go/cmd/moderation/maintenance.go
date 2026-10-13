@@ -229,7 +229,7 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 
 	r := repo.New(pool)
 	q := queue.New(pool, staleAfter(cfg))
-	st, err := newStores(cfg, newHTTPClient())
+	st, err := newStores(cfg, newArtifactHTTPClient())
 	if err != nil {
 		if doCleanup {
 			// Молча пропустить уборку значило бы отчитаться об успехе, ничего
