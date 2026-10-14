@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Каталог настроек для экрана «Настройка». Порт settings_catalog из
@@ -13,9 +14,9 @@ import (
 // себя не так, как он ожидал, и ответ «QUARANTINE_DAYS = 14» закрывает вопрос
 // за секунду, а «карантин: 14 дней» оставляет искать, где это правится.
 //
-// Секреты показываются как «задано»/«не задано». Значения не показываются
-// никогда: экран открыт всем ролям — по составу настроек видно, как устроен
-// контур, но не чем он защищён.
+// Секреты показываются маской из звёздочек той же длины. Значения не
+// показываются никогда: экран открыт всем ролям — по составу настроек видно,
+// как устроен контур, но не чем он защищён.
 
 // Setting — одна настройка для выдачи.
 type Setting struct {
@@ -36,12 +37,7 @@ type Setting struct {
 
 // Catalog — действующие настройки, по разделам в порядке объявления.
 func (c *Config) Catalog() []Setting {
-	secret := func(value string) any {
-		if strings.TrimSpace(value) != "" {
-			return "задано"
-		}
-		return "не задано"
-	}
+	secret := func(value string) any { return MaskSecret(value) }
 	seconds := func(d time.Duration) any { return int(d.Seconds()) }
 
 	settings := []Setting{
@@ -196,6 +192,16 @@ func (c *Config) Catalog() []Setting {
 		settings[i].RestartRequired = false
 	}
 	return settings
+}
+
+// MaskSecret возвращает только признак наличия и длину секрета. Само
+// значение в API и браузер не передаётся. Для пустого значения возвращается
+// пустая строка, поэтому поле в интерфейсе тоже остаётся пустым.
+func MaskSecret(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return strings.Repeat("*", utf8.RuneCountInString(value))
 }
 
 // CatalogSections — разделы каталога в порядке появления. Интерфейс группирует

@@ -180,11 +180,7 @@ func (h *AdminHandler) Settings(w http.ResponseWriter, r *http.Request) {
 		for i := range settings {
 			if value, ok := overrides[settings[i].Env]; ok {
 				if settings[i].Secret {
-					if strings.TrimSpace(value) != "" {
-						settings[i].Value = "задано"
-					} else {
-						settings[i].Value = "не задано"
-					}
+					settings[i].Value = config.MaskSecret(value)
 				} else {
 					settings[i].Value = value
 				}

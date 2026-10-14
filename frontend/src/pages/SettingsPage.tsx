@@ -199,13 +199,19 @@ function SettingValue({ row, isAdmin, onSaved, onError }: {
       <div className="row nowrap">
         <input className="mono" type={row.secret ? 'password' : 'text'}
           autoComplete={row.secret ? 'new-password' : undefined}
-          placeholder={row.secret && row.value === 'задано' ? 'пусто — не менять' : ''}
+          placeholder={row.secret ? String(row.value ?? '') : ''}
+          aria-label={row.secret
+            ? (String(row.value ?? '') ? `${row.env}: секрет задан, введите новый для замены` : `${row.env}: секрет не задан`)
+            : row.env}
           value={value} onChange={(event) => setValue(event.target.value)} />
         <button className="small" disabled={busy || (!row.secret && value === String(row.value ?? '')) || (row.secret && !value)} onClick={() => {
           setBusy(true)
           onError('')
           api.saveSettings({ [row.env]: value })
-            .then((result) => onSaved(result.message))
+            .then((result) => {
+              if (row.secret) setValue('')
+              onSaved(result.message)
+            })
             .catch((exc: Error) => onError(exc.message))
             .finally(() => setBusy(false))
         }}>{busy ? '…' : 'сохранить'}</button>
@@ -374,7 +380,10 @@ function OIDCPanel() {
     <div className="grid cols-2">
       <label><span>Issuer</span><input className="wide mono" value={value.issuer} onChange={(e) => change({ issuer: e.target.value })} placeholder="https://keycloak.example/realms/company" /></label>
       <label><span>Client ID</span><input className="wide mono" value={value.client_id} onChange={(e) => change({ client_id: e.target.value })} /></label>
-      <label><span>Client secret {value.secret_set ? '(уже задан; пусто — не менять)' : ''}</span><input className="wide" type="password" autoComplete="new-password" value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
+      <label><span>Client secret</span><input className="wide mono" type="password" autoComplete="new-password"
+        placeholder={value.secret_mask ?? ''}
+        aria-label={value.secret_set ? 'Client secret задан, введите новый для замены' : 'Client secret не задан'}
+        value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
       <label><span>Публичный адрес сервиса</span><input className="wide mono" value={value.public_base_url} onChange={(e) => change({ public_base_url: e.target.value })} placeholder="https://moderation.example" /></label>
       <label><span>Текст кнопки входа</span><input className="wide" value={value.button_label} onChange={(e) => change({ button_label: e.target.value })} /></label>
       <label><span>Redirect URI</span><input className="wide mono" readOnly value={(value.public_base_url || window.location.origin).replace(/\/$/, '') + '/api/v1/auth/oidc/callback'} /></label>

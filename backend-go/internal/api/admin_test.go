@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"moderation/internal/api"
 	"moderation/internal/auth"
@@ -238,16 +239,47 @@ func TestSettingsShowEnvNames(t *testing.T) {
 		}
 	}
 
-	// Секреты показываются как «задано»/«не задано». Значение не
-	// показывается никогда: экран открыт всем ролям.
+	// Секреты показываются маской той же длины. Значение не показывается
+	// никогда: экран открыт всем ролям.
 	if !secrets["ARTIFACT_TOKEN"] {
 		t.Error("ARTIFACT_TOKEN не помечен секретом")
 	}
-	if byEnv["ARTIFACT_TOKEN"] != "задано" {
-		t.Errorf("значение ARTIFACT_TOKEN = %v, ожидалось «задано»", byEnv["ARTIFACT_TOKEN"])
+	wantMask := strings.Repeat("*", utf8.RuneCountInString("очень-секретный-токен"))
+	if byEnv["ARTIFACT_TOKEN"] != wantMask {
+		t.Errorf("маска ARTIFACT_TOKEN = %v, ожидалась %q", byEnv["ARTIFACT_TOKEN"], wantMask)
 	}
 	if strings.Contains(rec.Body.String(), "очень-секретный-токен") {
 		t.Error("значение секрета утекло в ответ")
+	}
+}
+
+func TestOIDCSettingsReturnOnlySecretMask(t *testing.T) {
+	f := newAdminFixture(t)
+	const secret = "oidc-secret-42"
+	if err := f.repo.UpdateOIDCSettings(context.Background(), repo.OIDCSettings{
+		Enabled: true, Issuer: "https://idp.example.test/realms/internal",
+		ClientID: "moderation", ClientSecret: secret,
+		PublicBaseURL: "https://moderation.example.test", ButtonLabel: "SSO",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := f.do(t, "admin", http.MethodGet, "/api/v1/admin/integrations/oidc")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), secret) {
+		t.Fatal("OIDC client secret утёк в ответ")
+	}
+	var payload struct {
+		SecretSet  bool   `json:"secret_set"`
+		SecretMask string `json:"secret_mask"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.SecretSet || payload.SecretMask != strings.Repeat("*", len(secret)) {
+		t.Fatalf("неверная маска OIDC-секрета: %+v", payload)
 	}
 }
 

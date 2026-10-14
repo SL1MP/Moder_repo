@@ -464,6 +464,18 @@ func TestWebOverridesAllowManagedSecrets(t *testing.T) {
 	}
 }
 
+func TestMaskSecretPreservesOnlyLength(t *testing.T) {
+	if got := MaskSecret(""); got != "" {
+		t.Fatalf("маска пустого секрета = %q, ожидалась пустая строка", got)
+	}
+	if got := MaskSecret("token-123"); got != "*********" {
+		t.Fatalf("маска секрета = %q, ожидалось 9 звёздочек", got)
+	}
+	if got := MaskSecret("токен"); got != "*****" {
+		t.Fatalf("маска Unicode-секрета = %q, ожидалось 5 звёздочек", got)
+	}
+}
+
 func TestDragonRequiresCompleteConfigurationWhenEnabled(t *testing.T) {
 	env := map[string]string{
 		"DATABASE_URL":  "postgres://localhost/moderation",

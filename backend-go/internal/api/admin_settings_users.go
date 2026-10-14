@@ -385,7 +385,8 @@ func (h *AdminHandler) OIDCSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": value.Enabled, "issuer": value.Issuer, "client_id": value.ClientID,
-		"secret_set": value.ClientSecret != "", "public_base_url": value.PublicBaseURL, "button_label": value.ButtonLabel,
+		"secret_set": value.ClientSecret != "", "secret_mask": config.MaskSecret(value.ClientSecret),
+		"public_base_url": value.PublicBaseURL, "button_label": value.ButtonLabel,
 		"redirect_uri": oidcRedirectURI(value, r), "updated_at": value.UpdatedAt})
 }
 

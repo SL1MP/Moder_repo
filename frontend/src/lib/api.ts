@@ -561,6 +561,7 @@ export interface OIDCSettings {
   client_id: string
   client_secret?: string
   secret_set: boolean
+  secret_mask: string
   public_base_url: string
   button_label: string
   redirect_uri: string
