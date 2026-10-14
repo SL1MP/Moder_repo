@@ -31,7 +31,6 @@ var webEditable = map[string]bool{
 	"ARTIFACT_REPO_REPORTS":               true,
 	"ARTIFACT_REPO_OSV":                   true,
 	"ARTIFACT_CATALOG_SYNC_MANAGERS":      true,
-	"ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS": true,
 	"SANDBOX_ENABLED":                     true,
 	"SANDBOX_URL":                         true,
 	"SANDBOX_TOKEN":                       true,
@@ -119,8 +118,7 @@ func validateOverride(key, value string) error {
 		"PIPELINE_STUCK_AFTER_SECONDS", "REGISTRY_RETRY_ATTEMPTS", "REGISTRY_BREAKER_THRESHOLD",
 		"SANDBOX_TIMEOUT_SECONDS", "OSV_SYNC_INTERVAL_SECONDS",
 		"DRAGON_PRIORITY", "DRAGON_POLL_INTERVAL_SECONDS", "DRAGON_TIMEOUT_SECONDS", "COMMENT_EDIT_WINDOW_MINUTES",
-		"STAGING_CLEANUP_INTERVAL_SECONDS", "STAGING_ORPHAN_TTL_HOURS",
-		"ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS":
+		"STAGING_CLEANUP_INTERVAL_SECONDS", "STAGING_ORPHAN_TTL_HOURS":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 {
 			return fmt.Errorf("ожидается неотрицательное целое число")
@@ -204,9 +202,6 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.ArtifactDryRun, _ = strconv.ParseBool(v)
 		case "ARTIFACT_CATALOG_SYNC_MANAGERS":
 			c.ArtifactCatalogSyncManagers = csvValues(v)
-		case "ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS":
-			n, _ := strconv.Atoi(v)
-			c.ArtifactCatalogSyncInterval = time.Duration(n) * time.Second
 		case "ARTIFACT_BASE_URL":
 			c.ArtifactBaseURL = strings.TrimRight(v, "/")
 		case "ARTIFACT_PUBLIC_BASE_URL":

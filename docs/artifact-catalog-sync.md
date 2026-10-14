@@ -24,16 +24,15 @@ moderated-репозиториях до запуска сервиса или б�
 
 ```dotenv
 ARTIFACT_STORE=generic
-ARTIFACT_BASE_URL=https://repo.ptsecurity.ru/artifactory
-ARTIFACT_PUBLIC_BASE_URL=https://repo.ptsecurity.ru/artifactory
+ARTIFACT_BASE_URL=https://artifactory.example.internal/artifactory
+ARTIFACT_PUBLIC_BASE_URL=https://artifactory.example.internal/artifactory
 ARTIFACT_AUTH_TYPE=bearer
 ARTIFACT_TOKEN=<access-token>
 
-ARTIFACT_REPO_PYPI=pypi-external-moderated
-ARTIFACT_REPO_NPM=npm-external-moderated
-ARTIFACT_REPO_GO=go-external-moderated
+ARTIFACT_REPO_PYPI=pypi-moderated
+ARTIFACT_REPO_NPM=npm-moderated
+ARTIFACT_REPO_GO=go-moderated
 ARTIFACT_CATALOG_SYNC_MANAGERS=pypi,npm,go
-ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS=21600
 MAINTENANCE_ENABLED=true
 ```
 
@@ -43,7 +42,7 @@ MAINTENANCE_ENABLED=true
 
 ## Алгоритм
 
-1. `worker-go` при старте ставит полный обход в очередь Postgres.
+1. Администратор вручную ставит полный обход в очередь Postgres.
 2. Для каждого выбранного менеджера читается файловый индекс его целевого
    репозитория.
 3. Физический путь преобразуется в координаты `manager/name/version` без
@@ -63,10 +62,14 @@ MAINTENANCE_ENABLED=true
 
 ## Запуск и наблюдение
 
-- при старте `worker-go` — автоматически;
-- далее по интервалу `ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS`;
-- вручную — кнопкой «синхронизировать сейчас» на странице «Настройка»;
+- кнопкой «синхронизировать сейчас» на странице «Настройка»;
 - через API — `POST /api/v1/admin/artifact-catalog-sync` с ролью `admin`.
+- через CLI — `moderation maintenance --catalog-sync`.
+
+Перезапуск `worker-go` не создаёт новый запуск. Если вручную поставленная
+задача уже имела статус `queued`, новый worker заберёт её из Postgres. Если
+worker аварийно остановился во время обхода, зависший запуск закрывается как
+ошибка и повторяется только по новому ручному запросу администратора.
 
 HTTP-запрос только создаёт запись запуска и сразу отвечает `202`. Большой
 первичный импорт продолжает worker в фоне, поэтому API и nginx не ждут его и

@@ -295,22 +295,32 @@ func (c *Client) createArchiveRun(ctx context.Context, req Request) (createRespo
 	}
 	endpoint.RawQuery = query.Encode()
 
-	reader, contentType, writerErr := archiveMultipart(req)
+	reader, contentType, contentLength, err := archiveMultipart(req)
+	if err != nil {
+		return createResponse{}, fmt.Errorf("формирование multipart-запроса Dragon: %w", err)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), reader)
 	if err != nil {
 		return createResponse{}, err
 	}
 	httpReq.Header.Set("Content-Type", contentType)
+	httpReq.Header.Set("Accept", "*/*")
+	// curl -F отправляет multipart с известным Content-Length. Некоторые
+	// корпоративные reverse proxy не принимают chunked upload, поэтому запрос
+	// сервиса формируется так же, не копируя сам архив второй раз в память.
+	httpReq.ContentLength = contentLength
 	c.authorize(httpReq)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "service unavailable") {
+			return createResponse{}, fmt.Errorf(
+				"создание архивного сканирования Dragon: %w; соединение не дошло до API Dragon — проверьте HTTPS_PROXY и добавьте хост Dragon в NO_PROXY",
+				err)
+		}
 		return createResponse{}, fmt.Errorf("создание архивного сканирования Dragon: %w", err)
 	}
 	defer resp.Body.Close()
-	if err := <-writerErr; err != nil {
-		return createResponse{}, fmt.Errorf("формирование multipart-запроса Dragon: %w", err)
-	}
 	if resp.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return createResponse{}, fmt.Errorf("создание архивного сканирования Dragon: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(message)))
@@ -322,66 +332,53 @@ func (c *Client) createArchiveRun(ctx context.Context, req Request) (createRespo
 	return created, nil
 }
 
-func archiveMultipart(req Request) (io.Reader, string, <-chan error) {
-	reader, writer := io.Pipe()
-	multipartWriter := multipart.NewWriter(writer)
-	errCh := make(chan error, 1)
-	go func() {
-		defer close(errCh)
-		fail := func(err error) {
-			_ = writer.CloseWithError(err)
-			errCh <- err
+func archiveMultipart(req Request) (io.Reader, string, int64, error) {
+	// В framing лежат только multipart-заголовки и поля. Байты архива
+	// вставляются между prefix и suffix через MultiReader, поэтому большой Go
+	// archive не дублируется целиком в памяти.
+	var framing bytes.Buffer
+	multipartWriter := multipart.NewWriter(&framing)
+	filename := filepath.Base(strings.TrimSpace(req.Artifact.Filename))
+	if filename == "." || filename == "" {
+		filename = "artifact.zip"
+	}
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{
+		"name": "file", "filename": filename,
+	}))
+	header.Set("Content-Type", "application/x-zip-compressed")
+	if _, err := multipartWriter.CreatePart(header); err != nil {
+		return nil, "", 0, err
+	}
+	prefixLength := framing.Len()
+
+	fields := map[string]string{
+		"label":    req.Artifact.Version,
+		"name":     req.Artifact.Name,
+		"publish":  strconv.FormatBool(req.Publish),
+		"priority": strconv.Itoa(req.Priority),
+		// Рабочая ручка Dragon проверена именно с этой переменной. Остальные
+		// служебные атрибуты Moder_repo в multipart не добавляются.
+		"variables": `{"SEC_AIE_PROJECT_LANGUAGE_GROUPS":"none"}`,
+	}
+	for _, field := range []string{"label", "name", "publish", "priority", "variables"} {
+		if err := multipartWriter.WriteField(field, fields[field]); err != nil {
+			return nil, "", 0, err
 		}
-		filename := filepath.Base(strings.TrimSpace(req.Artifact.Filename))
-		if filename == "." || filename == "" {
-			filename = "artifact.zip"
-		}
-		header := make(textproto.MIMEHeader)
-		header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{
-			"name": "file", "filename": filename,
-		}))
-		header.Set("Content-Type", "application/x-zip-compressed")
-		part, err := multipartWriter.CreatePart(header)
-		if err != nil {
-			fail(err)
-			return
-		}
-		if _, err := io.Copy(part, bytes.NewReader(req.Artifact.Payload)); err != nil {
-			fail(err)
-			return
-		}
-		fields := map[string]string{
-			"label":    req.Artifact.Version,
-			"name":     req.Artifact.Name,
-			"publish":  strconv.FormatBool(req.Publish),
-			"priority": strconv.Itoa(req.Priority),
-		}
-		variables, err := json.Marshal(map[string]string{
-			"MODERATION_EXTERNAL_ID":           req.ExternalID,
-			"MODERATION_MANAGER":               req.Artifact.Manager,
-			"MODERATION_PACKAGE":               req.Artifact.Name,
-			"MODERATION_VERSION":               req.Artifact.Version,
-			"MODERATION_SHA256":                normalizeSHA256(req.Artifact.SHA256),
-			"SEC_AIE_PROJECT_LANGUAGE_GROUPS": "none",
-		})
-		if err != nil {
-			fail(err)
-			return
-		}
-		fields["variables"] = string(variables)
-		for _, field := range []string{"label", "name", "publish", "priority", "variables"} {
-			if err := multipartWriter.WriteField(field, fields[field]); err != nil {
-				fail(err)
-				return
-			}
-		}
-		if err := multipartWriter.Close(); err != nil {
-			fail(err)
-			return
-		}
-		errCh <- writer.Close()
-	}()
-	return reader, multipartWriter.FormDataContentType(), errCh
+	}
+	if err := multipartWriter.Close(); err != nil {
+		return nil, "", 0, err
+	}
+	encoded := framing.Bytes()
+	prefix := append([]byte(nil), encoded[:prefixLength]...)
+	suffix := append([]byte(nil), encoded[prefixLength:]...)
+	contentLength := int64(len(prefix) + len(req.Artifact.Payload) + len(suffix))
+	reader := io.MultiReader(
+		bytes.NewReader(prefix),
+		bytes.NewReader(req.Artifact.Payload),
+		bytes.NewReader(suffix),
+	)
+	return reader, multipartWriter.FormDataContentType(), contentLength, nil
 }
 
 func normalizeStatus(base Result, status statusResponse) Result {

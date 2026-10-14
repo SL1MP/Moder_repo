@@ -56,7 +56,6 @@ type maintenanceRunner struct {
 	orphanTTL          time.Duration
 	osv                maintenance.OSVConfig
 	vulnMaxScore       float64
-	catalogInterval    time.Duration
 	catalog            maintenance.CatalogConfig
 }
 
@@ -84,7 +83,6 @@ func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, st *
 		orphanTTL:          cfg.StagingOrphanTTL,
 		osv:                osvConfig(cfg),
 		vulnMaxScore:       cfg.VulnMaxScore,
-		catalogInterval:    cfg.ArtifactCatalogSyncInterval,
 		catalog: maintenance.CatalogConfig{
 			Managers: cfg.ArtifactCatalogSyncManagers,
 			Repositories: cfg.ArtifactRepos,
@@ -147,10 +145,12 @@ func (m *maintenanceRunner) run(ctx context.Context) {
 	}
 }
 
-// catalogLoop отделён от карантина и уборки: первый импорт большой
+// catalogLoop отделён от карантина и уборки: полный импорт большой
 // корпоративной базы может идти десятки минут и не должен задерживать другие
-// регламентные задачи. Очередь запусков хранится в Postgres, поэтому кнопка в
-// web не привязана к жизни процесса API.
+// регламентные задачи. Сам worker ничего не ставит в очередь: запуск создаётся
+// только явным действием администратора в web/API либо командой maintenance
+// --catalog-sync. После перезапуска worker продолжает лишь уже поставленную
+// вручную задачу.
 func (m *maintenanceRunner) catalogLoop(ctx context.Context) {
 	if recovered, err := m.service.Repo.RecoverCatalogSyncRuns(
 		ctx, time.Now().UTC().Add(-maintenance.CatalogSyncTimeout)); err != nil {
@@ -158,29 +158,15 @@ func (m *maintenanceRunner) catalogLoop(ctx context.Context) {
 	} else if recovered > 0 {
 		m.logger.Warn("зависший запуск синхронизации каталога закрыт", "запусков", recovered)
 	}
-	if _, err := m.service.Repo.EnqueueCatalogSync(ctx, "startup", m.catalog.Managers, nil); err != nil {
-		m.logger.Error("синхронизация каталога не поставлена в очередь", "error", err)
-	}
 	poll := time.NewTicker(10 * time.Second)
 	defer poll.Stop()
-	var schedule *time.Ticker
-	var scheduleC <-chan time.Time
-	if m.catalogInterval > 0 {
-		schedule = time.NewTicker(clampInterval(m.catalogInterval))
-		defer schedule.Stop()
-		scheduleC = schedule.C
-	}
-	// Не ждём первого poll: существующая корпоративная база должна появиться
-	// в web-каталоге сразу после запуска worker.
+	// Не ждём первого poll: если администратор поставил задачу до запуска
+	// worker, её можно забрать сразу. Новая задача при этом не создаётся.
 	m.processCatalogRun(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-scheduleC:
-			if _, err := m.service.Repo.EnqueueCatalogSync(ctx, "schedule", m.catalog.Managers, nil); err != nil {
-				m.logger.Error("плановая синхронизация каталога не поставлена в очередь", "error", err)
-			}
 		case <-poll.C:
 			m.processCatalogRun(ctx)
 		}
@@ -192,9 +178,8 @@ func (m *maintenanceRunner) processCatalogRun(ctx context.Context) {
 		ctx, time.Now().UTC().Add(-maintenance.CatalogSyncTimeout)); err != nil {
 		m.logger.Warn("зависший запуск синхронизации каталога не проверен", "error", err)
 	} else if recovered > 0 {
-		if _, err := m.service.Repo.EnqueueCatalogSync(ctx, "schedule", m.catalog.Managers, nil); err != nil {
-			m.logger.Warn("повтор синхронизации каталога не поставлен в очередь", "error", err)
-		}
+		m.logger.Warn("зависший запуск синхронизации каталога закрыт; повторите его вручную",
+			"запусков", recovered)
 	}
 	run, err := m.service.Repo.ClaimCatalogSync(ctx)
 	if err != nil {

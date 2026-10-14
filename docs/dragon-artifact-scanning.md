@@ -35,7 +35,7 @@ Content-Type: multipart/form-data
 | `label` | версия пакета, например `v1.5.7` |
 | `publish` | значение `DRAGON_PUBLISH`, по умолчанию `true` |
 | `priority` | значение `DRAGON_PRIORITY`, по умолчанию `4` |
-| `variables` | корреляционные данные Moder_repo и `SEC_AIE_PROJECT_LANGUAGE_GROUPS=none` |
+| `variables` | ровно `{"SEC_AIE_PROJECT_LANGUAGE_GROUPS":"none"}` |
 
 Поле `publish` относится к публикации результатов внутри Dragon/Oakshield и
 не публикует пакет во внутренний артефактори. Пакет публикует только шаг
@@ -45,19 +45,29 @@ Content-Type: multipart/form-data
 
 ```dotenv
 DRAGON_ENABLED=true
-DRAGON_URL=https://mega-drakon.devsecops-infra.ptsecurity.cloud
+DRAGON_URL=https://dragon.example.internal
 DRAGON_TOKEN=<bearer-token>
 DRAGON_PIPELINE_ID=pl:default-security
-DRAGON_REPOSITORY_ID=u:a9b7d1757e77c3291d859c9c936e54
+DRAGON_REPOSITORY_ID=<идентификатор Go-репозитория вида u:...>
 DRAGON_PUBLISH=true
 DRAGON_PRIORITY=4
 DRAGON_POLL_INTERVAL_SECONDS=5
 DRAGON_TIMEOUT_SECONDS=1500
 ```
 
-В `.env` двоеточие в `u:a9...` записывается буквально. В URL клиент кодирует
+В `.env` двоеточие в `u:...` записывается буквально. В URL клиент кодирует
 его автоматически как `%3A`. Последовательность `%a0` не является кодировкой
 двоеточия и для этого идентификатора использоваться не должна.
+
+HTTP-запрос повторяет подтверждённый `curl -F`: передаёт `Accept: */*`, Bearer
+token, `multipart/form-data` с типом файла `application/x-zip-compressed` и
+известным `Content-Length` без chunked transfer. Значения `name` и `label`
+берутся из текущего Go-пакета, а не являются фиксированными тестовыми строками.
+
+Если в контейнер передан `HTTPS_PROXY`, а Dragon доступен напрямую внутри
+корпоративной сети, добавьте имя вашего хоста Dragon в
+`NO_PROXY`. Ошибка Go-клиента вида `Post "...": Service Unavailable` означает,
+что 503 получен при построении прокси-туннеля до получения HTTP-ответа Dragon.
 
 Ответ `202 Accepted` содержит `id`, `run_url`, `status_url`, SHA-256 и сведения
 о принятом архиве. Moder_repo проверяет, что возвращённый SHA-256 совпадает с

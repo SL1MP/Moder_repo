@@ -138,9 +138,9 @@ func TestGenericInstallLocationsUseJFrogFormatAPIs(t *testing.T) {
 			"ARTIFACT_STORE":           "generic",
 			"ARTIFACT_BASE_URL":        "https://repo.internal/artifactory",
 			"ARTIFACT_PUBLIC_BASE_URL": "https://repo.example/artifactory/",
-			"ARTIFACT_REPO_PYPI":       "pypi-external-moderated",
-			"ARTIFACT_REPO_NPM":        "npm-external-moderated",
-			"ARTIFACT_REPO_GO":         "go-external-moderated",
+			"ARTIFACT_REPO_PYPI":       "pypi-moderated",
+			"ARTIFACT_REPO_NPM":        "npm-moderated",
+			"ARTIFACT_REPO_GO":         "go-moderated",
 		}
 		return values[key]
 	})
@@ -149,9 +149,9 @@ func TestGenericInstallLocationsUseJFrogFormatAPIs(t *testing.T) {
 	}
 
 	cases := map[string]string{
-		"pypi": "https://repo.example/artifactory/api/pypi/pypi-external-moderated",
-		"npm":  "https://repo.example/artifactory/api/npm/npm-external-moderated",
-		"go":   "https://repo.example/artifactory/api/go/go-external-moderated",
+		"pypi": "https://repo.example/artifactory/api/pypi/pypi-moderated",
+		"npm":  "https://repo.example/artifactory/api/npm/npm-moderated",
+		"go":   "https://repo.example/artifactory/api/go/go-moderated",
 	}
 	for manager, wantBase := range cases {
 		base, repo := cfg.ArtifactInstallLocation(manager)
@@ -519,7 +519,6 @@ func TestArtifactCatalogSyncConfiguration(t *testing.T) {
 	env := map[string]string{
 		"DATABASE_URL": "postgres://localhost/moderation",
 		"ARTIFACT_CATALOG_SYNC_MANAGERS": " PyPI,npm,pypi,go ",
-		"ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS": "900",
 	}
 	cfg, err := Load(func(key string) string { return env[key] })
 	if err != nil {
@@ -533,9 +532,6 @@ func TestArtifactCatalogSyncConfiguration(t *testing.T) {
 		if cfg.ArtifactCatalogSyncManagers[i] != want[i] {
 			t.Fatalf("менеджеры синхронизации = %v, ожидалось %v", cfg.ArtifactCatalogSyncManagers, want)
 		}
-	}
-	if cfg.ArtifactCatalogSyncInterval != 15*time.Minute {
-		t.Fatalf("интервал синхронизации = %v", cfg.ArtifactCatalogSyncInterval)
 	}
 }
 

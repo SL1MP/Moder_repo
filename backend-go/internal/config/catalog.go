@@ -83,9 +83,6 @@ func (c *Config) Catalog() []Setting {
 		{Env: "ARTIFACT_CATALOG_SYNC_MANAGERS", Section: "Артефактори",
 			Description: "Доверенные moderated-репозитории для импорта в базу, через запятую",
 			Value:       strings.Join(c.ArtifactCatalogSyncManagers, ",")},
-		{Env: "ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS", Section: "Артефактори",
-			Description: "Интервал сверки каталога; 0 — только ручной запуск",
-			Value:       seconds(c.ArtifactCatalogSyncInterval)},
 
 		{Env: "SANDBOX_ENABLED", Section: "Песочница",
 			Description: "Шаг динамического анализа", Value: c.SandboxEnabled},

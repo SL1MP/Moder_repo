@@ -220,7 +220,6 @@ type Config struct {
 	// считаются уже проверенным корпоративным каталогом. Пустой список
 	// выключает импорт: staging и proxy нельзя случайно принять за moderated.
 	ArtifactCatalogSyncManagers []string
-	ArtifactCatalogSyncInterval time.Duration
 
 	// Каталог с распакованным снапшотом базы OSV.
 	OSVLocalDBPath string
@@ -413,7 +412,6 @@ func Load(getenv func(string) string) (*Config, error) {
 		ArtifactToken:    getenv("ARTIFACT_TOKEN"),
 		ArtifactDryRun:   boolOr(getenv("ARTIFACT_DRY_RUN"), false),
 		ArtifactCatalogSyncManagers: csvValues(getenv("ARTIFACT_CATALOG_SYNC_MANAGERS")),
-		ArtifactCatalogSyncInterval: secondsOr(getenv("ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS"), 6*60*60),
 
 		OSVLocalDBPath:  valueOr(getenv("OSV_LOCAL_DB_PATH"), "/var/lib/osv-db/current"),
 		OSVDBSource:     valueOr(getenv("OSV_DB_SOURCE"), "artifactory"),

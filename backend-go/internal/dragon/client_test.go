@@ -26,10 +26,17 @@ func TestClientUploadsArchiveAndPollsReturnedStatusURL(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/api/runs/archive":
+			if got := r.Header.Get("Accept"); got != "*/*" {
+				t.Errorf("Accept = %q", got)
+			}
+			if r.ContentLength <= 0 || len(r.TransferEncoding) != 0 {
+				t.Errorf("multipart должен иметь Content-Length: length=%d transfer=%v",
+					r.ContentLength, r.TransferEncoding)
+			}
 			if got := r.URL.Query().Get("pipeline_id"); got != "packages" {
 				t.Errorf("pipeline_id = %q", got)
 			}
-			if got := r.URL.Query().Get("repository_id"); got != "u:a9b7" {
+			if got := r.URL.Query().Get("repository_id"); got != "example-repository-id" {
 				t.Errorf("repository_id = %q", got)
 			}
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
@@ -57,10 +64,7 @@ func TestClientUploadsArchiveAndPollsReturnedStatusURL(t *testing.T) {
 					r.FormValue("name"), r.FormValue("label"),
 					r.FormValue("publish"), r.FormValue("priority"))
 			}
-			if !strings.Contains(r.FormValue("variables"), `"MODERATION_SHA256":"`+digest+`"`) {
-				t.Errorf("variables = %s", r.FormValue("variables"))
-			}
-			if !strings.Contains(r.FormValue("variables"), `"SEC_AIE_PROJECT_LANGUAGE_GROUPS":"none"`) {
+			if r.FormValue("variables") != `{"SEC_AIE_PROJECT_LANGUAGE_GROUPS":"none"}` {
 				t.Errorf("variables = %s", r.FormValue("variables"))
 			}
 			w.WriteHeader(http.StatusAccepted)
@@ -83,7 +87,7 @@ func TestClientUploadsArchiveAndPollsReturnedStatusURL(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": "run-1", "status": status, "pipeline": "default-security",
-				"repo": "go", "repository_id": "u:a9", "archive": "module.zip",
+				"repo": "go", "repository_id": "example-repository-id", "archive": "module.zip",
 				"jobs": jobs, "oakshield_url": "https://oakshield.example/engagement/1",
 			})
 		default:
@@ -97,7 +101,7 @@ func TestClientUploadsArchiveAndPollsReturnedStatusURL(t *testing.T) {
 		Timeout: time.Second, HTTPClient: server.Client(),
 	})
 	result, err := client.Scan(context.Background(), Request{
-		PipelineID: "packages", RepositoryID: "u:a9b7", ExternalID: "moderation:item:42",
+		PipelineID: "packages", RepositoryID: "example-repository-id", ExternalID: "moderation:item:42",
 		Publish: true, Priority: 4,
 		Artifact: Artifact{
 			Manager: "go", Name: "github.com/acme/module", Version: "v1.5.7", Filename: "module.zip",
@@ -116,7 +120,7 @@ func TestClientUploadsArchiveAndPollsReturnedStatusURL(t *testing.T) {
 	if result.ArchiveSHA256 != digest || result.ArchiveFiles != 2 || result.StatusURL == "" {
 		t.Fatalf("archive metadata = %+v", result)
 	}
-	if result.RepositoryID != "u:a9" || result.OakshieldURL == "" || len(result.Jobs) != 2 {
+	if result.RepositoryID != "example-repository-id" || result.OakshieldURL == "" || len(result.Jobs) != 2 {
 		t.Fatalf("status metadata = %+v", result)
 	}
 }
