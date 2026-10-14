@@ -117,8 +117,11 @@ type ReleaseBundlePublisher interface {
 type AuthType string
 
 const (
-	AuthToken AuthType = "token" // Bearer — предпочтительно для Artifactory
-	AuthBasic AuthType = "basic"
+	// AuthToken сохраняет прежнее экспортированное имя, но его строковое
+	// значение совпадает с тем, что показывают web и документация.
+	AuthToken       AuthType = "bearer"
+	authLegacyToken AuthType = "token"
+	AuthBasic       AuthType = "basic"
 )
 
 // Kind — тип артефактори.
@@ -194,16 +197,21 @@ type transport struct {
 func (t *transport) DryRun() bool { return t.cfg.DryRun }
 
 func (t *transport) authorize(req *http.Request) {
-	switch t.cfg.AuthType {
-	case AuthToken:
+	if isBearerAuth(t.cfg.AuthType) {
 		if t.cfg.Token != "" {
 			req.Header.Set("Authorization", "Bearer "+t.cfg.Token)
 		}
-	case AuthBasic:
+		return
+	}
+	if t.cfg.AuthType == AuthBasic {
 		if t.cfg.Username != "" {
 			req.SetBasicAuth(t.cfg.Username, t.cfg.Password)
 		}
 	}
+}
+
+func isBearerAuth(value AuthType) bool {
+	return value == AuthToken || value == authLegacyToken
 }
 
 func (t *transport) do(ctx context.Context, method, url string, body []byte, headers map[string]string) (*http.Response, error) {

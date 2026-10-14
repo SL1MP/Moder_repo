@@ -482,7 +482,7 @@ func (n *Nexus) conanExistsWithToken(ctx context.Context, fileURL, token string)
 // принимает Basic credentials на /users/authenticate и возвращает bearer-
 // токен, которым подписывается загрузка recipe file.
 func (n *Nexus) conanToken(ctx context.Context, repo string) (string, error) {
-	if n.cfg.AuthType == AuthToken {
+	if isBearerAuth(n.cfg.AuthType) {
 		if token := strings.TrimSpace(n.cfg.Token); token != "" {
 			return token, nil
 		}
