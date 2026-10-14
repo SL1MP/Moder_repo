@@ -223,7 +223,7 @@ func (p *Conan) recipeLocation(ctx context.Context, ref Ref) (conanRecipeLocatio
 // conan_export.tgz. Нативному Conan-репозиторию нужны также conanfile.py,
 // conanmanifest.txt, conandata.yml, conan_sources.tgz и служебные файлы,
 // которые сообщил upstream. Внешний tar.gz нужен лишь как транспорт через
-// единый конвейер; при публикации Nexus-адаптер распакует его и загрузит
+// единый конвейер; при публикации адаптер внутреннего артефактори распакует его и загрузит
 // каждый файл по Conan v2 API.
 func (p *Conan) Download(ctx context.Context, ref Ref, limit int64) ([]byte, string, error) {
 	location, err := p.recipeLocation(ctx, ref)

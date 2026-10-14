@@ -35,6 +35,8 @@ type AdminHandler struct {
 	Policies *policy.Holder
 	Repo     *repo.Repo
 	Cfg      *config.Config
+	// SettingsCipher шифрует секреты, которые администратор меняет через web.
+	SettingsCipher repo.SettingsCipher
 	// Index — снапшот базы уязвимостей: экран «Настройка» показывает его
 	// версию и возраст. Это главная строка на экране — устаревший снапшот не
 	// роняет сервис, он тихо переводит каждый пакет на ручное решение.
@@ -79,6 +81,7 @@ func MountAdmin(r chi.Router, h *AdminHandler, a *Auth) {
 		sub.Get("/api/v1/admin/users", h.Users)
 		sub.Post("/api/v1/admin/users", h.CreateUser)
 		sub.Patch("/api/v1/admin/users/{userID}", h.UpdateUser)
+		sub.Delete("/api/v1/admin/users/{userID}", h.DeleteUser)
 		sub.Get("/api/v1/admin/integrations/oidc", h.OIDCSettings)
 		sub.Put("/api/v1/admin/integrations/oidc", h.UpdateOIDCSettings)
 		sub.Post("/api/v1/admin/reload", h.Reload)
@@ -169,15 +172,22 @@ func (h *AdminHandler) Settings(w http.ResponseWriter, r *http.Request) {
 	}
 	settings := h.Cfg.Catalog()
 	if h.Repo != nil {
-		overrides, err := h.Repo.AppSettings(r.Context())
+		overrides, err := h.Repo.EffectiveAppSettings(r.Context(), h.SettingsCipher)
 		if err != nil {
 			writeError(w, r, errInternal("Web-настройки не прочитаны").Because(err))
 			return
 		}
 		for i := range settings {
 			if value, ok := overrides[settings[i].Env]; ok {
-				settings[i].Value = value
-				settings[i].Overridden = true
+				if settings[i].Secret {
+					if strings.TrimSpace(value) != "" {
+						settings[i].Value = "задано"
+					} else {
+						settings[i].Value = "не задано"
+					}
+				} else {
+					settings[i].Value = value
+				}
 			}
 		}
 	}

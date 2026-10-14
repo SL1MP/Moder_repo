@@ -284,7 +284,7 @@ func (r *Repo) TouchLastLogin(ctx context.Context, userID int64, now time.Time) 
 
 // ListUsers — пользователи приложения для административного экрана.
 func (r *Repo) ListUsers(ctx context.Context) ([]domain.User, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+userColumns+` FROM "user" ORDER BY username`)
+	rows, err := r.pool.Query(ctx, `SELECT `+userColumns+` FROM "user" WHERE deleted_at IS NULL ORDER BY username`)
 	if err != nil {
 		return nil, fmt.Errorf("чтение пользователей: %w", err)
 	}
@@ -307,7 +307,7 @@ func (r *Repo) ListUsers(ctx context.Context) ([]domain.User, error) {
 // GetUserByID — пользователь административного экрана. nil, если отсутствует.
 func (r *Repo) GetUserByID(ctx context.Context, id int64) (*domain.User, error) {
 	u, err := scanUser(r.pool.QueryRow(ctx,
-		`SELECT `+userColumns+` FROM "user" WHERE id = $1`, id))
+		`SELECT `+userColumns+` FROM "user" WHERE id = $1 AND deleted_at IS NULL`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -315,6 +315,55 @@ func (r *Repo) GetUserByID(ctx context.Context, id int64) (*domain.User, error) 
 		return nil, fmt.Errorf("чтение пользователя #%d: %w", id, err)
 	}
 	return u, nil
+}
+
+// DeleteUser логически удаляет учётную запись и обезличивает её. Строка
+// остаётся только как внешний ключ исторических заявок, комментариев и
+// решений; войти с ней и восстановить секреты уже невозможно.
+func (r *Repo) DeleteUser(ctx context.Context, id int64, now time.Time) (bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("начало удаления пользователя #%d: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE "user"
+		SET subject = NULL,
+		    username = 'deleted-' || id::text,
+		    email = NULL,
+		    full_name = 'Удалённый пользователь',
+		    roles = '[]'::jsonb,
+		    is_service = FALSE,
+		    is_active = FALSE,
+		    is_superuser = FALSE,
+		    must_change_password = FALSE,
+		    description = '',
+		    password_hash = NULL,
+		    gitlab_username = NULL,
+		    gitlab_access_token_enc = NULL,
+		    gitlab_refresh_token_enc = NULL,
+		    gitlab_token_expires_at = NULL,
+		    deleted_at = $2,
+		    updated_at = $2
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id, now)
+	if err != nil {
+		return false, fmt.Errorf("удаление пользователя #%d: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM refresh_token WHERE user_id = $1`, id); err != nil {
+		return false, fmt.Errorf("отзыв сессий пользователя #%d: %w", id, err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM api_token WHERE user_id = $1`, id); err != nil {
+		return false, fmt.Errorf("отзыв API-токенов пользователя #%d: %w", id, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("фиксация удаления пользователя #%d: %w", id, err)
+	}
+	return true, nil
 }
 
 // CreateLocalUser создаёт обычного пользователя приложения с локальным

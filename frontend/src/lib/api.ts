@@ -528,7 +528,6 @@ export interface SettingRow {
   value: unknown
   secret: boolean
   editable: boolean
-  overridden: boolean
   restart_required: boolean
 }
 
@@ -758,6 +757,8 @@ export const api = {
     request<AdminUser>('/admin/users', { method: 'POST', body: JSON.stringify(body) }),
   updateAdminUser: (id: number, body: { username?: string; email?: string; full_name?: string; description?: string; roles: string[]; is_superuser: boolean; is_active: boolean; password?: string; must_change_password?: boolean }) =>
     request<AdminUser>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteAdminUser: (id: number) =>
+    request<{ deleted: boolean; id: number }>(`/admin/users/${id}`, { method: 'DELETE' }),
   oidcSettings: () => request<OIDCSettings>('/admin/integrations/oidc'),
   saveOidcSettings: (body: Partial<OIDCSettings>) =>
     request<{ status: string }>('/admin/integrations/oidc', {

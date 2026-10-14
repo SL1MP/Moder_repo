@@ -135,7 +135,7 @@ func (m *Memory) Path(key string) string { return key }
 //
 // nil означает «перенос не поддержан» — Move вернёт ErrMoveUnsupported, и
 // вызывающий пойдёт запасным путём (скачать и выгрузить). Именно так ведёт
-// себя Nexus, поэтому оба пути публикации проверяются одним и тем же тестом,
+// себя внутренний артефактори, поэтому оба пути публикации проверяются одним и тем же тестом,
 // отличаясь только тем, задан ли sink.
 type MoveSink func(ctx context.Context, key string, data []byte, dstRepo, dstPath string) error
 

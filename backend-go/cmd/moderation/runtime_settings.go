@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"moderation/internal/config"
+	appcrypto "moderation/internal/crypto"
 	"moderation/internal/repo"
 )
 
@@ -23,7 +24,11 @@ const (
 func applyStoredSettings(
 	ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger *slog.Logger,
 ) {
-	values, err := repo.New(pool).AppSettings(ctx)
+	cipher, cipherErr := appcrypto.New(cfg.FernetKey)
+	if cipherErr != nil {
+		cipher = nil
+	}
+	values, err := repo.New(pool).EffectiveAppSettings(ctx, cipher)
 	if err != nil {
 		logger.Warn("web-настройки не загружены, используются значения .env", "error", err)
 		return
@@ -39,7 +44,7 @@ func applyStoredSettings(
 }
 
 // watchStoredSettings ждёт транзакционное уведомление от SaveAppSettings.
-// Клиенты Nexus, реестров, sandbox и OSV собраны вокруг Config при запуске,
+// Клиенты внутреннего артефактори, реестров, sandbox и OSV собраны вокруг Config при запуске,
 // поэтому частичная мутация Config на лету была бы опасна: разные части одного
 // прогона использовали бы разные адреса. Процессы вместо этого корректно
 // завершаются и поднимаются политикой restart оркестратора уже с целостным

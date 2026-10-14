@@ -20,8 +20,8 @@ import (
 	"moderation/internal/registry"
 )
 
-// Nexus — Sonatype Nexus 3. Выгрузка идёт компонентным REST API, а не PUT'ом
-// по адресу файла: на PUT Nexus отвечает 405, потому что раскладку внутри
+// Адаптер component REST API внутреннего артефактори. Выгрузка идёт
+// не PUT'ом по адресу файла: на такой PUT API отвечает 405, потому что раскладку внутри
 // репозитория он считает своим делом и строит её сам по формату.
 type Nexus struct{ transport }
 
@@ -31,7 +31,7 @@ func (n *Nexus) fileURL(repo, path string) string {
 	return fmt.Sprintf("%s/repository/%s/%s", n.cfg.BaseURL, repo, strings.TrimPrefix(path, "/"))
 }
 
-// assetPath — где Nexus хранит файл. Раскладка своя на каждый формат, и
+// assetPath — где внутренний артефактори хранит файл. Раскладка своя на каждый формат, и
 // совпадать с раскладкой Artifactory она не обязана: по этому адресу файл
 // потом отдаётся клиентам (pip, npm, go).
 func (n *Nexus) assetPath(t Target) string {
@@ -49,7 +49,7 @@ func (n *Nexus) assetPath(t Target) string {
 				strings.ReplaceAll(group, ".", "/"), artifact, t.Version, t.Filename)
 		}
 	case "php":
-		// Nexus Composer derives the final asset path from composer.json and
+		// Внутренний артефактори derives the final Composer asset path from composer.json and
 		// stores the archive without its extension. The component URL therefore
 		// uses vendor/package/version/<vendor-package-version>, not the raw
 		// Packagist zip filename.
@@ -176,7 +176,7 @@ func (n *Nexus) publishMavenBundle(ctx context.Context, t Target, files []regist
 	}
 	// Bundle мог быть сформирован старой версией worker-go и пережить
 	// обновление в staging. Поэтому фильтр применяется повторно прямо перед
-	// Nexus: сервис не отправляет source/javadoc, подписи и checksum даже из
+	// Внутренний артефактори: сервис не отправляет source/javadoc, подписи и checksum даже из
 	// такого сохранённого bundle.
 	filtered := make([]registry.BundleFile, 0, len(files))
 	for _, file := range files {
@@ -284,7 +284,7 @@ func mavenAssetCoordinates(artifact, version, filename string) (extension, class
 }
 
 // conanRecipeURL возвращает адрес recipe archive в нативном Conan v2 API.
-// Components API Nexus не описывает формат загрузки Conan: такие репозитории
+// Component API внутреннего артефактори не описывает формат загрузки Conan: такие репозитории
 // наполняются тем же протоколом, которым пользуется команда `conan upload`.
 func (n *Nexus) conanRecipeURL(t Target) (string, error) {
 	return n.conanRecipeFileURL(t, "conan_export.tgz")
@@ -323,7 +323,7 @@ func conanRevision(sourceURL string) (string, error) {
 
 // publishConanRecipe загружает уже проверенный conan_export.tgz без запуска
 // conanfile.py. Вызов conan export здесь был бы опасен: рецепт — чужой Python-
-// код и может выполнить произвольные действия ещё до помещения в Nexus.
+// код и может выполнить произвольные действия ещё до помещения во внутренний артефактори.
 func (n *Nexus) publishConanRecipe(ctx context.Context, t Target, data []byte) (string, error) {
 	fileURL, err := n.conanRecipeURL(t)
 	if err != nil {
@@ -478,7 +478,7 @@ func (n *Nexus) conanExistsWithToken(ctx context.Context, fileURL, token string)
 	return true, nil
 }
 
-// conanToken повторяет обязательный шаг аутентификации Conan-клиента. Nexus
+// conanToken повторяет обязательный шаг аутентификации Conan-клиента. Внутренний артефактори
 // принимает Basic credentials на /users/authenticate и возвращает bearer-
 // токен, которым подписывается загрузка recipe file.
 func (n *Nexus) conanToken(ctx context.Context, repo string) (string, error) {
@@ -555,7 +555,7 @@ func (n *Nexus) componentForm(t Target, data []byte) ([]byte, string, error) {
 		// Composer hosted repositories accept one archive in the generic
 		// `asset` field. The version is supplied explicitly because the
 		// Packagist dist archive may not contain a version field in its
-		// composer.json; Nexus then indexes it under the requested version.
+		// composer.json; внутренний артефактори затем индексирует запрошенную версию.
 		if err = writeFile("asset"); err == nil {
 			err = form.WriteField("version", t.Version)
 		}
@@ -566,7 +566,7 @@ func (n *Nexus) componentForm(t Target, data []byte) ([]byte, string, error) {
 	case "nuget":
 		err = writeFile("nuget.asset")
 	case "go":
-		// go-модули Nexus хранит в raw-репозитории: каталог задаём сами.
+		// go-модули внутренний артефактори хранит в raw-репозитории: каталог задаём сами.
 		if err = form.WriteField("raw.directory", registry.EscapeModule(t.DisplayName)+"/@v"); err == nil {
 			if err = writeFile("raw.asset1"); err == nil {
 				err = form.WriteField("raw.asset1.filename", t.Filename)
@@ -593,7 +593,7 @@ type nexusSearch struct {
 
 // Delete снимает пакет с публикации.
 //
-// Удаляется компонент целиком, а не файл: в Nexus у компонента бывает
+// Удаляется компонент целиком, а не файл: во внутреннем артефактори у компонента бывает
 // несколько ассетов (wheel и sdist у pypi), и удалить один файл значит
 // оставить версию наполовину доступной — install найдёт её и возьмёт остаток.
 func (n *Nexus) Delete(ctx context.Context, t Target) (bool, error) {

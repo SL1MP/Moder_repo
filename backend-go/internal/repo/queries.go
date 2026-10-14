@@ -549,6 +549,22 @@ func (r *Repo) CancelRequestItems(ctx context.Context, requestID int64) (int, er
 	return int(tag.RowsAffected()), nil
 }
 
+// CancelEmptyRequest закрывает старую заявку, созданную до появления защиты
+// от пустого списка пакетов. Историю сохраняем, но такая заявка больше не
+// выглядит выполняющейся.
+func (r *Repo) CancelEmptyRequest(ctx context.Context, requestID int64) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE moderation_request
+		SET status = 'cancelled', updated_at = now()
+		WHERE id = $1 AND status <> 'cancelled'
+		  AND NOT EXISTS (SELECT 1 FROM request_item WHERE request_id = $1)
+	`, requestID)
+	if err != nil {
+		return false, fmt.Errorf("закрытие пустой заявки #%d: %w", requestID, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // ItemStatusByRequest — статусы пакетов заявки. Нужен маршруту отмены, чтобы
 // объяснить, почему отменять нечего: «всё уже одобрено» и «заявка уже
 // отменена» — разные ответы.

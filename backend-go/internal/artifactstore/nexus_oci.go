@@ -18,8 +18,8 @@ import (
 	"strings"
 )
 
-// Nexus публикует Docker-образы через стандартный Registry API. Компонентный
-// REST API Nexus для этого не подходит: загруженный им .oci.tar.gz останется
+// Внутренний артефактори публикует Docker-образы через стандартный Registry API. Компонентный
+// REST API для этого не подходит: загруженный им .oci.tar.gz останется
 // обычным файлом, который docker pull не видит. skopeo делает тот же перенос,
 // что принят в корпоративном скрипте: --all копирует index/list, manifests
 // всех платформ, configs и layers.
@@ -172,7 +172,7 @@ func (n *Nexus) runSkopeo(ctx context.Context, t Target, args ...string) ([]byte
 // Нельзя передавать архив напрямую в skopeo через oci-archive:. При чтении
 // tar skopeo пытается восстановить uid/gid из заголовков и вызывает chown.
 // Контейнер backend работает от непривилегированного пользователя moderation,
-// поэтому публикация обрывается до обращения к Nexus с operation not
+// поэтому публикация обрывается до обращения к внутреннему артефактори с operation not
 // permitted. Созданные здесь файлы сразу принадлежат текущему пользователю, а
 // transport oci: читает готовый каталог и chown не выполняет.
 func writeOCILayoutDirectory(payload []byte) (string, func(), error) {
@@ -249,7 +249,7 @@ func writeOCILayoutDirectory(payload []byte) (string, func(), error) {
 	return dir, cleanup, nil
 }
 
-// PublishOCI переносит в hosted Docker repository Nexus исходный index и все
+// PublishOCI переносит в hosted Docker repository внутреннего артефактори исходный index и все
 // его платформы. --preserve-digests запрещает skopeo перекодировать manifests:
 // опубликованный index digest обязан совпасть с указанным в заявке.
 func (n *Nexus) PublishOCI(ctx context.Context, t Target, layoutTarGz []byte) (string, error) {

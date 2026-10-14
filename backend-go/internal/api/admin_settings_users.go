@@ -16,7 +16,8 @@ import (
 
 const adminBodyLimit = 128 << 10
 
-// UpdateSettings сохраняет несекретные web-настройки. Транзакционный NOTIFY
+// UpdateSettings сохраняет web-настройки. Секреты шифруются до записи, а
+// пустое секретное поле сохраняет прежнее значение. Транзакционный NOTIFY
 // после сохранения переключает api-go на новую конфигурацию без остановки и
 // корректно перезапускает worker-go; вручную обслуживать процессы не нужно.
 func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -44,12 +45,13 @@ func (h *AdminHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errInternal("Не определён администратор"))
 		return
 	}
-	before, err := h.Repo.AppSettings(r.Context())
+	before, err := h.Repo.EffectiveAppSettings(r.Context(), h.SettingsCipher)
 	if err != nil {
 		writeError(w, r, errInternal("Текущие web-настройки не прочитаны").Because(err))
 		return
 	}
-	if err := h.Repo.SaveAppSettings(r.Context(), payload.Values, user.ID); err != nil {
+	if err := h.Repo.SaveAppSettingsSecure(r.Context(), payload.Values, user.ID,
+		config.IsSecretSetting, h.SettingsCipher); err != nil {
 		writeError(w, r, errInternal("Настройки не сохранены").Because(err))
 		return
 	}
@@ -75,7 +77,15 @@ func selectedSettings(values map[string]string, keys []string) map[string]string
 	out := map[string]string{}
 	for _, key := range keys {
 		if value, ok := values[key]; ok {
-			out[key] = value
+			if config.IsSecretSetting(key) {
+				if strings.TrimSpace(value) == "" {
+					out[key] = "не изменён"
+				} else {
+					out[key] = "задано"
+				}
+			} else {
+				out[key] = value
+			}
 		}
 	}
 	return out
@@ -261,6 +271,57 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"roles": existing.Roles, "is_active": existing.IsActive},
 		map[string]any{"roles": updated.Roles, "is_active": updated.IsActive})
 	writeJSON(w, http.StatusOK, userAdminView(updated))
+}
+
+// DeleteUser удаляет возможность входа и обезличивает учётную запись, не
+// разрушая историю заявок, комментариев и решений.
+func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt64(w, r, "userID")
+	if !ok {
+		return
+	}
+	actor, _ := CurrentUser(r.Context())
+	if actor == nil {
+		writeError(w, r, errInternal("Не определён администратор"))
+		return
+	}
+	if actor.ID == id {
+		writeError(w, r, errConflict("Нельзя удалить собственную учётную запись"))
+		return
+	}
+	existing, err := h.Repo.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeError(w, r, errInternal("Пользователь не прочитан").Because(err))
+		return
+	}
+	if existing == nil {
+		writeError(w, r, errNotFound("Пользователь не найден"))
+		return
+	}
+	if existing.HasRole("admin") && existing.IsActive {
+		count, countErr := h.Repo.CountActiveUsersWithRole(r.Context(), "admin")
+		if countErr != nil {
+			writeError(w, r, errInternal("Не удалось проверить администраторов").Because(countErr))
+			return
+		}
+		if count <= 1 {
+			writeError(w, r, errConflict("Нельзя удалить последнего активного администратора"))
+			return
+		}
+	}
+	deleted, err := h.Repo.DeleteUser(r.Context(), id, h.now())
+	if err != nil {
+		writeError(w, r, errInternal("Пользователь не удалён").Because(err))
+		return
+	}
+	if !deleted {
+		writeError(w, r, errNotFound("Пользователь уже удалён"))
+		return
+	}
+	h.auditAdminChange(r, actor, "user_deleted", "user", &id,
+		map[string]any{"username": existing.Username, "roles": existing.Roles, "source": existing.Source},
+		map[string]any{"deleted": true})
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
 }
 
 func validRoles(values []string) ([]string, error) {

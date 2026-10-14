@@ -89,6 +89,28 @@ func TestCancelByAuthor(t *testing.T) {
 	}
 }
 
+func TestCancelLegacyEmptyRequest(t *testing.T) {
+	f := newReadFixture(t)
+	created, err := f.repo.CreateModerationRequest(context.Background(), domain.ModerationRequest{
+		AuthorID: f.author.ID, Manager: "pypi", Status: "pending", Source: "ui",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.requestID = created.ID
+	rec := f.post(t, f.author, []string{"developer"}, f.cancelPath())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("пустая заявка не закрыта: %d %s", rec.Code, rec.Body.String())
+	}
+	request, err := f.repo.GetModerationRequest(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Status != "cancelled" {
+		t.Fatalf("статус пустой заявки = %q, ожидался cancelled", request.Status)
+	}
+}
+
 // TestCancelForbiddenForOthers — закрыть заявку может только автор.
 //
 // DevSecOps и юрист сюда не входят сознательно: у них есть отклонение,

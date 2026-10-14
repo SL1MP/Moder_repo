@@ -365,6 +365,9 @@ func (h *RequestsHandler) canCancel(r *http.Request, req *domain.ModerationReque
 	if req.AuthorID != user.ID && !user.HasRole("admin") {
 		return false
 	}
+	if len(counts) == 0 {
+		return req.Status != "cancelled"
+	}
 	return cancellableCount(counts) > 0
 }
 
@@ -705,6 +708,26 @@ func (h *RequestsHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cancelled == 0 {
+		closed, closeErr := h.Repo.CancelEmptyRequest(r.Context(), requestID)
+		if closeErr != nil {
+			if schemaErr := schemaError(closeErr); schemaErr != nil {
+				writeError(w, r, schemaErr)
+				return
+			}
+			writeError(w, r, errInternal("Пустая заявка не закрыта").Because(closeErr))
+			return
+		}
+		if closed {
+			h.auditCancel(r, requestID, user, 0)
+			payload, payloadErr := h.requestPayload(r, mustReread(r, h, requestID, req))
+			if payloadErr != nil {
+				writeError(w, r, errInternal("Не удалось собрать карточку заявки").Because(payloadErr))
+				return
+			}
+			payload["cancelled"] = 0
+			writeJSON(w, http.StatusOK, payload)
+			return
+		}
 		// Отменять нечего — но причины разные, и ответ обязан их различать:
 		// «уже закрыта» это повторное нажатие кнопки, а «всё завершено» —
 		// попытка отозвать готовое решение.

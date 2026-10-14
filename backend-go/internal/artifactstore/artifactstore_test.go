@@ -102,7 +102,7 @@ func TestGenericPublishSkipsExisting(t *testing.T) {
 
 // --------------------------------------------------------------- nexus
 
-// Nexus не принимает PUT по адресу файла: выгрузка идёт компонентным API,
+// Component API внутреннего артефактори не принимает PUT по адресу файла:
 // иначе в ответ прилетает 405 на каждом пакете.
 func TestNexusPublishUsesComponentsAPI(t *testing.T) {
 	var gotPath, gotQuery, gotMethod, gotField, gotFilename string
@@ -153,7 +153,7 @@ func TestNexusPublishUsesComponentsAPI(t *testing.T) {
 	if gotFilename != "six-1.16.0-py3-none-any.whl" || string(gotBody) != "байты" {
 		t.Errorf("файл = %q (%q)", gotFilename, gotBody)
 	}
-	// Адрес файла у Nexus свой: /repository/ и раскладка формата.
+	// Адрес файла у внутреннего артефактори свой: /repository/ и раскладка формата.
 	if !strings.HasSuffix(url, "/repository/pypi-internal/packages/six/1.16.0/six-1.16.0-py3-none-any.whl") {
 		t.Errorf("URL = %q", url)
 	}
@@ -206,7 +206,7 @@ func TestNexusPublishesComposerArchive(t *testing.T) {
 	}
 }
 
-// go-модули Nexus хранит в raw-репозитории: каталог задаём сами, иначе
+// go-модули внутренний артефактори хранит в raw-репозитории: каталог задаём сами, иначе
 // GOPROXY их не найдёт.
 func TestNexusPublishGoModuleAsRaw(t *testing.T) {
 	fields := map[string]string{}
@@ -252,7 +252,7 @@ func TestNexusPublishGoModuleAsRaw(t *testing.T) {
 	}
 }
 
-// Conan нельзя загружать через Components API: Nexus ожидает нативный Conan
+// Conan нельзя загружать через Components API: внутренний артефактори ожидает нативный Conan
 // v2 protocol, иначе получившийся файл не виден команде `conan install`.
 func TestNexusPublishConanRecipeThroughV2Protocol(t *testing.T) {
 	const revision = "0123456789abcdef0123456789abcdef"
@@ -321,7 +321,7 @@ func TestNexusPublishesMavenReleaseBundle(t *testing.T) {
 		{Name: "tool-2.2.21-gradle80.jar", Data: []byte("gradle")},
 		{Name: "tool-2.2.21.module", Data: []byte("module")},
 		// Старый staging bundle мог сохранить эти файлы до обновления фильтра.
-		// Последний рубеж перед Nexus обязан удалить их повторно.
+		// Последний рубеж перед внутренним артефактори обязан удалить их повторно.
 		{Name: "tool-2.2.21-sources.jar", Data: []byte("sources")},
 		{Name: "tool-2.2.21-javadoc.jar", Data: []byte("javadoc")},
 		{Name: "tool-2.2.21.jar.md5", Data: []byte("md5")},
@@ -715,7 +715,7 @@ func TestForbiddenPointsAtCredentials(t *testing.T) {
 }
 
 // Опечатка в ARTIFACT_STORE не должна молча превращаться в «публикуем как в
-// Artifactory»: на Nexus это 405 на каждом пакете.
+// generic API»: component API отвечает 405 на каждом пакете.
 func TestUnknownKindIsRejected(t *testing.T) {
 	_, err := artifactstore.New(artifactstore.Config{Kind: "nexsus", BaseURL: "http://example"})
 	if err == nil || !strings.Contains(err.Error(), "ARTIFACT_STORE") {

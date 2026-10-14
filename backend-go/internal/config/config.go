@@ -62,7 +62,7 @@ type Config struct {
 	SandboxInsecureTLS bool
 
 	// Dragon orchestrates containerized scanners over the exact artifact stored
-	// in staging. Its token authorizes Moder_repo in Dragon; Nexus credentials
+	// in staging. Its token authorizes Moder_repo in Dragon; artifact storage credentials
 	// are configured read-only on Dragon runners and are never sent per task.
 	DragonEnabled      bool
 	DragonURL          string
@@ -102,11 +102,11 @@ type Config struct {
 	// установки одобренного пакета — её показывает карточка пакета и карточка
 	// заявки.
 	ArtifactBaseURL string
-	// ArtifactPublicBaseURL — адрес того же Nexus/Artifactory из браузера и
+	// ArtifactPublicBaseURL — адрес того же внутреннего артефактори из браузера и
 	// рабочих станций разработчиков. Внутреннее имя docker-сервиса
-	// (http://nexus:8081) никогда не должно попадать в команды установки.
+	// внутреннее имя контейнера никогда не должно попадать в команды установки.
 	ArtifactPublicBaseURL string
-	// ArtifactDockerRegistryURL — внутренний префикс Docker Registry Nexus,
+	// ArtifactDockerRegistryURL — внутренний префикс Docker Registry артефактори,
 	// куда worker делает push. ArtifactDockerPublicURL — тот же repository с
 	// точки зрения разработчика; используется в готовой команде docker pull.
 	ArtifactDockerRegistryURL string
@@ -207,8 +207,8 @@ type Config struct {
 	FernetKey string
 
 	// Артефактори — учётные данные для публикации и режим «без записи».
-	// ArtifactStore — тип артефактори: nexus (по умолчанию) или generic.
-	// У них разные протоколы выгрузки, и выбор не косметический: PUT в Nexus
+	// ArtifactStore — тип протокола внутреннего артефактори: nexus или generic.
+	// У них разные протоколы выгрузки, и выбор не косметический: простой PUT
 	// отвечает 405 на каждом пакете.
 	ArtifactStore    string
 	ArtifactAuthType string
@@ -647,8 +647,8 @@ func (c *Config) AcceptedIssuers() []string {
 // artifactRepos собирает карту «менеджер → репозиторий» по всем известным
 // менеджерам. Имя переменной — ARTIFACT_REPO_{МЕНЕДЖЕР} в верхнем регистре,
 // значение по умолчанию — «{менеджер}-internal». Maven — исключение: штатный
-// hosted repository Nexus называется maven-releases (именно его создаёт
-// стандартная установка Nexus и показывает документация сервиса).
+// hosted Maven-репозиторий внутреннего артефактори по умолчанию называется
+// maven-releases.
 func artifactRepos(getenv func(string) string) map[string]string {
 	repos := make(map[string]string, len(domain.ManagerCodes))
 	for _, manager := range domain.ManagerCodes {
@@ -669,7 +669,7 @@ func (c *Config) ArtifactRepo(manager string) string {
 }
 
 // ArtifactInstallLocation возвращает аргументы Plugin.InstallCommand. Для
-// Docker явно заданный public URL уже содержит имя Nexus repository (или
+// Docker явно заданный public URL уже содержит имя repository (или
 // connector port), поэтому второй раз добавлять ARTIFACT_REPO_DOCKER нельзя.
 func (c *Config) ArtifactInstallLocation(manager string) (baseURL, repo string) {
 	if manager == "docker" && c.ArtifactDockerPublicURL != "" {
@@ -683,9 +683,9 @@ func (c *Config) ArtifactInstallLocation(manager string) (baseURL, repo string) 
 
 	// JFrog принимает загрузку файлов по /artifactory/{repo}/..., но штатные
 	// клиенты пакетных менеджеров читают репозитории через format-specific API.
-	// Nexus, напротив, использует /repository/{repo}. Передаём готовый JFrog
+	// Протокол component repository использует /repository/{repo}. Передаём готовый JFrog
 	// endpoint и пустое имя repo: плагины воспринимают такую пару как уже
-	// собранный адрес и не добавляют Nexus-префикс.
+	// собранный адрес и не добавляют служебный префикс.
 	if strings.EqualFold(strings.TrimSpace(c.ArtifactStore), "generic") {
 		switch manager {
 		case "pypi":
@@ -700,7 +700,7 @@ func (c *Config) ArtifactInstallLocation(manager string) (baseURL, repo string) 
 }
 
 // PublicArtifactURL заменяет внутренний origin артефактори на внешний.
-// Путь сохраняется байт-в-байт, поэтому уже опубликованные nexus_url не нужно
+// Путь сохраняется байт-в-байт, поэтому уже опубликованные URL не нужно
 // переписывать в базе после смены адреса.
 func (c *Config) PublicArtifactURL(raw string) string {
 	public := strings.TrimRight(c.ArtifactPublicBaseURL, "/")
@@ -719,7 +719,7 @@ func (c *Config) PublicArtifactURL(raw string) string {
 
 // PublicArtifactText заменяет внутренние адреса артефактори внутри уже
 // сохранённых сообщений, команд и деталей шагов. Ранние прогоны записывали в
-// историю полный текст с http://nexus:8081; менять каждую историческую строку
+// историю полный текст с внутренним адресом; менять каждую историческую строку
 // при смене внешнего адреса нельзя, поэтому read API приводит её к актуальной
 // публичной конфигурации на лету.
 func (c *Config) PublicArtifactText(raw string) string {

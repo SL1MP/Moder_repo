@@ -421,6 +421,10 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 		Index: osv.NewSnapshotIndex(cfg.OSVLocalDBPath),
 		Queue: pipelineQueue,
 	}
+	settingsCipher, settingsCipherErr := crypto.New(cfg.FernetKey)
+	if settingsCipherErr == nil {
+		admin.SettingsCipher = settingsCipher
+	}
 	if st != nil {
 		// Ручной запуск синхронизации подключается, только когда есть чем её
 		// выполнить: кнопка, отвечающая «не настроено», хуже отсутствующей.

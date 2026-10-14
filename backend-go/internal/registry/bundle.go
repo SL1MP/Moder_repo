@@ -91,7 +91,7 @@ func PackBundle(manager string, files []BundleFile, limit int64) ([]byte, error)
 }
 
 // UnpackBundle проверяет маркер, менеджер, пути и суммарный размер. Функция
-// экспортирована для адаптеров Nexus/Artifactory, которые публикуют реальные
+// экспортирована для адаптеров внутреннего артефактори, которые публикуют реальные
 // файлы, а не транспортный архив.
 func UnpackBundle(data []byte, expectedManager string, limit int64) ([]BundleFile, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(data))

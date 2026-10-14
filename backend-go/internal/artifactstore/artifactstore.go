@@ -1,18 +1,18 @@
 // Package artifactstore — публикация проверенного пакета во внутренний
 // артефактори. Порт backend/app/adapters/artifact_store.py.
 //
-// Реализаций две, и выбор между ними — не деталь: у Nexus и Artifactory
+// Реализаций две, и выбор между ними — не деталь: у поддерживаемых внутренних артефактори
 // принципиально разные протоколы выгрузки.
 //
-//	nexus   — Sonatype Nexus 3: компонентный REST API
+//	nexus   — компонентный REST API
 //	          (POST /service/rest/v1/components?repository=…, multipart),
 //	          файлы лежат под /repository/{repo}/…
 //	generic — JFrog Artifactory и совместимые: PUT байтами прямо по адресу
 //	          файла, с проверкой контрольной суммы на стороне сервера.
 //
-// Выгрузить в Nexus «как в Artifactory» нельзя: на PUT по адресу файла Nexus
+// Выгрузить через component API «как через generic API» нельзя: простой PUT
 // отвечает 405 Method Not Allowed — ровно это и случалось, пока go-версия
-// умела только generic, а стенд работал на Nexus.
+// умела только generic, а стенд работал через component API.
 //
 // ОТКРЫТЫЙ ВОПРОС по generic: CI-версия публикует пакет server-side copy'ем
 // внутри Artifactory (байты не проходят через процесс), а здесь реализовано
@@ -40,11 +40,11 @@ type RemoteFile struct {
 }
 
 // Target — что публикуем. Путь внутри репозитория зависит от того, чем
-// является артефактори (у Nexus своя раскладка на каждый формат), поэтому
+// является внутренний артефактори (у component API своя раскладка на каждый формат), поэтому
 // сюда передаётся не только готовый путь, но и сам пакет.
 type Target struct {
 	Repo string
-	// Manager — код пакетного менеджера: по нему Nexus выбирает формат
+	// Manager — код пакетного менеджера: по нему внутренний артефактори выбирает формат
 	// компонента и имя поля с файлом.
 	Manager     string
 	Name        string // нормализованное имя
@@ -57,13 +57,13 @@ type Target struct {
 	// repository создаёт неустанавливаемый набор байтов.
 	SourceURL string
 	// Path — путь файла в раскладке generic-артефактори (её задаёт плагин
-	// менеджера). Nexus раскладку строит сам.
+	// менеджера). Component API раскладку строит сам.
 	Path string
 }
 
 // Store — контракт артефактори.
 type Store interface {
-	// Kind — «nexus» или «generic». Нужен в сообщениях: половина ошибок
+	// Kind — протокол «nexus» или «generic». Нужен в сообщениях: половина ошибок
 	// выгрузки — это не сломанный доступ, а не тот протокол.
 	Kind() string
 	// ArtifactURL — адрес, по которому пакет будет (или уже) опубликован.
@@ -129,7 +129,7 @@ const (
 
 // Config — параметры артефактори.
 type Config struct {
-	// Kind — «nexus» (по умолчанию, как в python-версии и .env.example) или
+	// Kind — протокол «nexus» (по умолчанию) или
 	// «generic».
 	Kind     string
 	BaseURL  string
@@ -137,10 +137,10 @@ type Config struct {
 	Token    string
 	Username string
 	Password string
-	// DockerRegistryURL — полный префикс Docker Registry, в который Nexus
+	// DockerRegistryURL — полный префикс Docker Registry внутреннего артефактори,
 	// принимает push. Для path-based routing это, например,
-	// http://nexus:8081/docker-internal; для отдельного connector port —
-	// http://nexus:5000. Пустое значение выводится из BaseURL и Target.Repo.
+	// например http://artifact-host/docker-internal; для отдельного connector
+	// port — http://artifact-host:5000. Пустое значение выводится из BaseURL и Target.Repo.
 	DockerRegistryURL string
 	// DockerPublicURL — тот же префикс с точки зрения разработчика. Он может
 	// отличаться от внутреннего адреса, по которому worker публикует образ.
@@ -181,7 +181,7 @@ func New(cfg Config) (Store, error) {
 		return &Generic{transport: tr}, nil
 	}
 	// Опечатка в ARTIFACT_STORE не должна молча превращаться в «публикуем как
-	// в Artifactory»: на Nexus это 405 на каждом пакете.
+	// через generic API»: component API вернёт 405 на каждом пакете.
 	return nil, fmt.Errorf("неизвестный тип артефактори ARTIFACT_STORE=%q (ожидается nexus или generic)", cfg.Kind)
 }
 

@@ -15,7 +15,7 @@ Python остаётся внутри runtime-образа только как з
 - `internal/pipeline` — шаги модерации и возобновление после решений ролей;
 - `internal/queue` — очередь в PostgreSQL с `LISTEN/NOTIFY` и атомарным захватом;
 - `internal/registry` — менеджеры пакетов, загрузка и метаданные;
-- `internal/artifactstore` — staging, публикация и удаление из Nexus;
+- `internal/artifactstore` — staging, публикация и удаление из внутреннего артефактори;
 - `internal/osv`, `internal/sandbox`, `internal/dragon` — внешние проверки;
 - `internal/repo` — доступ к PostgreSQL;
 - `migrations` — SQL-миграции текущей схемы.

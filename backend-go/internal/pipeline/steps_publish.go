@@ -82,7 +82,7 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	installBaseURL, installRepo := pc.Config.ArtifactInstallLocation(pc.Package.Manager)
 	command := plugin.InstallCommand(ref, installBaseURL, installRepo)
 	// Цель публикации несёт и пакет, и путь: раскладка внутри репозитория
-	// зависит от типа артефактори (Nexus строит её сам по формату), а путь от
+	// зависит от типа внутреннего артефактори (часть реализаций строит её сама), а путь от
 	// плагина — это раскладка Artifactory.
 	target := artifactstore.Target{
 		Repo: repoName, Manager: ref.Manager, Name: registry.PublishedName(ref.Manager, ref.Name),
@@ -238,7 +238,7 @@ const (
 	// рядом.
 	publishByMove publishMode = "move"
 	// publishByUpload — сервис прочитал файл из промежуточной зоны и выгрузил
-	// его в целевой репозиторий. Запасной путь: так публикуется всё в Nexus
+	// его в целевой репозиторий. Запасной путь применяется для component API
 	// (переносить между репозиториями он не умеет) и всё, что артефактори
 	// отказался переносить сам.
 	publishByUpload publishMode = "upload"
@@ -316,7 +316,7 @@ func publishArtifact(
 		case err == nil:
 			return pc.Deps.Artifacts.ArtifactURL(target), publishByMove, nil
 		case storage.MoveUnsupported(err):
-			// Штатный случай, не авария: Nexus так не умеет, и совместимые с
+			// Штатный случай, не авария: component API так не умеет, и совместимые с
 			// Artifactory только по PUT — тоже. Идём запасным путём молча:
 			// сообщать об этом на каждом пакете нечего, способ публикации и так
 			// попадает в details шага.
@@ -337,7 +337,7 @@ func publishArtifact(
 }
 
 // targetPath — путь файла в целевом репозитории. У generic-артефактори это
-// путь от плагина менеджера; Nexus раскладку строит сам, и перенос туда всё
+// путь от плагина менеджера; component API раскладку строит сам, и перенос туда всё
 // равно не поддержан — значение используется только в ветке переноса.
 func targetPath(store artifactstore.Store, target artifactstore.Target) string {
 	if target.Path != "" {

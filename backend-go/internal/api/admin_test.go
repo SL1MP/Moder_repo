@@ -142,8 +142,11 @@ func TestWebSettingsAreAdminOnlyAndPersisted(t *testing.T) {
 	}
 
 	rec = f.do(t, "developer", http.MethodGet, "/api/v1/settings")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"overridden":true`) {
-		t.Fatalf("web override не виден в каталоге: %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"value":"https://repo.example.test:8443"`) {
+		t.Fatalf("сохранённое значение не видно в каталоге: %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"overridden"`) {
+		t.Fatalf("интерфейс раскрывает технический источник настройки: %s", rec.Body.String())
 	}
 }
 
@@ -166,6 +169,28 @@ func TestAdminCreatesLocalUserWithApplicationRoles(t *testing.T) {
 	}
 	if !auth.VerifyPassword("надёжный-пароль", created.PasswordHash) {
 		t.Fatal("сохранённый пароль не проверяется")
+	}
+}
+
+func TestAdminDeletesUserWithoutDestroyingHistory(t *testing.T) {
+	f := newAdminFixture(t)
+	username := fmt.Sprintf("удаляемый-%d", time.Now().UnixNano())
+	body := fmt.Sprintf(`{"username":%q,"roles":["developer"],"password":"надёжный-пароль"}`, username)
+	createdRec := f.doBody(t, "admin", http.MethodPost, "/api/v1/admin/users", body)
+	if createdRec.Code != http.StatusCreated {
+		t.Fatalf("пользователь не создан: %d %s", createdRec.Code, createdRec.Body.String())
+	}
+	var created struct{ ID int64 `json:"id"` }
+	if err := json.Unmarshal(createdRec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	deletedRec := f.do(t, "admin", http.MethodDelete,
+		fmt.Sprintf("/api/v1/admin/users/%d", created.ID))
+	if deletedRec.Code != http.StatusOK {
+		t.Fatalf("пользователь не удалён: %d %s", deletedRec.Code, deletedRec.Body.String())
+	}
+	if user, err := f.repo.GetUserByID(context.Background(), created.ID); err != nil || user != nil {
+		t.Fatalf("удалённый пользователь доступен в админке: user=%+v err=%v", user, err)
 	}
 }
 

@@ -90,7 +90,6 @@ export default function SettingsPage({ me }: { me: Me }) {
                 <th>Переменная</th>
                 <th>Значение</th>
                 <th>Описание</th>
-                <th />
               </tr>
             </thead>
             <tbody>
@@ -102,9 +101,6 @@ export default function SettingsPage({ me }: { me: Me }) {
                     settings.reload()
                   }} onError={setError} />
                   <td className="small dim">{row.description}</td>
-                  <td className="small nowrap">
-                    {row.overridden ? <span className="badge info">web</span> : <span className="muted">.env</span>}
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -192,17 +188,20 @@ function SettingValue({ row, isAdmin, onSaved, onError }: {
   onSaved: (message: string) => void
   onError: (message: string) => void
 }) {
-  const [value, setValue] = useState(String(row.value ?? ''))
+  const [value, setValue] = useState(row.secret ? '' : String(row.value ?? ''))
   const [busy, setBusy] = useState(false)
 
-  if (row.secret || !row.editable || !isAdmin) {
+  if (!row.editable || !isAdmin) {
     return <td className="mono small"><span className={row.secret ? 'muted' : ''}>{String(row.value ?? '—') || 'пусто'}</span></td>
   }
   return (
     <td className="setting-value">
       <div className="row nowrap">
-        <input className="mono" value={value} onChange={(event) => setValue(event.target.value)} />
-        <button className="small" disabled={busy || value === String(row.value ?? '')} onClick={() => {
+        <input className="mono" type={row.secret ? 'password' : 'text'}
+          autoComplete={row.secret ? 'new-password' : undefined}
+          placeholder={row.secret && row.value === 'задано' ? 'пусто — не менять' : ''}
+          value={value} onChange={(event) => setValue(event.target.value)} />
+        <button className="small" disabled={busy || (!row.secret && value === String(row.value ?? '')) || (row.secret && !value)} onClick={() => {
           setBusy(true)
           onError('')
           api.saveSettings({ [row.env]: value })
@@ -248,6 +247,7 @@ function UsersPanel() {
           {(users.data?.items ?? []).map((user) => (
             <UserAccessRow key={user.id} user={user} roles={users.data?.roles ?? []}
               onSaved={() => { setMessage(`Доступ ${user.username} обновлён`); users.reload() }}
+              onDeleted={() => { setMessage(`Пользователь ${user.username} удалён`); users.reload() }}
               onError={setError} />
           ))}
         </div>
@@ -295,10 +295,11 @@ function UsersPanel() {
   )
 }
 
-function UserAccessRow({ user, roles, onSaved, onError }: {
+function UserAccessRow({ user, roles, onSaved, onDeleted, onError }: {
   user: AdminUser
   roles: string[]
   onSaved: () => void
+  onDeleted: () => void
   onError: (message: string) => void
 }) {
   const [selected, setSelected] = useState(user.roles)
@@ -345,6 +346,12 @@ function UserAccessRow({ user, roles, onSaved, onError }: {
         })
           .then(onSaved).catch((exc: Error) => onError(exc.message)).finally(() => setBusy(false))
       }}>{busy ? '…' : 'сохранить'}</button>
+      <button className="small danger" disabled={busy} onClick={() => {
+        if (!window.confirm(`Удалить пользователя ${user.username}? История его действий сохранится.`)) return
+        setBusy(true); onError('')
+        api.deleteAdminUser(user.id)
+          .then(onDeleted).catch((exc: Error) => onError(exc.message)).finally(() => setBusy(false))
+      }}>удалить</button>
     </div>
   )
 }

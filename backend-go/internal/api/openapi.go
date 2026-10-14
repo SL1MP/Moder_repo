@@ -385,6 +385,7 @@ func openAPIRoutes() []openAPIRoute {
 		{Method: "GET", Path: "/api/v1/admin/users", OperationID: "listUsers", Summary: "Получить пользователей и роли приложения", Tag: "Администрирование", Roles: []string{"admin"}},
 		{Method: "POST", Path: "/api/v1/admin/users", OperationID: "createUser", Summary: "Создать локального пользователя", Tag: "Администрирование", Roles: []string{"admin"}, Body: jsonBody(refSchema("CreateUserRequest"), "Локальная учётная запись")},
 		{Method: "PATCH", Path: "/api/v1/admin/users/{userID}", OperationID: "updateUserAccess", Summary: "Изменить пользователя, роли или пароль", Tag: "Администрирование", Roles: []string{"admin"}, Body: genericJSONBody("Профиль, роли, активность и необязательный новый пароль")},
+		{Method: "DELETE", Path: "/api/v1/admin/users/{userID}", OperationID: "deleteUser", Summary: "Удалить и обезличить пользователя", Tag: "Администрирование", Roles: []string{"admin"}},
 		{Method: "GET", Path: "/api/v1/admin/integrations/oidc", OperationID: "getOIDCSettings", Summary: "Получить runtime-настройку OIDC", Tag: "Администрирование", Roles: []string{"admin"}},
 		{Method: "PUT", Path: "/api/v1/admin/integrations/oidc", OperationID: "updateOIDCSettings", Summary: "Сохранить и сразу применить OIDC", Tag: "Администрирование", Roles: []string{"admin"}, Body: jsonBody(refSchema("OIDCSettings"), "Issuer, клиент и публичный адрес")},
 		{Method: "POST", Path: "/api/v1/admin/reload", OperationID: "reloadPolicies", Summary: "Перезагрузить политики", Tag: "Администрирование", Roles: []string{"admin"}},

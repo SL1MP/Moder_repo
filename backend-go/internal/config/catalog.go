@@ -26,11 +26,9 @@ type Setting struct {
 	// Secret — значение скрыто. Поле нужно интерфейсу, чтобы показать такие
 	// строки иначе, а не выводить слово «задано» как обычное значение.
 	Secret bool `json:"secret"`
-	// Editable — настройку можно сохранить через web. Секреты намеренно не
-	// редактируются этим маршрутом.
+	// Editable — настройку можно сохранить через web. Секреты при этом не
+	// возвращаются клиенту и сохраняются в зашифрованном виде.
 	Editable bool `json:"editable"`
-	// Overridden — значение пришло из БД, а не из .env.
-	Overridden bool `json:"overridden"`
 	// RestartRequired оставлен в контракте API для совместимости. Для
 	// web-настроек он false: процессы перезапускаются автоматически.
 	RestartRequired bool `json:"restart_required"`
@@ -60,10 +58,10 @@ func (c *Config) Catalog() []Setting {
 		{Env: "ARTIFACT_BASE_URL", Section: "Артефактори",
 			Description: "Внутренний адрес артефактори для контейнеров", Value: c.ArtifactBaseURL},
 		{Env: "ARTIFACT_PUBLIC_BASE_URL", Section: "Артефактори",
-			Description: "Публичный адрес Nexus/Artifactory для ссылок и команд установки",
+			Description: "Публичный адрес внутреннего артефактори для ссылок и команд установки",
 			Value:       c.ArtifactPublicBaseURL},
 		{Env: "ARTIFACT_DOCKER_REGISTRY_URL", Section: "Артефактори",
-			Description: "Внутренний префикс hosted Docker repository Nexus",
+			Description: "Внутренний префикс hosted Docker-репозитория артефактори",
 			Value:       c.ArtifactDockerRegistryURL},
 		{Env: "ARTIFACT_DOCKER_PUBLIC_URL", Section: "Артефактори",
 			Description: "Публичный префикс Docker repository для docker pull",
@@ -72,6 +70,8 @@ func (c *Config) Catalog() []Setting {
 			Description: "Учётная запись для публикации", Value: c.ArtifactUser},
 		{Env: "ARTIFACT_TOKEN", Section: "Артефактори",
 			Description: "Токен или пароль", Value: secret(c.ArtifactToken), Secret: true},
+		{Env: "ARTIFACT_AUTH_TYPE", Section: "Артефактори",
+			Description: "Тип авторизации: basic или bearer", Value: c.ArtifactAuthType},
 		{Env: "ARTIFACT_REPO_STAGING", Section: "Артефактори",
 			Description: "Промежуточная зона: где лежит пакет во время проверок",
 			Value:       c.ArtifactRepoStaging},
@@ -148,6 +148,8 @@ func (c *Config) Catalog() []Setting {
 			Description: "Базовый адрес GitLab (только чтение)", Value: c.GitlabURL},
 		{Env: "GITLAB_OAUTH_CLIENT_ID", Section: "GitLab",
 			Description: "OAuth client_id", Value: c.GitlabOAuthClientID},
+		{Env: "GITLAB_OAUTH_SECRET", Section: "GitLab",
+			Description: "OAuth client secret", Value: secret(c.GitlabOAuthSecret), Secret: true},
 
 		{Env: "MAX_UPLOAD_SIZE_BYTES", Section: "Лимиты",
 			Description: "Максимальный размер файла зависимостей", Value: c.MaxUploadSizeBytes},

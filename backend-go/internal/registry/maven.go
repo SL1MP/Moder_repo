@@ -358,7 +358,7 @@ func mavenListingNames(body []byte) []string {
 
 // AllowedMavenAsset — единая белая таблица файлов Maven-релиза. Она
 // экспортирована намеренно: и скачивание, и последний рубеж перед публикацией
-// в Nexus обязаны применять одно правило, чтобы checksum/source/javadoc не
+// во внутренний артефактори обязаны применять одно правило, чтобы checksum/source/javadoc не
 // проскочили из старого staging bundle после обновления сервиса.
 func AllowedMavenAsset(name string) bool {
 	lower := strings.ToLower(path.Base(strings.TrimSpace(name)))

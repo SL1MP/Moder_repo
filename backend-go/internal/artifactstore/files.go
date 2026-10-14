@@ -17,7 +17,7 @@ import (
 // Сырые операции с файлами внутри репозитория артефактори.
 //
 // Отличие от Publish/Delete выше: те публикуют ПАКЕТ — раскладку выбирает
-// артефактори по формату репозитория, и у Nexus она своя. Здесь же файл
+// артефактори по формату репозитория, и у component API она своя. Здесь же файл
 // кладётся по тому пути, который задал вызывающий, и ничего о пакетах не
 // предполагается. Нужны для двух вещей, появившихся вместе с отказом от S3:
 //
@@ -29,7 +29,7 @@ import (
 // Оба репозитория обязаны быть типа raw (generic у Artifactory): в них кладутся
 // файлы по произвольным путям, а не пакеты, и никакой индексации формата им не
 // нужно. В raw-репозиторий PUT'ом пишут обе системы — те 405, из-за которых
-// появилось разделение nexus/generic, относятся к репозиториям форматов
+// появилось разделение протоколов component/generic, относятся к репозиториям форматов
 // (pypi, npm, nuget), а не к raw.
 
 // WriteFile кладёт файл по сырому пути внутри репозитория.
@@ -47,7 +47,7 @@ func writeRaw(ctx context.Context, t *transport, kind, url, filePath string, dat
 	}
 	digest := sha256.Sum256(data)
 	// Контрольную сумму шлём обеим системам: Artifactory сверяет её у себя и
-	// отклоняет порченые байты, Nexus заголовок просто игнорирует. Порча на
+	// отклоняет порченые байты, component API заголовок просто игнорирует. Порча на
 	// пути обнаруживается артефактори, а не через полгода при установке.
 	resp, err := t.do(ctx, http.MethodPut, url, data, map[string]string{
 		"X-Checksum-Sha256": hex.EncodeToString(digest[:]),
@@ -140,7 +140,7 @@ func (g *Generic) MoveFile(ctx context.Context, srcRepo, srcPath, dstRepo, dstPa
 	return nil
 }
 
-// MoveFile у Nexus не реализуем: компонентный API переносить между
+// MoveFile у component API не реализуем: он не умеет переносить между
 // репозиториями не умеет (есть «staging move» только в Pro-редакции, и
 // полагаться на неё нельзя). Возвращаем ErrMoveUnsupported, а вызывающий
 // скачивает файл и выгружает его обычным путём — это по-прежнему работает,
@@ -198,7 +198,7 @@ func (g *Generic) ListFiles(ctx context.Context, repo, prefix string) ([]RemoteF
 	return out, nil
 }
 
-// ListFiles у Nexus — через поиск ассетов: обхода по пути компонентный API не
+// ListFiles у component API — через поиск ассетов: обхода по пути он не
 // предлагает.
 func (n *Nexus) ListFiles(ctx context.Context, repo, prefix string) ([]RemoteFile, error) {
 	var out []RemoteFile
@@ -207,7 +207,7 @@ func (n *Nexus) ListFiles(ctx context.Context, repo, prefix string) ([]RemoteFil
 		query := url.Values{}
 		query.Set("repository", repo)
 		if p := strings.Trim(prefix, "/"); p != "" {
-			// Nexus сравнивает путь ассета по шаблону с *; префикс без него
+			// Внутренний артефактори сравнивает путь ассета по шаблону с *; префикс без него
 			// нашёл бы только точное совпадение, то есть ничего.
 			query.Set("q", p+"*")
 		}

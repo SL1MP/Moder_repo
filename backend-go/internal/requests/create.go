@@ -15,6 +15,11 @@ import (
 // ErrConflict — заявка с таким Idempotency-Key уже есть.
 var ErrConflict = errors.New("заявка уже создана")
 
+// ErrNoPackages защищает все точки входа, включая будущие CLI/интеграции:
+// moderation_request без request_item нельзя обработать или корректно
+// показать как выполняемую работу.
+var ErrNoPackages = errors.New("в заявке нет новых пакетов для модерации")
+
 // ConflictError несёт номер уже созданной заявки: клиенту нужен именно он, а
 // не просто «конфликт».
 type ConflictError struct{ RequestID int64 }
@@ -46,6 +51,10 @@ type CreateInput struct {
 // впустую. Обратный порядок в python-версии (задача в Redis до коммита)
 // приводил к тому, что воркер получал задачу на ещё не существующий пакет.
 func (s *Service) Create(ctx context.Context, result ParseResult, in CreateInput, q *queue.Queue) (*domain.ModerationRequest, []int64, error) {
+	pending := result.New()
+	if len(pending) == 0 {
+		return nil, nil, ErrNoPackages
+	}
 	if in.IdempotencyKey != "" {
 		existing, err := s.Repo.GetModerationRequestByIdempotencyKey(ctx, in.IdempotencyKey)
 		if err != nil {
@@ -86,7 +95,6 @@ func (s *Service) Create(ctx context.Context, result ParseResult, in CreateInput
 
 	// Пакеты заводятся по возрастанию глубины: строка родителя обязана
 	// существовать раньше, чем на неё сошлётся потомок.
-	pending := result.New()
 	sort.SliceStable(pending, func(i, j int) bool { return pending[i].Depth < pending[j].Depth })
 
 	var itemIDs []int64

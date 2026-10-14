@@ -8,15 +8,19 @@ import (
 	"time"
 )
 
-// webEditable — несекретные настройки, которые допустимо хранить в БД.
-// Изменения применяются при следующем запуске процесса; web-интерфейс прямо
-// показывает это и не обещает горячую пересборку уже созданных клиентов.
+// webEditable — настройки приложения, которые допустимо хранить в БД.
+// Секретные значения шифруются до записи; инфраструктурные bootstrap-поля
+// (DATABASE_URL, FERNET_KEY и адрес прослушивания) остаются только в env.
 var webEditable = map[string]bool{
 	"APP_NAME":                           true,
 	"LOCAL_AUTH_ENABLED":                  true,
 	"QUARANTINE_DAYS":                     true,
 	"VULN_MAX_SCORE":                      true,
 	"ARTIFACT_STORE":                      true,
+	"ARTIFACT_USER":                       true,
+	"ARTIFACT_TOKEN":                      true,
+	"ARTIFACT_AUTH_TYPE":                  true,
+	"ARTIFACT_DRY_RUN":                    true,
 	"ARTIFACT_BASE_URL":                   true,
 	"ARTIFACT_PUBLIC_BASE_URL":            true,
 	"ARTIFACT_DOCKER_REGISTRY_URL":        true,
@@ -26,10 +30,12 @@ var webEditable = map[string]bool{
 	"ARTIFACT_REPO_OSV":                   true,
 	"SANDBOX_ENABLED":                     true,
 	"SANDBOX_URL":                         true,
+	"SANDBOX_TOKEN":                       true,
 	"SANDBOX_TIMEOUT_SECONDS":             true,
 	"SANDBOX_INSECURE_TLS":                true,
 	"DRAGON_ENABLED":                      true,
 	"DRAGON_URL":                          true,
+	"DRAGON_TOKEN":                        true,
 	"DRAGON_PIPELINE_ID":                  true,
 	"DRAGON_STAGING_URL":                  true,
 	"DRAGON_POLL_INTERVAL_SECONDS":         true,
@@ -38,20 +44,43 @@ var webEditable = map[string]bool{
 	"OSV_DB_SOURCE":                       true,
 	"OSV_PYPI_SNAPSHOT_PATH":              true,
 	"OSV_NPM_SNAPSHOT_PATH":               true,
+	"OSV_SNAPSHOT_PATH":                   true,
+	"OSV_DB_URL":                          true,
+	"OSV_DB_FILE":                         true,
 	"OSV_SYNC_INTERVAL_SECONDS":           true,
 	"OSV_MAX_STALENESS_DAYS":              true,
 	"OIDC_ISSUER":                         true,
 	"OIDC_PUBLIC_ISSUER":                  true,
 	"OIDC_CLIENT_ID":                      true,
 	"GITLAB_URL":                          true,
+	"GITLAB_OAUTH_CLIENT_ID":              true,
+	"GITLAB_OAUTH_SECRET":                 true,
+	"BLACKLIST_FILE":                      true,
+	"ALLOWED_LICENSES_FILE":                true,
+	"MAX_UPLOAD_SIZE_BYTES":                true,
 	"MAX_PACKAGES_PER_REQUEST":            true,
+	"MAX_ARTIFACT_SIZE_BYTES":              true,
+	"MAX_DOCKER_ARTIFACT_SIZE_BYTES":       true,
 	"RATE_LIMIT_REQUESTS_PER_MINUTE":       true,
+	"COMMENT_EDIT_WINDOW_MINUTES":          true,
 	"PIPELINE_WATCHDOG_ENABLED":            true,
 	"PIPELINE_WATCHDOG_INTERVAL_SECONDS":   true,
 	"PIPELINE_STUCK_AFTER_SECONDS":         true,
 	"REGISTRY_RETRY_ATTEMPTS":              true,
 	"REGISTRY_BREAKER_THRESHOLD":           true,
+	"MAINTENANCE_ENABLED":                  true,
+	"STAGING_CLEANUP_INTERVAL_SECONDS":     true,
+	"STAGING_ORPHAN_TTL_HOURS":             true,
 }
+
+var secretSettings = map[string]bool{
+	"ARTIFACT_TOKEN":       true,
+	"SANDBOX_TOKEN":        true,
+	"DRAGON_TOKEN":         true,
+	"GITLAB_OAUTH_SECRET":  true,
+}
+
+func IsSecretSetting(key string) bool { return secretSettings[key] }
 
 // IsWebEditable сообщает API, какие строки каталога рисовать как поля ввода.
 func IsWebEditable(key string) bool {
@@ -76,12 +105,16 @@ func ValidateOverrides(values map[string]string) error {
 
 func validateOverride(key, value string) error {
 	value = strings.TrimSpace(value)
+	if IsSecretSetting(key) && value == "" {
+		return nil
+	}
 	switch key {
 	case "QUARANTINE_DAYS", "OSV_MAX_STALENESS_DAYS", "MAX_PACKAGES_PER_REQUEST",
 		"RATE_LIMIT_REQUESTS_PER_MINUTE", "PIPELINE_WATCHDOG_INTERVAL_SECONDS",
 		"PIPELINE_STUCK_AFTER_SECONDS", "REGISTRY_RETRY_ATTEMPTS", "REGISTRY_BREAKER_THRESHOLD",
 		"SANDBOX_TIMEOUT_SECONDS", "OSV_SYNC_INTERVAL_SECONDS",
-		"DRAGON_POLL_INTERVAL_SECONDS", "DRAGON_TIMEOUT_SECONDS":
+		"DRAGON_POLL_INTERVAL_SECONDS", "DRAGON_TIMEOUT_SECONDS", "COMMENT_EDIT_WINDOW_MINUTES",
+		"STAGING_CLEANUP_INTERVAL_SECONDS", "STAGING_ORPHAN_TTL_HOURS":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 {
 			return fmt.Errorf("ожидается неотрицательное целое число")
@@ -91,14 +124,19 @@ func validateOverride(key, value string) error {
 		if err != nil || n < 0 || n > 100 {
 			return fmt.Errorf("ожидается число от 0 до 100")
 		}
-	case "LOCAL_AUTH_ENABLED", "SANDBOX_ENABLED", "SANDBOX_INSECURE_TLS", "DRAGON_ENABLED", "PIPELINE_WATCHDOG_ENABLED":
+	case "MAX_UPLOAD_SIZE_BYTES", "MAX_ARTIFACT_SIZE_BYTES", "MAX_DOCKER_ARTIFACT_SIZE_BYTES":
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || n < 0 {
+			return fmt.Errorf("ожидается неотрицательное целое число")
+		}
+	case "LOCAL_AUTH_ENABLED", "ARTIFACT_DRY_RUN", "SANDBOX_ENABLED", "SANDBOX_INSECURE_TLS", "DRAGON_ENABLED", "PIPELINE_WATCHDOG_ENABLED", "MAINTENANCE_ENABLED":
 		if _, err := strconv.ParseBool(value); err != nil {
 			return fmt.Errorf("ожидается true или false")
 		}
 	case "ARTIFACT_BASE_URL", "ARTIFACT_PUBLIC_BASE_URL", "ARTIFACT_DOCKER_REGISTRY_URL",
 		"ARTIFACT_DOCKER_PUBLIC_URL", "SANDBOX_URL", "DRAGON_URL", "DRAGON_STAGING_URL", "OIDC_ISSUER", "OIDC_PUBLIC_ISSUER",
-		"GITLAB_URL":
-		if value == "" && (key == "ARTIFACT_PUBLIC_BASE_URL" || key == "ARTIFACT_DOCKER_PUBLIC_URL") {
+		"GITLAB_URL", "OSV_DB_URL":
+		if value == "" && (key == "ARTIFACT_PUBLIC_BASE_URL" || key == "ARTIFACT_DOCKER_PUBLIC_URL" || key == "OSV_DB_URL") {
 			return nil
 		}
 		u, err := url.Parse(value)
@@ -108,6 +146,10 @@ func validateOverride(key, value string) error {
 	case "ARTIFACT_STORE":
 		if value != "nexus" && value != "generic" {
 			return fmt.Errorf("допустимо nexus или generic")
+		}
+	case "ARTIFACT_AUTH_TYPE":
+		if value != "basic" && value != "bearer" {
+			return fmt.Errorf("допустимо basic или bearer")
 		}
 	case "OSV_DB_SOURCE":
 		if value != "artifactory" && value != "http" && value != "file" {
@@ -144,6 +186,14 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.VulnMaxScore, _ = strconv.ParseFloat(v, 64)
 		case "ARTIFACT_STORE":
 			c.ArtifactStore = v
+		case "ARTIFACT_USER":
+			c.ArtifactUser = v
+		case "ARTIFACT_TOKEN":
+			c.ArtifactToken = raw
+		case "ARTIFACT_AUTH_TYPE":
+			c.ArtifactAuthType = v
+		case "ARTIFACT_DRY_RUN":
+			c.ArtifactDryRun, _ = strconv.ParseBool(v)
 		case "ARTIFACT_BASE_URL":
 			c.ArtifactBaseURL = strings.TrimRight(v, "/")
 		case "ARTIFACT_PUBLIC_BASE_URL":
@@ -162,6 +212,8 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.SandboxEnabled, _ = strconv.ParseBool(v)
 		case "SANDBOX_URL":
 			c.SandboxURL = strings.TrimRight(v, "/")
+		case "SANDBOX_TOKEN":
+			c.SandboxToken = raw
 		case "SANDBOX_TIMEOUT_SECONDS":
 			n, _ := strconv.Atoi(v)
 			c.SandboxTimeout = time.Duration(n) * time.Second
@@ -171,6 +223,8 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.DragonEnabled, _ = strconv.ParseBool(v)
 		case "DRAGON_URL":
 			c.DragonURL = strings.TrimRight(v, "/")
+		case "DRAGON_TOKEN":
+			c.DragonToken = raw
 		case "DRAGON_PIPELINE_ID":
 			c.DragonPipelineID = v
 		case "DRAGON_STAGING_URL":
@@ -189,6 +243,12 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.OSVPyPISnapshotPath = v
 		case "OSV_NPM_SNAPSHOT_PATH":
 			c.OSVNpmSnapshotPath = v
+		case "OSV_SNAPSHOT_PATH":
+			c.OSVSnapshotPath = v
+		case "OSV_DB_URL":
+			c.OSVDBURL = strings.TrimRight(v, "/")
+		case "OSV_DB_FILE":
+			c.OSVDBFile = v
 		case "OSV_SYNC_INTERVAL_SECONDS":
 			n, _ := strconv.Atoi(v)
 			c.OSVSyncInterval = time.Duration(n) * time.Second
@@ -202,10 +262,27 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.OIDCClientID = v
 		case "GITLAB_URL":
 			c.GitlabURL = strings.TrimRight(v, "/")
+		case "GITLAB_OAUTH_CLIENT_ID":
+			c.GitlabOAuthClientID = v
+		case "GITLAB_OAUTH_SECRET":
+			c.GitlabOAuthSecret = raw
+		case "BLACKLIST_FILE":
+			c.BlacklistFile = v
+		case "ALLOWED_LICENSES_FILE":
+			c.AllowedLicensesFile = v
+		case "MAX_UPLOAD_SIZE_BYTES":
+			c.MaxUploadSizeBytes, _ = strconv.ParseInt(v, 10, 64)
 		case "MAX_PACKAGES_PER_REQUEST":
 			c.MaxPackagesPerRequest, _ = strconv.Atoi(v)
+		case "MAX_ARTIFACT_SIZE_BYTES":
+			c.MaxArtifactSizeBytes, _ = strconv.ParseInt(v, 10, 64)
+		case "MAX_DOCKER_ARTIFACT_SIZE_BYTES":
+			c.MaxDockerArtifactSizeBytes, _ = strconv.ParseInt(v, 10, 64)
 		case "RATE_LIMIT_REQUESTS_PER_MINUTE":
 			c.RateLimitPerMinute, _ = strconv.Atoi(v)
+		case "COMMENT_EDIT_WINDOW_MINUTES":
+			n, _ := strconv.Atoi(v)
+			c.CommentEditWindow = time.Duration(n) * time.Minute
 		case "PIPELINE_WATCHDOG_ENABLED":
 			c.PipelineWatchdogEnabled, _ = strconv.ParseBool(v)
 		case "PIPELINE_WATCHDOG_INTERVAL_SECONDS":
@@ -218,6 +295,14 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.RegistryRetryAttempts, _ = strconv.Atoi(v)
 		case "REGISTRY_BREAKER_THRESHOLD":
 			c.RegistryBreakerThreshold, _ = strconv.Atoi(v)
+		case "MAINTENANCE_ENABLED":
+			c.MaintenanceEnabled, _ = strconv.ParseBool(v)
+		case "STAGING_CLEANUP_INTERVAL_SECONDS":
+			n, _ := strconv.Atoi(v)
+			c.StagingCleanupInterval = time.Duration(n) * time.Second
+		case "STAGING_ORPHAN_TTL_HOURS":
+			n, _ := strconv.Atoi(v)
+			c.StagingOrphanTTL = time.Duration(n) * time.Hour
 		default:
 			if strings.HasPrefix(key, "ARTIFACT_REPO_") {
 				manager := strings.ToLower(strings.TrimPrefix(key, "ARTIFACT_REPO_"))
