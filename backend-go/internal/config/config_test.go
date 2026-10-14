@@ -453,9 +453,14 @@ func TestApplyWebOverrides(t *testing.T) {
 	}
 }
 
-func TestWebOverridesRejectSecrets(t *testing.T) {
-	if err := ValidateOverrides(map[string]string{"ARTIFACT_TOKEN": "secret"}); err == nil {
-		t.Fatal("секрет разрешено сохранить через web")
+func TestWebOverridesAllowManagedSecrets(t *testing.T) {
+	if err := ValidateOverrides(map[string]string{"ARTIFACT_TOKEN": "secret"}); err != nil {
+		t.Fatalf("секрет нельзя сохранить через web: %v", err)
+	}
+	// Пустое поле означает «не менять» и валидируется до того, как слой
+	// хранения исключит его из UPDATE.
+	if err := ValidateOverrides(map[string]string{"ARTIFACT_TOKEN": ""}); err != nil {
+		t.Fatalf("пустое секретное поле не принято: %v", err)
 	}
 }
 
