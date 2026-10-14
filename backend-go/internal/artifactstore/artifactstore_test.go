@@ -100,6 +100,26 @@ func TestGenericPublishSkipsExisting(t *testing.T) {
 	}
 }
 
+func TestGenericListFilesReadsJFrogSHA2(t *testing.T) {
+	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindGeneric},
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/storage/pypi-moderated/?list" ||
+				r.URL.Query().Get("deep") != "1" || r.URL.Query().Get("listFolders") != "0" {
+				t.Errorf("неожиданный запрос листинга: %s?%s", r.URL.Path, r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"files":[{"uri":"/aenum/2.2.4/aenum-2.2.4.whl",`+
+				`"size":42,"sha2":"0123456789abcdef","lastModified":"2026-10-14T08:00:00Z"}]}`)
+		})
+	files, err := store.ListFiles(context.Background(), "pypi-moderated", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Checksum != "0123456789abcdef" || files[0].SizeBytes != 42 {
+		t.Fatalf("метаданные JFrog не разобраны: %+v", files)
+	}
+}
+
 // --------------------------------------------------------------- nexus
 
 // Component API внутреннего артефактори не принимает PUT по адресу файла:

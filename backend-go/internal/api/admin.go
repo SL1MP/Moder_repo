@@ -73,6 +73,7 @@ func MountAdmin(r chi.Router, h *AdminHandler, a *Auth) {
 		sub.Get("/api/v1/settings", h.Settings)
 		sub.Get("/api/v1/settings/policies", h.PoliciesState)
 		sub.Get("/api/v1/system/status", h.SystemStatus)
+		sub.Get("/api/v1/artifact-catalog-sync", h.ArtifactCatalogSyncStatus)
 	})
 	r.Group(func(sub chi.Router) {
 		sub.Use(a.Authenticate)
@@ -85,6 +86,7 @@ func MountAdmin(r chi.Router, h *AdminHandler, a *Auth) {
 		sub.Get("/api/v1/admin/integrations/oidc", h.OIDCSettings)
 		sub.Put("/api/v1/admin/integrations/oidc", h.UpdateOIDCSettings)
 		sub.Put("/api/v1/admin/policies/blacklist", h.UpdateBlacklist)
+		sub.Post("/api/v1/admin/artifact-catalog-sync", h.StartArtifactCatalogSync)
 		sub.Post("/api/v1/admin/reload", h.Reload)
 		sub.Get("/api/v1/admin/audit", h.Audit)
 		if h.Sweep != nil {

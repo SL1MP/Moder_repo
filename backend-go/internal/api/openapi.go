@@ -392,6 +392,7 @@ func openAPIRoutes() []openAPIRoute {
 		{Method: "PUT", Path: "/api/v1/settings", OperationID: "updateSettings", Summary: "Сохранить web-настройки", Tag: "Администрирование", Roles: []string{"admin"}, Body: genericJSONBody("Карта values: имя настройки → значение")},
 		{Method: "GET", Path: "/api/v1/settings/policies", OperationID: "getPolicyState", Summary: "Получить состояние политик", Tag: "Администрирование"},
 		{Method: "GET", Path: "/api/v1/system/status", OperationID: "getSystemStatus", Summary: "Получить состояние компонентов", Tag: "Администрирование"},
+		{Method: "GET", Path: "/api/v1/artifact-catalog-sync", OperationID: "getArtifactCatalogSync", Summary: "Получить состояние синхронизации базы пакетов", Tag: "Администрирование"},
 		{Method: "GET", Path: "/api/v1/admin/users", OperationID: "listUsers", Summary: "Получить пользователей и роли приложения", Tag: "Администрирование", Roles: []string{"admin"}},
 		{Method: "POST", Path: "/api/v1/admin/users", OperationID: "createUser", Summary: "Создать локального пользователя", Tag: "Администрирование", Roles: []string{"admin"}, Body: jsonBody(refSchema("CreateUserRequest"), "Локальная учётная запись")},
 		{Method: "PATCH", Path: "/api/v1/admin/users/{userID}", OperationID: "updateUserAccess", Summary: "Изменить пользователя, роли или пароль", Tag: "Администрирование", Roles: []string{"admin"}, Body: genericJSONBody("Профиль, роли, активность и необязательный новый пароль")},
@@ -402,6 +403,7 @@ func openAPIRoutes() []openAPIRoute {
 		{Method: "POST", Path: "/api/v1/admin/reload", OperationID: "reloadPolicies", Summary: "Перезагрузить политики", Tag: "Администрирование", Roles: []string{"admin"}},
 		{Method: "GET", Path: "/api/v1/admin/audit", OperationID: "getAuditLog", Summary: "Получить аудит", Tag: "Администрирование", Roles: []string{"admin"}, Query: []openAPIParam{stringQuery("entity_type", "Тип сущности"), stringQuery("entity_id", "ID сущности"), stringQuery("action", "Действие"), stringQuery("actor", "Исполнитель"), integerQuery("limit", "Размер страницы"), integerQuery("offset", "Смещение")}},
 		{Method: "POST", Path: "/api/v1/admin/queue-sweep", OperationID: "sweepQueue", Summary: "Запустить сторож очереди", Tag: "Администрирование", Roles: []string{"admin"}},
+		{Method: "POST", Path: "/api/v1/admin/artifact-catalog-sync", OperationID: "startArtifactCatalogSync", Summary: "Запустить синхронизацию базы пакетов с доверенным артефактори", Tag: "Администрирование", Roles: []string{"admin"}, SuccessCode: "202"},
 		{Method: "GET", Path: "/api/v1/admin/osv-versions", OperationID: "listOSVVersions", Summary: "Получить версии снапшота OSV", Tag: "Администрирование", Roles: []string{"devsecops"}},
 		{Method: "POST", Path: "/api/v1/admin/osv-sync", OperationID: "syncOSV", Summary: "Синхронизировать снапшот OSV", Tag: "Администрирование", Roles: []string{"devsecops"}, Query: []openAPIParam{boolQuery("force", "Принудительно скачать заново")}},
 	}

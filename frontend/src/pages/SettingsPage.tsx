@@ -4,6 +4,7 @@ import { Alert, Loader, formatTime, useAsync } from '../components/ui'
 import {
   api,
   type AdminUser,
+  type ArtifactCatalogSyncStatus,
   type BlacklistRule,
   type Manager,
   type Me,
@@ -15,11 +16,19 @@ export default function SettingsPage({ me }: { me: Me }) {
   const settings = useAsync(() => api.settings(), [])
   const policies = useAsync(() => api.policies(), [])
   const system = useAsync(() => api.systemStatus(), [])
+  const catalogSync = useAsync(() => api.artifactCatalogSyncStatus(), [])
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'general' | 'users' | 'oidc'>('general')
   const isAdmin = me.roles.includes('admin')
   const isSec = me.roles.includes('devsecops') || isAdmin
+
+  useEffect(() => {
+    const status = catalogSync.data?.last_run?.status
+    if (status !== 'queued' && status !== 'running') return
+    const timer = window.setInterval(() => catalogSync.reload(), 5000)
+    return () => window.clearInterval(timer)
+  }, [catalogSync.data?.last_run?.status])
 
   const sections = new Map<string, typeof settings.data>()
   for (const row of settings.data ?? []) {
@@ -86,6 +95,14 @@ export default function SettingsPage({ me }: { me: Me }) {
       {settings.loading ? <Loader /> : null}
 
       {system.data ? <QueueCard info={system.data} isAdmin={isAdmin} onDone={() => system.reload()} /> : null}
+
+      {catalogSync.data ? (
+        <ArtifactCatalogSyncCard
+          info={catalogSync.data}
+          isAdmin={isAdmin}
+          onDone={() => catalogSync.reload()}
+        />
+      ) : null}
 
       {policies.data?.vuln_index ? <VulnIndexCard info={policies.data.vuln_index} isSec={isSec} /> : null}
 
@@ -175,6 +192,75 @@ export default function SettingsPage({ me }: { me: Me }) {
       ) : null}
       </>}
     </>
+  )
+}
+
+function ArtifactCatalogSyncCard({
+  info,
+  isAdmin,
+  onDone,
+}: {
+  info: ArtifactCatalogSyncStatus
+  isAdmin: boolean
+  onDone: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const run = info.last_run
+  const statusTitle: Record<string, string> = {
+    queued: 'ожидает worker', running: 'выполняется', succeeded: 'завершена', failed: 'ошибка',
+  }
+  return (
+    <div className="card">
+      <div className="row between">
+        <div>
+          <h2>Синхронизация базы пакетов</h2>
+          <p className="small dim">
+            Доверенные moderated-репозитории: {info.managers.length ? info.managers.join(', ') : 'не выбраны'}.
+            Найденные пакеты сразу появляются в web-базе без повторной модерации.
+          </p>
+        </div>
+        {isAdmin ? (
+          <button
+            className="small"
+            disabled={busy || !info.enabled || run?.status === 'running' || run?.status === 'queued'}
+            onClick={() => {
+              setBusy(true); setError(null)
+              api.startArtifactCatalogSync()
+                .then(() => onDone())
+                .catch((exc: Error) => setError(exc.message))
+                .finally(() => setBusy(false))
+            }}
+          >
+            {busy ? 'запускаю…' : 'синхронизировать сейчас'}
+          </button>
+        ) : null}
+      </div>
+      {error ? <Alert kind="error">{error}</Alert> : null}
+      {!info.maintenance_enabled ? (
+        <Alert kind="warn">Включите MAINTENANCE_ENABLED: фоновую синхронизацию выполняет worker.</Alert>
+      ) : !info.enabled ? (
+        <Alert kind="warn">Задайте ARTIFACT_CATALOG_SYNC_MANAGERS, например <code>pypi,npm,go</code>.</Alert>
+      ) : run ? (
+        <div className="grid cols-2">
+          <dl>
+            <dt>Последний запуск</dt><dd>#{run.id} — {statusTitle[run.status] ?? run.status}</dd>
+            <dt>Источник</dt><dd>{run.trigger}</dd>
+            <dt>Начат</dt><dd>{formatTime(run.started_at ?? run.created_at)}</dd>
+            <dt>Завершён</dt><dd>{formatTime(run.finished_at ?? null)}</dd>
+          </dl>
+          <dl>
+            <dt>Найдено файлов</dt><dd>{run.discovered}</dd>
+            <dt>Добавлено версий</dt><dd>{run.imported}</dd>
+            <dt>Обновлено</dt><dd>{run.updated}</dd>
+            <dt>Пропущено / ошибок</dt><dd>{run.skipped} / {run.errors}</dd>
+          </dl>
+          {run.error ? <Alert kind="error">{run.error}</Alert> : null}
+        </div>
+      ) : (
+        <p className="small dim">Синхронизация ещё не запускалась.</p>
+      )}
+    </div>
   )
 }
 

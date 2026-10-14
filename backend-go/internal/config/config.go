@@ -216,6 +216,12 @@ type Config struct {
 	ArtifactToken    string
 	ArtifactDryRun   bool
 
+	// ArtifactCatalogSyncManagers — менеджеры, чьи целевые репозитории
+	// считаются уже проверенным корпоративным каталогом. Пустой список
+	// выключает импорт: staging и proxy нельзя случайно принять за moderated.
+	ArtifactCatalogSyncManagers []string
+	ArtifactCatalogSyncInterval time.Duration
+
 	// Каталог с распакованным снапшотом базы OSV.
 	OSVLocalDBPath string
 	// OSVDBSource — способ доставки снапшота: artifactory (по умолчанию),
@@ -405,6 +411,8 @@ func Load(getenv func(string) string) (*Config, error) {
 		ArtifactUser:     getenv("ARTIFACT_USER"),
 		ArtifactToken:    getenv("ARTIFACT_TOKEN"),
 		ArtifactDryRun:   boolOr(getenv("ARTIFACT_DRY_RUN"), false),
+		ArtifactCatalogSyncManagers: csvValues(getenv("ARTIFACT_CATALOG_SYNC_MANAGERS")),
+		ArtifactCatalogSyncInterval: secondsOr(getenv("ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS"), 6*60*60),
 
 		OSVLocalDBPath:  valueOr(getenv("OSV_LOCAL_DB_PATH"), "/var/lib/osv-db/current"),
 		OSVDBSource:     valueOr(getenv("OSV_DB_SOURCE"), "artifactory"),
@@ -486,6 +494,13 @@ func Load(getenv func(string) string) (*Config, error) {
 				strings.ToUpper(manager), repoName))
 		}
 	}
+	for _, manager := range cfg.ArtifactCatalogSyncManagers {
+		if !domain.Contains(artifactCatalogSyncManagers, manager) {
+			errs = append(errs, fmt.Errorf(
+				"ARTIFACT_CATALOG_SYNC_MANAGERS: менеджер %q пока не поддерживает безопасный импорт из файлового индекса",
+				manager))
+		}
+	}
 
 	// Порог SAST проверяем явно: опечатка в нём ("hight") молча превратилась бы
 	// в "medium" и тихо изменила бы то, какие находки блокируют публикацию.
@@ -553,6 +568,23 @@ func Load(getenv func(string) string) (*Config, error) {
 		return nil, fmt.Errorf("конфигурация невалидна (%d ошибок): %w", len(errs), errors.Join(errs...))
 	}
 	return cfg, nil
+}
+
+var artifactCatalogSyncManagers = []string{
+	"pypi", "npm", "go", "nuget", "conan", "luarocks", "maven", "php", "terraform",
+}
+
+func csvValues(raw string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0)
+	for _, part := range strings.Split(raw, ",") {
+		value := strings.ToLower(strings.TrimSpace(part))
+		if value != "" && !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func valueOr(v, fallback string) string {

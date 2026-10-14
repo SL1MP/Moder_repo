@@ -512,3 +512,42 @@ func TestDragonConfiguration(t *testing.T) {
 		t.Fatalf("Dragon config = %+v", cfg)
 	}
 }
+
+func TestArtifactCatalogSyncConfiguration(t *testing.T) {
+	env := map[string]string{
+		"DATABASE_URL": "postgres://localhost/moderation",
+		"ARTIFACT_CATALOG_SYNC_MANAGERS": " PyPI,npm,pypi,go ",
+		"ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS": "900",
+	}
+	cfg, err := Load(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"pypi", "npm", "go"}
+	if len(cfg.ArtifactCatalogSyncManagers) != len(want) {
+		t.Fatalf("менеджеры синхронизации = %v", cfg.ArtifactCatalogSyncManagers)
+	}
+	for i := range want {
+		if cfg.ArtifactCatalogSyncManagers[i] != want[i] {
+			t.Fatalf("менеджеры синхронизации = %v, ожидалось %v", cfg.ArtifactCatalogSyncManagers, want)
+		}
+	}
+	if cfg.ArtifactCatalogSyncInterval != 15*time.Minute {
+		t.Fatalf("интервал синхронизации = %v", cfg.ArtifactCatalogSyncInterval)
+	}
+}
+
+func TestArtifactCatalogRejectsManagersWithoutSafeImporter(t *testing.T) {
+	_, err := Load(func(key string) string {
+		if key == "DATABASE_URL" {
+			return "postgres://localhost/moderation"
+		}
+		if key == "ARTIFACT_CATALOG_SYNC_MANAGERS" {
+			return "docker"
+		}
+		return ""
+	})
+	if err == nil || !strings.Contains(err.Error(), "docker") {
+		t.Fatalf("небезопасный импорт Docker должен быть отклонён: %v", err)
+	}
+}

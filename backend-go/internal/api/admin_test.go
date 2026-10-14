@@ -419,6 +419,40 @@ func TestSystemStatusShowsStuckItems(t *testing.T) {
 	}
 }
 
+func TestArtifactCatalogSyncIsVisibleAndAdminStartsIt(t *testing.T) {
+	f := newAdminFixture(t)
+	f.cfg.ArtifactCatalogSyncManagers = []string{"pypi", "npm", "go"}
+
+	if rec := f.do(t, "developer", http.MethodGet, "/api/v1/artifact-catalog-sync"); rec.Code != http.StatusOK {
+		t.Fatalf("состояние синхронизации не прочитано: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(t, "developer", http.MethodPost, "/api/v1/admin/artifact-catalog-sync"); rec.Code != http.StatusForbidden {
+		t.Fatalf("разработчик запустил синхронизацию: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := f.do(t, "admin", http.MethodPost, "/api/v1/admin/artifact-catalog-sync")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("синхронизация не поставлена в очередь: %d %s", rec.Code, rec.Body.String())
+	}
+	var run struct {
+		ID            int64  `json:"id"`
+		Status        string `json:"status"`
+		RequestedByID *int64 `json:"requested_by_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	if run.RequestedByID != nil && *run.RequestedByID == f.user.ID {
+		t.Cleanup(func() {
+			_, _ = f.repo.Pool().Exec(context.Background(),
+				`DELETE FROM artifact_catalog_sync_run WHERE id = $1`, run.ID)
+		})
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"queued"`) &&
+		!strings.Contains(rec.Body.String(), `"status":"running"`) {
+		t.Fatalf("неожиданный запуск синхронизации: %s", rec.Body.String())
+	}
+}
+
 // TestAuditIsAdminOnly — журнал видит только админ: в нём видно, кто что решал
 // по каждому пакету.
 func TestAuditIsAdminOnly(t *testing.T) {

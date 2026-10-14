@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"moderation/internal/domain"
 )
 
 // webEditable — настройки приложения, которые допустимо хранить в БД.
@@ -28,6 +30,8 @@ var webEditable = map[string]bool{
 	"ARTIFACT_REPO_STAGING":               true,
 	"ARTIFACT_REPO_REPORTS":               true,
 	"ARTIFACT_REPO_OSV":                   true,
+	"ARTIFACT_CATALOG_SYNC_MANAGERS":      true,
+	"ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS": true,
 	"SANDBOX_ENABLED":                     true,
 	"SANDBOX_URL":                         true,
 	"SANDBOX_TOKEN":                       true,
@@ -114,7 +118,8 @@ func validateOverride(key, value string) error {
 		"PIPELINE_STUCK_AFTER_SECONDS", "REGISTRY_RETRY_ATTEMPTS", "REGISTRY_BREAKER_THRESHOLD",
 		"SANDBOX_TIMEOUT_SECONDS", "OSV_SYNC_INTERVAL_SECONDS",
 		"DRAGON_POLL_INTERVAL_SECONDS", "DRAGON_TIMEOUT_SECONDS", "COMMENT_EDIT_WINDOW_MINUTES",
-		"STAGING_CLEANUP_INTERVAL_SECONDS", "STAGING_ORPHAN_TTL_HOURS":
+		"STAGING_CLEANUP_INTERVAL_SECONDS", "STAGING_ORPHAN_TTL_HOURS",
+		"ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 {
 			return fmt.Errorf("ожидается неотрицательное целое число")
@@ -150,6 +155,12 @@ func validateOverride(key, value string) error {
 	case "ARTIFACT_AUTH_TYPE":
 		if value != "basic" && value != "bearer" {
 			return fmt.Errorf("допустимо basic или bearer")
+		}
+	case "ARTIFACT_CATALOG_SYNC_MANAGERS":
+		for _, manager := range csvValues(value) {
+			if !domain.Contains(artifactCatalogSyncManagers, manager) {
+				return fmt.Errorf("менеджер %q не поддерживает импорт каталога", manager)
+			}
 		}
 	case "OSV_DB_SOURCE":
 		if value != "artifactory" && value != "http" && value != "file" {
@@ -194,6 +205,11 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.ArtifactAuthType = v
 		case "ARTIFACT_DRY_RUN":
 			c.ArtifactDryRun, _ = strconv.ParseBool(v)
+		case "ARTIFACT_CATALOG_SYNC_MANAGERS":
+			c.ArtifactCatalogSyncManagers = csvValues(v)
+		case "ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS":
+			n, _ := strconv.Atoi(v)
+			c.ArtifactCatalogSyncInterval = time.Duration(n) * time.Second
 		case "ARTIFACT_BASE_URL":
 			c.ArtifactBaseURL = strings.TrimRight(v, "/")
 		case "ARTIFACT_PUBLIC_BASE_URL":

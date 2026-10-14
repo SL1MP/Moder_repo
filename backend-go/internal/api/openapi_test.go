@@ -71,6 +71,8 @@ func TestOpenAPISpecDocumentsGoAPI(t *testing.T) {
 		{http.MethodPost, "/api/v1/items/{itemID}/security-decision"},
 		{http.MethodGet, "/api/v1/request-items/{itemID}/reports/{file}"},
 		{http.MethodGet, "/api/v1/request-items/{itemID}/sboms/{file}"},
+		{http.MethodGet, "/api/v1/artifact-catalog-sync"},
+		{http.MethodPost, "/api/v1/admin/artifact-catalog-sync"},
 		{http.MethodPost, "/api/v1/admin/osv-sync"},
 		{http.MethodGet, "/api/v1/admin/integrations/oidc"},
 		{http.MethodPut, "/api/v1/admin/integrations/oidc"},

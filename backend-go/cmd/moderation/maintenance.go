@@ -56,6 +56,8 @@ type maintenanceRunner struct {
 	orphanTTL          time.Duration
 	osv                maintenance.OSVConfig
 	vulnMaxScore       float64
+	catalogInterval    time.Duration
+	catalog            maintenance.CatalogConfig
 }
 
 func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, st *stores, logger *slog.Logger) *maintenanceRunner {
@@ -82,6 +84,12 @@ func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, st *
 		orphanTTL:          cfg.StagingOrphanTTL,
 		osv:                osvConfig(cfg),
 		vulnMaxScore:       cfg.VulnMaxScore,
+		catalogInterval:    cfg.ArtifactCatalogSyncInterval,
+		catalog: maintenance.CatalogConfig{
+			Managers: cfg.ArtifactCatalogSyncManagers,
+			Repositories: cfg.ArtifactRepos,
+			Registry: newRegistry(cfg, newHTTPClient()),
+		},
 	}
 }
 
@@ -103,6 +111,9 @@ func (m *maintenanceRunner) run(ctx context.Context) {
 	m.sweepQuarantine(ctx)
 	m.cleanupStorage(ctx)
 	m.syncOSV(ctx, false)
+	if len(m.catalog.Managers) > 0 {
+		go m.catalogLoop(ctx)
+	}
 
 	quarantine := time.NewTicker(m.quarantineInterval)
 	defer quarantine.Stop()
@@ -129,6 +140,83 @@ func (m *maintenanceRunner) run(ctx context.Context) {
 			m.syncOSV(ctx, false)
 		}
 	}
+}
+
+// catalogLoop отделён от карантина и уборки: первый импорт большой
+// корпоративной базы может идти десятки минут и не должен задерживать другие
+// регламентные задачи. Очередь запусков хранится в Postgres, поэтому кнопка в
+// web не привязана к жизни процесса API.
+func (m *maintenanceRunner) catalogLoop(ctx context.Context) {
+	if recovered, err := m.service.Repo.RecoverCatalogSyncRuns(
+		ctx, time.Now().UTC().Add(-maintenance.CatalogSyncTimeout)); err != nil {
+		m.logger.Error("зависший запуск синхронизации каталога не проверен", "error", err)
+	} else if recovered > 0 {
+		m.logger.Warn("зависший запуск синхронизации каталога закрыт", "запусков", recovered)
+	}
+	if _, err := m.service.Repo.EnqueueCatalogSync(ctx, "startup", m.catalog.Managers, nil); err != nil {
+		m.logger.Error("синхронизация каталога не поставлена в очередь", "error", err)
+	}
+	poll := time.NewTicker(10 * time.Second)
+	defer poll.Stop()
+	var schedule *time.Ticker
+	var scheduleC <-chan time.Time
+	if m.catalogInterval > 0 {
+		schedule = time.NewTicker(clampInterval(m.catalogInterval))
+		defer schedule.Stop()
+		scheduleC = schedule.C
+	}
+	// Не ждём первого poll: существующая корпоративная база должна появиться
+	// в web-каталоге сразу после запуска worker.
+	m.processCatalogRun(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-scheduleC:
+			if _, err := m.service.Repo.EnqueueCatalogSync(ctx, "schedule", m.catalog.Managers, nil); err != nil {
+				m.logger.Error("плановая синхронизация каталога не поставлена в очередь", "error", err)
+			}
+		case <-poll.C:
+			m.processCatalogRun(ctx)
+		}
+	}
+}
+
+func (m *maintenanceRunner) processCatalogRun(ctx context.Context) {
+	if recovered, err := m.service.Repo.RecoverCatalogSyncRuns(
+		ctx, time.Now().UTC().Add(-maintenance.CatalogSyncTimeout)); err != nil {
+		m.logger.Warn("зависший запуск синхронизации каталога не проверен", "error", err)
+	} else if recovered > 0 {
+		if _, err := m.service.Repo.EnqueueCatalogSync(ctx, "schedule", m.catalog.Managers, nil); err != nil {
+			m.logger.Warn("повтор синхронизации каталога не поставлен в очередь", "error", err)
+		}
+	}
+	run, err := m.service.Repo.ClaimCatalogSync(ctx)
+	if err != nil {
+		m.logger.Error("запуск синхронизации каталога не получен", "error", err)
+		return
+	}
+	if run == nil {
+		return
+	}
+	runCtx, cancel := context.WithTimeout(ctx, maintenance.CatalogSyncTimeout)
+	catalogCfg := m.catalog
+	catalogCfg.Managers = run.Managers
+	result, syncErr := m.service.SyncTrustedCatalog(runCtx, catalogCfg, run)
+	cancel()
+	finishCtx, finishCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer finishCancel()
+	if err := m.service.Repo.FinishCatalogSync(finishCtx, run.ID, result, syncErr); err != nil {
+		m.logger.Error("результат синхронизации каталога не сохранён", "run", run.ID, "error", err)
+		return
+	}
+	if syncErr != nil {
+		m.logger.Error("каталог внутреннего артефактори не синхронизирован", "run", run.ID, "error", syncErr)
+		return
+	}
+	m.logger.Info("каталог внутреннего артефактори синхронизирован",
+		"run", run.ID, "найдено", result.Discovered, "добавлено", result.Imported,
+		"обновлено", result.Updated, "пропущено", result.Skipped, "ошибок", result.Errors)
 }
 
 // syncOSV загружает снапшот базы уязвимостей, если появился новый.
@@ -194,12 +282,13 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 	cleanupOnly := fs.Bool("cleanup", false, "только убрать временное хранилище")
 	osvOnly := fs.Bool("osv-sync", false, "только загрузить снапшот базы уязвимостей")
 	rescanOnly := fs.Bool("rescan", false, "только перепроверить одобренные пакеты по текущей базе")
+	catalogOnly := fs.Bool("catalog-sync", false, "только синхронизировать web-базу с доверенными репозиториями")
 	force := fs.Bool("force", false, "перезагрузить снапшот, даже если версия та же")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	// Без флагов выполняются все задачи.
-	only := *quarantineOnly || *cleanupOnly || *osvOnly || *rescanOnly
+	only := *quarantineOnly || *cleanupOnly || *osvOnly || *rescanOnly || *catalogOnly
 	doQuarantine := *quarantineOnly || !only
 	doCleanup := *cleanupOnly || !only
 	doOSV := *osvOnly || !only
@@ -207,6 +296,7 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 	// без флагов отдельно её не запускаем — иначе команда каждый раз обходила
 	// бы все одобренные пакеты впустую.
 	doRescan := *rescanOnly
+	doCatalog := *catalogOnly
 
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -243,6 +333,15 @@ func runMaintenance(args []string, logger *slog.Logger) int {
 
 	runner := newMaintenanceRunner(cfg, r, q, st, logger)
 	code := 0
+	if doCatalog {
+		run, err := r.EnqueueCatalogSync(ctx, "cli", cfg.ArtifactCatalogSyncManagers, nil)
+		if err != nil {
+			logger.Error("синхронизация каталога не поставлена в очередь", "error", err)
+			code = 1
+		} else {
+			fmt.Printf("Синхронизация каталога поставлена в очередь: запуск #%d, статус %s\n", run.ID, run.Status)
+		}
+	}
 	if doOSV {
 		if runner.service.Artifacts == nil {
 			fmt.Fprintln(os.Stderr, "артефактори не настроено — снапшот OSV загружать неоткуда")

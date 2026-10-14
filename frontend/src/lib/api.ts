@@ -590,6 +590,29 @@ export interface OIDCSettings {
   updated_at: string
 }
 
+export interface ArtifactCatalogSyncRun {
+  id: number
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  trigger: 'startup' | 'schedule' | 'manual' | 'cli'
+  managers: string[]
+  discovered: number
+  imported: number
+  updated: number
+  skipped: number
+  errors: number
+  error?: string | null
+  created_at: string
+  started_at?: string | null
+  finished_at?: string | null
+}
+
+export interface ArtifactCatalogSyncStatus {
+  enabled: boolean
+  maintenance_enabled: boolean
+  managers: string[]
+  last_run: ArtifactCatalogSyncRun | null
+}
+
 export interface AuditRow {
   id: number
   actor_name: string
@@ -802,6 +825,8 @@ export const api = {
     request<AuditRow[]>(`/admin/audit?${new URLSearchParams(params)}`),
   osvVersions: () => request<Record<string, unknown>[]>('/admin/osv-versions'),
   syncOsv: () => request<Record<string, unknown>>('/admin/osv-sync', { method: 'POST' }),
+  artifactCatalogSyncStatus: () => request<ArtifactCatalogSyncStatus>('/artifact-catalog-sync'),
+  startArtifactCatalogSync: () => request<ArtifactCatalogSyncRun>('/admin/artifact-catalog-sync', { method: 'POST' }),
 
   gitlabStatus: () => request<Record<string, unknown>>('/gitlab/status'),
   gitlabAuthorize: () => request<{ authorize_url: string; state: string }>('/gitlab/authorize'),

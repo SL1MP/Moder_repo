@@ -4,6 +4,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"moderation/internal/domain"
 )
 
 // Каталог настроек для экрана «Настройка». Порт settings_catalog из
@@ -78,6 +80,12 @@ func (c *Config) Catalog() []Setting {
 		{Env: "ARTIFACT_DRY_RUN", Section: "Артефактори",
 			Description: "Не публиковать по-настоящему (конвейер выполняется как есть)",
 			Value:       c.ArtifactDryRun},
+		{Env: "ARTIFACT_CATALOG_SYNC_MANAGERS", Section: "Артефактори",
+			Description: "Доверенные moderated-репозитории для импорта в базу, через запятую",
+			Value:       strings.Join(c.ArtifactCatalogSyncManagers, ",")},
+		{Env: "ARTIFACT_CATALOG_SYNC_INTERVAL_SECONDS", Section: "Артефактори",
+			Description: "Интервал сверки каталога; 0 — только ручной запуск",
+			Value:       seconds(c.ArtifactCatalogSyncInterval)},
 
 		{Env: "SANDBOX_ENABLED", Section: "Песочница",
 			Description: "Шаг динамического анализа", Value: c.SandboxEnabled},
@@ -186,6 +194,16 @@ func (c *Config) Catalog() []Setting {
 		{Env: "REGISTRY_BREAKER_THRESHOLD", Section: "Надёжность",
 			Description: "Неудач подряд, после которых реестр перестаёт опрашиваться",
 			Value:       c.RegistryBreakerThreshold},
+	}
+	// Целевые репозитории — часть рабочей конфигурации, а не скрытая карта.
+	// Без них администратор не сможет выбрать корпоративные moderated-репы для
+	// импорта через web и будет вынужден править .env вручную.
+	for _, manager := range domain.ManagerCodes {
+		settings = append(settings, Setting{
+			Env: "ARTIFACT_REPO_" + strings.ToUpper(manager), Section: "Артефактори",
+			Description: "Целевой moderated-репозиторий для " + manager,
+			Value: c.ArtifactRepos[manager],
+		})
 	}
 	for i := range settings {
 		settings[i].Editable = IsWebEditable(settings[i].Env)

@@ -166,16 +166,25 @@ func (g *Generic) ListFiles(ctx context.Context, repo, prefix string) ([]RemoteF
 		// Пустого префикса нет как объекта — это не ошибка, это «ничего нет».
 		return nil, nil
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	// Первичная синхронизация корпоративной базы может перечислять больше
+	// ста тысяч файлов. Прежний предел 16 МиБ обрывал корректный JSON ровно на
+	// крупных репозиториях и делал массовый импорт невозможным.
+	const maxListingBytes = 256 << 20
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxListingBytes+1))
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("артефактори ответил %d на обход %s/%s: %s",
 			resp.StatusCode, repo, prefix, strings.TrimSpace(string(body)))
+	}
+	if len(body) > maxListingBytes {
+		return nil, fmt.Errorf("файловый индекс %s/%s больше %d МиБ; ответ не импортирован частично",
+			repo, prefix, maxListingBytes>>20)
 	}
 
 	var listing struct {
 		Files []struct {
 			URI          string `json:"uri"`
 			Size         int64  `json:"size"`
+			SHA2         string `json:"sha2"`
 			SHA256       string `json:"sha256"`
 			LastModified string `json:"lastModified"`
 		} `json:"files"`
@@ -189,6 +198,11 @@ func (g *Generic) ListFiles(ctx context.Context, repo, prefix string) ([]RemoteF
 			Path:      path.Join(strings.Trim(prefix, "/"), strings.TrimPrefix(f.URI, "/")),
 			SizeBytes: f.Size,
 			Checksum:  f.SHA256,
+		}
+		if file.Checksum == "" {
+			// JFrog Storage List API на разных версиях называет SHA-256
+			// полем sha2 либо sha256. Поддерживаем оба варианта.
+			file.Checksum = f.SHA2
 		}
 		if ts, err := time.Parse(time.RFC3339, f.LastModified); err == nil {
 			file.LastModified = ts
