@@ -108,12 +108,17 @@ func (m *maintenanceRunner) run(ctx context.Context) {
 		"карантин", m.quarantineInterval, "уборка хранилища", m.cleanupInterval,
 		"срок жизни объекта", m.orphanTTL)
 
-	m.sweepQuarantine(ctx)
-	m.cleanupStorage(ctx)
-	m.syncOSV(ctx, false)
+	// Каталог не должен ждать первоначальную загрузку и распаковку OSV, а
+	// также последующую перепроверку всех одобренных версий. Эти операции
+	// могут занимать десятки минут, тогда как очередь каталога опрашивается
+	// независимо и должна начать разбираться сразу после запуска worker.
 	if len(m.catalog.Managers) > 0 {
 		go m.catalogLoop(ctx)
 	}
+
+	m.sweepQuarantine(ctx)
+	m.cleanupStorage(ctx)
+	m.syncOSV(ctx, false)
 
 	quarantine := time.NewTicker(m.quarantineInterval)
 	defer quarantine.Stop()

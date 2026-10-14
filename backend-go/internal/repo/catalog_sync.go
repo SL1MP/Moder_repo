@@ -157,12 +157,12 @@ func (r *Repo) ClaimCatalogSync(ctx context.Context) (*CatalogSyncRun, error) {
 	defer tx.Rollback(ctx) //nolint:errcheck
 	row := tx.QueryRow(ctx, `
 		WITH candidate AS (
-			SELECT id FROM artifact_catalog_sync_run
+			SELECT id AS candidate_id FROM artifact_catalog_sync_run
 			WHERE status = 'queued' ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
 		)
 		UPDATE artifact_catalog_sync_run run
 		SET status = 'running', started_at = now(), error = NULL
-		FROM candidate WHERE run.id = candidate.id
+		FROM candidate WHERE run.id = candidate.candidate_id
 		RETURNING `+catalogSyncColumns)
 	out, err := scanCatalogSyncRun(row)
 	if errors.Is(err, pgx.ErrNoRows) {
