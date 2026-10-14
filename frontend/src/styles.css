@@ -218,6 +218,14 @@ button.small { padding: 3px 7px; font-size: 12px; }
 .settings-tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 .setting-value { min-width: 330px; }
 .setting-value input { width: min(430px, 100%); }
+.blacklist-table-wrap { overflow-x: auto; }
+.blacklist-editor { min-width: 1050px; }
+.blacklist-editor th:nth-child(1) { width: 170px; }
+.blacklist-editor th:nth-child(2) { width: 220px; }
+.blacklist-editor th:nth-child(3) { width: 180px; }
+.blacklist-editor th:nth-child(4) { width: 34%; }
+.blacklist-editor input, .blacklist-editor select { min-height: 31px; }
+.blacklist-actions { justify-content: flex-end; margin-top: 12px; }
 .user-list { display: flex; flex-direction: column; }
 .user-row {
   display: grid; grid-template-columns: minmax(190px, 1.2fr) 70px minmax(260px, 1.5fr) 105px 80px minmax(150px, .8fr) max-content;

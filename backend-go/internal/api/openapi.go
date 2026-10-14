@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/go-chi/chi/v5"
+
+	"moderation/internal/policy"
 )
 
 // OpenAPI документируется рядом с роутером, а не генерируется из Python-
@@ -388,6 +390,7 @@ func openAPIRoutes() []openAPIRoute {
 		{Method: "DELETE", Path: "/api/v1/admin/users/{userID}", OperationID: "deleteUser", Summary: "Удалить и обезличить пользователя", Tag: "Администрирование", Roles: []string{"admin"}},
 		{Method: "GET", Path: "/api/v1/admin/integrations/oidc", OperationID: "getOIDCSettings", Summary: "Получить runtime-настройку OIDC", Tag: "Администрирование", Roles: []string{"admin"}},
 		{Method: "PUT", Path: "/api/v1/admin/integrations/oidc", OperationID: "updateOIDCSettings", Summary: "Сохранить и сразу применить OIDC", Tag: "Администрирование", Roles: []string{"admin"}, Body: jsonBody(refSchema("OIDCSettings"), "Issuer, клиент и публичный адрес")},
+		{Method: "PUT", Path: "/api/v1/admin/policies/blacklist", OperationID: "updateBlacklist", Summary: "Сохранить и применить blacklist", Tag: "Администрирование", Roles: []string{"admin"}, Body: jsonBody(refSchema("BlacklistUpdate"), "Полная версия правил blacklist")},
 		{Method: "POST", Path: "/api/v1/admin/reload", OperationID: "reloadPolicies", Summary: "Перезагрузить политики", Tag: "Администрирование", Roles: []string{"admin"}},
 		{Method: "GET", Path: "/api/v1/admin/audit", OperationID: "getAuditLog", Summary: "Получить аудит", Tag: "Администрирование", Roles: []string{"admin"}, Query: []openAPIParam{stringQuery("entity_type", "Тип сущности"), stringQuery("entity_id", "ID сущности"), stringQuery("action", "Действие"), stringQuery("actor", "Исполнитель"), integerQuery("limit", "Размер страницы"), integerQuery("offset", "Смещение")}},
 		{Method: "POST", Path: "/api/v1/admin/queue-sweep", OperationID: "sweepQueue", Summary: "Запустить сторож очереди", Tag: "Администрирование", Roles: []string{"admin"}},
@@ -433,6 +436,23 @@ func openAPISchemas() map[string]any {
 		"CreateAPITokenRequest": map[string]any{"type": "object", "required": []string{"name"}, "properties": map[string]any{"name": map[string]any{"type": "string"}, "expires_in_days": map[string]any{"type": "integer", "minimum": 0}}},
 		"CreateUserRequest":     map[string]any{"type": "object", "required": []string{"username", "password"}, "properties": map[string]any{"username": map[string]any{"type": "string"}, "email": map[string]any{"type": "string"}, "full_name": map[string]any{"type": "string"}, "description": map[string]any{"type": "string"}, "password": map[string]any{"type": "string", "format": "password", "minLength": 6}, "roles": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "is_superuser": map[string]any{"type": "boolean"}, "must_change_password": map[string]any{"type": "boolean"}}},
 		"OIDCSettings":          map[string]any{"type": "object", "required": []string{"enabled", "issuer", "client_id", "public_base_url", "button_label"}, "properties": map[string]any{"enabled": map[string]any{"type": "boolean"}, "issuer": map[string]any{"type": "string", "format": "uri"}, "client_id": map[string]any{"type": "string"}, "client_secret": map[string]any{"type": "string", "format": "password", "description": "Пусто — оставить сохранённый"}, "secret_set": map[string]any{"type": "boolean", "readOnly": true}, "secret_mask": map[string]any{"type": "string", "readOnly": true, "description": "Маска из звёздочек той же длины; секрет не возвращается"}, "public_base_url": map[string]any{"type": "string", "format": "uri"}, "button_label": map[string]any{"type": "string"}}},
+		"BlacklistRule": map[string]any{
+			"type": "object", "required": []string{"name", "versions", "reason"},
+			"properties": map[string]any{
+				"manager": map[string]any{"type": "string", "description": "Пусто — любой менеджер"},
+				"name": map[string]any{"type": "string", "description": "Точное имя или glob"},
+				"versions": map[string]any{"type": "string", "example": ">=1.0,<2.0"},
+				"reason": map[string]any{"type": "string"},
+				"added_by": map[string]any{"type": "string", "readOnly": true},
+				"added_at": map[string]any{"type": "string", "readOnly": true},
+			},
+		},
+		"BlacklistUpdate": map[string]any{
+			"type": "object", "required": []string{"rules"},
+			"properties": map[string]any{
+				"rules": map[string]any{"type": "array", "maxItems": policy.MaxBlacklistRules, "items": refSchema("BlacklistRule")},
+			},
+		},
 		"PackageInput": map[string]any{
 			"type": "object", "required": []string{"name", "version"},
 			"properties": map[string]any{

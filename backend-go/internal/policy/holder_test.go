@@ -145,3 +145,20 @@ func TestReloadedAtMovesEvenOnFailure(t *testing.T) {
 		t.Error("время попытки не обновилось")
 	}
 }
+
+func TestReplaceBlacklistCopiesRules(t *testing.T) {
+	h := policy.NewHolder("/nonexistent/blacklist.yml", "/nonexistent/licenses.yml")
+	rules := []policy.Rule{{Manager: "npm", Name: "blocked-*", Versions: "*"}}
+	h.ReplaceBlacklist(rules, "database:blacklist_policy")
+	rules[0].Name = "changed-after-store"
+
+	if h.Blacklist().Path != "database:blacklist_policy" {
+		t.Fatalf("источник web-политики потерян: %q", h.Blacklist().Path)
+	}
+	if h.Blacklist().Find("npm", "blocked-package", "1.0.0") == nil {
+		t.Fatal("сохранённое правило не применяется")
+	}
+	if h.Blacklist().Find("npm", "changed-after-store", "1.0.0") != nil {
+		t.Fatal("вызывающий изменил политику через общий backing array")
+	}
+}

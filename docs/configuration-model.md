@@ -2,11 +2,12 @@
 
 > **Реализованный этап (2026-10-08).** В Go-backend добавлена таблица
 > `app_setting`, административный `PUT /api/v1/settings` и редактирование
-> безопасных несекретных параметров в UI. После сохранения Postgres рассылает
+> параметров и зашифрованных секретов в UI. После сохранения Postgres рассылает
 > транзакционный `NOTIFY`: `api-go` собирает новую конфигурацию рядом со старой
 > и атомарно переключает HTTP-трафик без остановки listener, а `worker-go`
-> корректно перезапускается. Ручной restart и rebuild не нужны. Секреты пока намеренно остаются в окружении;
-> web-хранилище зашифрованных секретов из целевой модели ниже ещё не реализовано.
+> корректно перезапускается. Ручной restart и rebuild не нужны. Blacklist также
+> редактируется в web: до первого сохранения действует `config/blacklist.yml`,
+> затем атомарная версия из `blacklist_policy` имеет приоритет для API и worker.
 
 Решение (прямой запрос пользователя): **все параметры, которые использует сервис, должны быть
 настраиваемы через пользовательский ввод** — URL и токены Artifactory, URL и токен sandbox,
@@ -66,7 +67,7 @@
 | **Artifactory** (прямо назван в запросе) | `ARTIFACT_STORE`, `ARTIFACT_BASE_URL`, `ARTIFACT_USER`, `ARTIFACT_TOKEN`, `ARTIFACT_REPO_*`, `ARTIFACT_AUTH_TYPE`, `ARTIFACT_PATH_TEMPLATE_*` | 1 | форма в «Настройке»: URL, тип auth, логин, токен (шифруется Fernet, не отображается открытым текстом), пути репозиториев по менеджеру. **Production — JFrog Artifactory, не Nexus** (см. `docs/ci-parity-gaps.md`) — приоритет `GenericArtifactStore`/`ARTIFACT_STORE=generic`. |
 | **Sandbox** (прямо назван в запросе; интеграции сейчас нет вовсе) | — | 1 | URL sandbox, API-токен (шифруется), таймаут, включён/выключен — форма в «Настройке» с первого коммита этой интеграции, не временные env-переменные |
 | **Реестры пакетных менеджеров** | `REGISTRY_PYPI_URL`, `REGISTRY_NPM_URL`, `REGISTRY_GO_PROXY`, `REGISTRY_GO_LICENSE_URL`, `REGISTRY_NUGET_URL` (+ Docker/остальные при добавлении) | 1 | список upstream-адресов по менеджеру, редактируемый |
-| **Политики блокировки** (прямо назван в запросе) | `QUARANTINE_DAYS`, `VULN_MAX_SCORE`, содержимое `BLACKLIST_FILE`/`ALLOWED_LICENSES_FILE` | 1 | сами правила становятся записями в БД, редактируемыми по одной через UI/API, не правкой YAML. Устраняет нестыковку: таблица `license` сейчас — только для автодополнения SPDX, реальная policy — из параллельного YAML (`app/services/policies.py`); объединяется в один источник. |
+| **Политики блокировки** (прямо назван в запросе) | `QUARANTINE_DAYS`, `VULN_MAX_SCORE`, содержимое `BLACKLIST_FILE`/`ALLOWED_LICENSES_FILE` | 1 | blacklist уже хранится атомарным JSONB-документом в `blacklist_policy` и редактируется через UI/API; YAML служит стартовым fallback до первого сохранения. Перенос справочника лицензий в БД остаётся отдельным этапом. |
 | **Сканирование содержимого** | `BANNER_SCAN_ENABLED`, `BANNER_RULES_FILE`, `BANNER_SCAN_TIMEOUT_SECONDS`, `SAST_ENABLED`, `SAST_SCANNER_BIN`, `SAST_RULES`, `SAST_TIMEOUT_SECONDS`, `SAST_MIN_SEVERITY`, `SCAN_MAX_UNPACKED_BYTES`, `SCAN_MAX_FILES` | 1 | включено/выключено (`SAST_ENABLED=true`, но шаг информационный и публикацию не блокирует — см. `docs/ci-parity-gaps.md`), таймауты, лимиты; сами правила YARA/semgrep — см. "Открытые вопросы" |
 | **OSV** | `OSV_SOURCE`, `OSV_SNAPSHOT_PATH`, `OSV_LOCAL_DB_PATH`, `OSV_SYNC_CRON`, `OSV_MAX_STALENESS_DAYS`, `OSV_API_URL`, `OSV_SCANNER_BIN` | 1 | форма в «Настройке» |
 | **OIDC/SSO** | `OIDC_ISSUER`, `OIDC_PUBLIC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_AUDIENCE`, `ROLE_MAPPING_*` | 2 | паттерн sentrix `/admin/sso` — но применяется не мгновенно (переиздание JWKS/сессий) — пометка "вступит в силу для новых входов"; настраивается после первого входа bootstrap-администратора (см. решение по открытому вопросу №4 ниже) |

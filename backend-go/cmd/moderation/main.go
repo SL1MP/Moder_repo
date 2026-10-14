@@ -311,6 +311,14 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	// обязано читать их через него — иначе часть сервиса продолжит работать
 	// по правилам, которых на диске уже нет.
 	policies := policy.NewHolder(cfg.BlacklistFile, cfg.AllowedLicensesFile)
+	if pool != nil {
+		if rules, configured, err := r.BlacklistRules(context.Background()); err != nil {
+			logger.Warn("web-версия blacklist не загружена, используются правила из файла", "error", err)
+		} else if configured {
+			policies.ReplaceBlacklist(rules, "database:blacklist_policy")
+			logger.Info("web-версия blacklist загружена", "правил", len(rules))
+		}
+	}
 	licenses, blacklist := policies.Licenses(), policies.Blacklist()
 	if licenses.Failed() {
 		logger.Error("справочник лицензий не загружен — каждый пакет уйдёт юристам",

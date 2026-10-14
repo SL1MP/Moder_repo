@@ -181,6 +181,15 @@ export interface ManagerInfo {
   osv_ecosystem: string
 }
 
+export interface BlacklistRule {
+  manager: Manager | ''
+  name: string
+  versions: string
+  reason: string
+  added_by: string
+  added_at: string
+}
+
 export interface Me {
   id: number
   username: string
@@ -766,6 +775,11 @@ export const api = {
       method: 'PUT', body: JSON.stringify(body),
     }),
   policies: () => request<Record<string, any>>('/settings/policies'),
+  saveBlacklist: (rules: BlacklistRule[]) =>
+    request<{ rules: BlacklistRule[]; loaded_at: string; message: string }>(
+      '/admin/policies/blacklist',
+      { method: 'PUT', body: JSON.stringify({ rules }) },
+    ),
   reloadConfig: () => request<Record<string, any>>('/admin/reload', { method: 'POST' }),
   systemStatus: () => request<Record<string, any>>('/system/status'),
   sweepQueue: () => request<Record<string, any>>('/admin/queue-sweep', { method: 'POST' }),

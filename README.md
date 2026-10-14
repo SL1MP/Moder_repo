@@ -320,6 +320,8 @@ curl -sS -X POST http://localhost:8080/api/v1/requests \
 
 `config/blacklist.yml` и `config/licenses.yml` монтируются в контейнер и перечитываются при старте
 и по `POST /api/v1/admin/reload` (роль `admin`, кнопка на экране «Настройка»).
+Blacklist можно изменить администратором в web-интерфейсе: после первого сохранения версия
+из PostgreSQL имеет приоритет над YAML и автоматически применяется к API и worker.
 
 ### Прокси
 

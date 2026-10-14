@@ -52,6 +52,18 @@ func (h *Holder) Blacklist() *Blacklist { return h.blacklist.Load() }
 // Licenses — текущий справочник лицензий.
 func (h *Holder) Licenses() *LicensePolicy { return h.licenses.Load() }
 
+// ReplaceBlacklist атомарно переключает проверку на правила, сохранённые в
+// базе через web-интерфейс. Срез копируется: обработчик запроса после вызова
+// не может изменить уже применённую политику через общий backing array.
+func (h *Holder) ReplaceBlacklist(rules []Rule, source string) {
+	copyRules := append([]Rule(nil), rules...)
+	now := time.Now().UTC()
+	h.blacklist.Store(&Blacklist{
+		Rules: copyRules, Path: source, LoadedAt: now,
+	})
+	h.reloadedAt.Store(now.UnixNano())
+}
+
 // ReloadedAt — когда политики последний раз перечитывали.
 func (h *Holder) ReloadedAt() time.Time {
 	return time.Unix(0, h.reloadedAt.Load()).UTC()

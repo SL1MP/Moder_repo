@@ -1,7 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Alert, Loader, formatTime, useAsync } from '../components/ui'
-import { api, type AdminUser, type Me, type OIDCSettings, type SettingRow } from '../lib/api'
+import {
+  api,
+  type AdminUser,
+  type BlacklistRule,
+  type Manager,
+  type Me,
+  type OIDCSettings,
+  type SettingRow,
+} from '../lib/api'
 
 export default function SettingsPage({ me }: { me: Me }) {
   const settings = useAsync(() => api.settings(), [])
@@ -110,39 +118,27 @@ export default function SettingsPage({ me }: { me: Me }) {
 
       {policies.data?.blacklist ? (
         <div className="card">
-          <h2>Blacklist</h2>
-          <p className="small dim">
-            Файл <code>{policies.data.blacklist.path}</code>, загружен{' '}
-            {formatTime(policies.data.blacklist.loaded_at)}. Совпадение останавливает конвейер на
-            шаге 1 — пакет не скачивается.
-          </p>
+          <div className="row between">
+            <div>
+              <h2>Blacklist</h2>
+              <p className="small dim">
+                Источник <code>{policies.data.blacklist.path}</code>, применён{' '}
+                {formatTime(policies.data.blacklist.loaded_at)}. Совпадение останавливает конвейер
+                на шаге 1 — пакет не скачивается.
+              </p>
+            </div>
+            <span className="badge info">
+              {(policies.data.blacklist.rules ?? []).length} правил
+            </span>
+          </div>
           {policies.data.blacklist.error ? (
-            <Alert kind="warn">Файл не загружен: {policies.data.blacklist.error}</Alert>
+            <Alert kind="warn">Политика не загружена: {policies.data.blacklist.error}</Alert>
           ) : null}
-          <table>
-            <thead>
-              <tr>
-                <th>Менеджер</th>
-                <th>Имя / glob</th>
-                <th>Версии</th>
-                <th>Причина</th>
-                <th>Добавил</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(policies.data.blacklist.rules ?? []).map((rule: Record<string, string>, i: number) => (
-                <tr key={i}>
-                  <td className="mono">{rule.manager ?? 'любой'}</td>
-                  <td className="mono">{rule.name}</td>
-                  <td className="mono">{rule.versions}</td>
-                  <td className="small dim">{rule.reason}</td>
-                  <td className="small">
-                    {rule.added_by ?? '—'} {rule.added_at ? `· ${rule.added_at}` : ''}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <BlacklistEditor
+            initialRules={policies.data.blacklist.rules ?? []}
+            isAdmin={isAdmin}
+            onSaved={(text) => { setMessage(text); policies.reload() }}
+          />
         </div>
       ) : null}
 
@@ -180,6 +176,114 @@ export default function SettingsPage({ me }: { me: Me }) {
       </>}
     </>
   )
+}
+
+const BLACKLIST_MANAGERS: Array<{ code: Manager | ''; title: string }> = [
+  { code: '', title: 'Любой менеджер' },
+  { code: 'pypi', title: 'PyPI' },
+  { code: 'npm', title: 'npm' },
+  { code: 'go', title: 'Go modules' },
+  { code: 'nuget', title: 'NuGet' },
+  { code: 'conan', title: 'Conan' },
+  { code: 'docker', title: 'Docker' },
+  { code: 'luarocks', title: 'LuaRocks' },
+  { code: 'maven', title: 'Maven' },
+  { code: 'php', title: 'Composer / PHP' },
+  { code: 'terraform', title: 'Terraform' },
+  { code: 'git', title: 'Git' },
+  { code: 'files', title: 'Файлы' },
+]
+
+function BlacklistEditor({ initialRules, isAdmin, onSaved }: {
+  initialRules: BlacklistRule[]
+  isAdmin: boolean
+  onSaved: (message: string) => void
+}) {
+  const [rules, setRules] = useState<BlacklistRule[]>(initialRules)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => setRules(initialRules), [initialRules])
+
+  const change = (index: number, patch: Partial<BlacklistRule>) => {
+    setRules((current) => current.map((rule, i) => i === index ? { ...rule, ...patch } : rule))
+  }
+  const add = () => setRules((current) => [...current, {
+    manager: '', name: '', versions: '*', reason: '', added_by: '', added_at: '',
+  }])
+
+  return <>
+    {error ? <Alert kind="error">{error}</Alert> : null}
+    {rules.length === 0 ? (
+      <Alert kind="info">Blacklist пуст: ни один пакет не запрещён правилами.</Alert>
+    ) : null}
+    <div className="blacklist-table-wrap">
+      <table className={isAdmin ? 'blacklist-editor' : ''}>
+        <thead>
+          <tr>
+            <th>Менеджер</th>
+            <th>Имя / glob</th>
+            <th>Версии</th>
+            <th>Причина</th>
+            <th>Добавил</th>
+            {isAdmin ? <th aria-label="Действия" /> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {rules.map((rule, index) => (
+            <tr key={index}>
+              <td>{isAdmin ? (
+                <select className="wide" aria-label={`Менеджер правила ${index + 1}`}
+                  value={rule.manager} onChange={(event) => change(index, { manager: event.target.value as Manager | '' })}>
+                  {BLACKLIST_MANAGERS.map((manager) => (
+                    <option value={manager.code} key={manager.code || 'any'}>{manager.title}</option>
+                  ))}
+                </select>
+              ) : <span className="mono">{rule.manager || 'любой'}</span>}</td>
+              <td>{isAdmin ? (
+                <input className="wide mono" aria-label={`Имя правила ${index + 1}`}
+                  placeholder="package или glob-*" value={rule.name}
+                  onChange={(event) => change(index, { name: event.target.value })} />
+              ) : <span className="mono">{rule.name}</span>}</td>
+              <td>{isAdmin ? (
+                <input className="wide mono" aria-label={`Версии правила ${index + 1}`}
+                  placeholder="* или >=1.0,<2.0" value={rule.versions}
+                  onChange={(event) => change(index, { versions: event.target.value })} />
+              ) : <span className="mono">{rule.versions}</span>}</td>
+              <td>{isAdmin ? (
+                <input className="wide" aria-label={`Причина правила ${index + 1}`}
+                  placeholder="Почему пакет запрещён" value={rule.reason}
+                  onChange={(event) => change(index, { reason: event.target.value })} />
+              ) : <span className="small dim">{rule.reason}</span>}</td>
+              <td className="small nowrap">
+                {rule.added_by || '—'} {rule.added_at ? `· ${rule.added_at}` : ''}
+              </td>
+              {isAdmin ? <td>
+                <button className="small danger" disabled={busy}
+                  aria-label={`Удалить правило ${index + 1}`}
+                  onClick={() => setRules((current) => current.filter((_, i) => i !== index))}>
+                  удалить
+                </button>
+              </td> : null}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    {isAdmin ? <div className="row blacklist-actions">
+      <button className="small" disabled={busy} onClick={add}>+ правило</button>
+      <button className="primary" disabled={busy || rules.some((rule) => !rule.name.trim())}
+        onClick={() => {
+          setBusy(true); setError(null)
+          api.saveBlacklist(rules)
+            .then((result) => { setRules(result.rules); onSaved(result.message) })
+            .catch((exc: Error) => setError(exc.message))
+            .finally(() => setBusy(false))
+        }}>
+        {busy ? 'Сохранение…' : 'Сохранить blacklist'}
+      </button>
+    </div> : null}
+  </>
 }
 
 function SettingValue({ row, isAdmin, onSaved, onError }: {

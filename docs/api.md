@@ -383,6 +383,7 @@ curl -sS -X POST http://localhost:8080/api/v1/license-claims/5/decision \
 | --- | --- | --- | --- |
 | `GET` | `/settings` | любая | действующие значения с именами переменных (только чтение) |
 | `GET` | `/settings/policies` | любая | blacklist, справочник лицензий, состояние снапшота OSV |
+| `PUT` | `/admin/policies/blacklist` | admin | проверить, сохранить и сразу применить полную версию blacklist |
 | `POST` | `/admin/reload` | admin | перечитать `blacklist.yml` и `licenses.yml` |
 | `GET` | `/admin/audit?action=&entity_type=&actor=` | admin | аудит-лог |
 | `GET` | `/admin/osv-versions` | devsecops | загруженные версии снапшота |

@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5"
 
 	"moderation/internal/api"
 	"moderation/internal/auth"
@@ -71,6 +74,38 @@ func newAdminFixture(t *testing.T) *adminFixture {
 		}),
 		repo: r, verifier: verifier, user: user, policies: policies, cfg: cfg,
 	}
+}
+
+// isolateBlacklistPolicy не даёт singleton-настройке протечь между
+// интеграционными тестами или затереть данные уже существующей тестовой БД.
+func isolateBlacklistPolicy(t *testing.T, r *repo.Repo) {
+	t.Helper()
+	ctx := context.Background()
+	var oldRules string
+	var oldActor *int64
+	var oldUpdated time.Time
+	err := r.Pool().QueryRow(ctx, `
+		SELECT rules::text, updated_by_id, updated_at FROM blacklist_policy WHERE id = 1
+	`).Scan(&oldRules, &oldActor, &oldUpdated)
+	hadOld := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("снимок blacklist: %v", err)
+	}
+	if _, err := r.Pool().Exec(ctx, `DELETE FROM blacklist_policy WHERE id = 1`); err != nil {
+		t.Fatalf("изоляция blacklist: %v", err)
+	}
+	t.Cleanup(func() {
+		if hadOld {
+			_, _ = r.Pool().Exec(context.Background(), `
+				INSERT INTO blacklist_policy (id, rules, updated_by_id, updated_at)
+				VALUES (1, $1::jsonb, $2, $3)
+				ON CONFLICT (id) DO UPDATE SET rules = EXCLUDED.rules,
+					updated_by_id = EXCLUDED.updated_by_id, updated_at = EXCLUDED.updated_at
+			`, oldRules, oldActor, oldUpdated)
+		} else {
+			_, _ = r.Pool().Exec(context.Background(), `DELETE FROM blacklist_policy WHERE id = 1`)
+		}
+	})
 }
 
 func (f *adminFixture) do(t *testing.T, role, method, path string) *httptest.ResponseRecorder {
@@ -329,6 +364,35 @@ func TestPoliciesStateReportsFiles(t *testing.T) {
 	}
 }
 
+func TestAdminEditsBlacklistAndDeveloperCannot(t *testing.T) {
+	f := newAdminFixture(t)
+	isolateBlacklistPolicy(t, f.repo)
+	ctx := context.Background()
+
+	body := `{"rules":[{"manager":"npm","name":"event-*","versions":"==3.3.6","reason":"известный бэкдор"}]}`
+	if rec := f.doBody(t, "developer", http.MethodPut, "/api/v1/admin/policies/blacklist", body); rec.Code != http.StatusForbidden {
+		t.Fatalf("разработчик изменил blacklist: %d %s", rec.Code, rec.Body.String())
+	}
+	invalid := `{"rules":[{"manager":"npm","name":"[","versions":"*","reason":"ошибка"}]}`
+	if rec := f.doBody(t, "admin", http.MethodPut, "/api/v1/admin/policies/blacklist", invalid); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("сломанный glob принят: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := f.doBody(t, "admin", http.MethodPut, "/api/v1/admin/policies/blacklist", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("blacklist не сохранён: %d %s", rec.Code, rec.Body.String())
+	}
+	if f.policies.Blacklist().Find("npm", "event-stream", "3.3.6") == nil {
+		t.Fatal("сохранённое правило не применилось в текущем API")
+	}
+	rules, configured, err := f.repo.BlacklistRules(ctx)
+	if err != nil || !configured || len(rules) != 1 {
+		t.Fatalf("правила не сохранились в БД: configured=%v rules=%+v err=%v", configured, rules, err)
+	}
+	if rules[0].AddedBy != f.user.Username || rules[0].AddedAt == "" {
+		t.Fatalf("сервер не заполнил аудит правила: %+v", rules[0])
+	}
+}
+
 // TestSystemStatusShowsStuckItems — экран показывает залежавшиеся пакеты
 // поимённо, а не только их число: именно по ним разбирают «пакет вечно
 // проверяется».
@@ -442,7 +506,8 @@ func TestQueueSweepIsAdminOnlyAndAudited(t *testing.T) {
 // открыла бы контур ровно тогда, когда его правят второпях.
 func TestReloadKeepsWorkingRulesOnBrokenFile(t *testing.T) {
 	r, cleanup := mustRepo(t)
-	defer cleanup()
+	t.Cleanup(cleanup)
+	isolateBlacklistPolicy(t, r)
 
 	dir := t.TempDir()
 	blPath := dir + "/blacklist.yml"

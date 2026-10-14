@@ -283,6 +283,42 @@ func TestBrokenGlobMatchesNothing(t *testing.T) {
 	}
 }
 
+func TestNormalizeBlacklistRulesForWeb(t *testing.T) {
+	rules, err := NormalizeBlacklistRules([]Rule{{
+		Manager: " NPM ", Name: " event-* ", Versions: " ", Reason: " ",
+	}})
+	if err != nil {
+		t.Fatalf("исправное правило отклонено: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Manager != "npm" || rules[0].Name != "event-*" ||
+		rules[0].Versions != "*" || rules[0].Reason == "" {
+		t.Fatalf("правило нормализовано неверно: %+v", rules)
+	}
+
+	bad := []struct {
+		name string
+		rule Rule
+	}{
+		{"неизвестный менеджер", Rule{Manager: "cargo", Name: "bad", Versions: "*"}},
+		{"пустое имя", Rule{Manager: "npm", Versions: "*"}},
+		{"сломанный glob", Rule{Manager: "npm", Name: "[", Versions: "*"}},
+		{"пустая граница версии", Rule{Manager: "npm", Name: "bad", Versions: ">="}},
+	}
+	for _, tc := range bad {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NormalizeBlacklistRules([]Rule{tc.rule}); err == nil {
+				t.Fatal("неверное правило принято")
+			}
+		})
+	}
+	if _, err := NormalizeBlacklistRules([]Rule{
+		{Manager: "npm", Name: "dup", Versions: "*"},
+		{Manager: "npm", Name: "dup", Versions: "*"},
+	}); err == nil {
+		t.Fatal("дубликат правила принят")
+	}
+}
+
 func policyWith(allowed, forbidden []string) *LicensePolicy {
 	p := &LicensePolicy{
 		Allowed:   map[string]LicenseEntry{},

@@ -174,6 +174,7 @@ var requiredTables = []struct{ table, migration string }{
 	{"api_token", "backend-go/migrations/0023_auth_sessions"},
 	{"oidc_integration", "backend-go/migrations/0023_auth_sessions"},
 	{"login_throttle", "backend-go/migrations/0023_auth_sessions"},
+	{"blacklist_policy", "backend-go/migrations/0028_blacklist_policy"},
 }
 
 // MissingSchemaObjects возвращает всё, чего код ждёт от базы, а в базе нет.

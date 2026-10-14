@@ -256,12 +256,12 @@ func normalizeLicenseName(name string) string {
 
 // Rule — правило blacklist.
 type Rule struct {
-	Manager  string // пустая строка — любой менеджер
-	Name     string // точное имя или glob
-	Versions string // "*", точная версия или диапазон ">=1.0,<2.0"
-	Reason   string
-	AddedBy  string
-	AddedAt  string
+	Manager  string `json:"manager" yaml:"manager,omitempty"` // пустая строка — любой менеджер
+	Name     string `json:"name" yaml:"name"` // точное имя или glob
+	Versions string `json:"versions" yaml:"versions"` // "*", точная версия или диапазон ">=1.0,<2.0"
+	Reason   string `json:"reason" yaml:"reason"`
+	AddedBy  string `json:"added_by" yaml:"added_by,omitempty"`
+	AddedAt  string `json:"added_at" yaml:"added_at,omitempty"`
 }
 
 // Blacklist — правила запрета пакетов.

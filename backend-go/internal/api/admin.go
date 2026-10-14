@@ -84,6 +84,7 @@ func MountAdmin(r chi.Router, h *AdminHandler, a *Auth) {
 		sub.Delete("/api/v1/admin/users/{userID}", h.DeleteUser)
 		sub.Get("/api/v1/admin/integrations/oidc", h.OIDCSettings)
 		sub.Put("/api/v1/admin/integrations/oidc", h.UpdateOIDCSettings)
+		sub.Put("/api/v1/admin/policies/blacklist", h.UpdateBlacklist)
 		sub.Post("/api/v1/admin/reload", h.Reload)
 		sub.Get("/api/v1/admin/audit", h.Audit)
 		if h.Sweep != nil {
@@ -113,7 +114,23 @@ func (h *AdminHandler) Reload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	previousBlacklist := h.Policies.Blacklist()
 	result := h.Policies.Reload()
+	// Сохранённая в web политика имеет приоритет над начальным YAML и после
+	// ручного перечитывания не должна внезапно исчезнуть.
+	if h.Repo != nil {
+		if rules, configured, err := h.Repo.BlacklistRules(r.Context()); err != nil {
+			result.BlacklistError = err.Error()
+			if previousBlacklist != nil && previousBlacklist.Path == "database:blacklist_policy" {
+				h.Policies.ReplaceBlacklist(previousBlacklist.Rules, previousBlacklist.Path)
+			}
+		} else if configured {
+			h.Policies.ReplaceBlacklist(rules, "database:blacklist_policy")
+			result.BlacklistPath = "database:blacklist_policy"
+			result.BlacklistRules = len(rules)
+			result.BlacklistError = ""
+		}
+	}
 
 	// Перезагрузка меняет правила проверки для всех пакетов сразу — в журнале
 	// аудита обязан остаться след, кто и когда это сделал.

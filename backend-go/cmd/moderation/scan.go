@@ -198,16 +198,28 @@ func scanOne(ctx context.Context, r *repo.Repo, st *stores, cfg *config.Config, 
 
 // buildScanContext собирает конвейерный контекст со всеми зависимостями,
 // кроме самого пакета: его подставляет loadItem.
-func buildScanContext(_ context.Context, r *repo.Repo, st *stores, cfg *config.Config) (*pipeline.Context, error) {
+func buildScanContext(ctx context.Context, r *repo.Repo, st *stores, cfg *config.Config) (*pipeline.Context, error) {
 	httpClient := newHTTPClient()
 	reg := newRegistry(cfg, httpClient)
+	blacklist := policy.LoadBlacklist(cfg.BlacklistFile)
+	if r != nil {
+		rules, configured, err := r.BlacklistRules(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("web-версия blacklist: %w", err)
+		}
+		if configured {
+			blacklist = &policy.Blacklist{
+				Rules: rules, Path: "database:blacklist_policy", LoadedAt: time.Now().UTC(),
+			}
+		}
+	}
 
 	return &pipeline.Context{
 		Config: pipelineConfig(cfg),
 		// Политики нужны шагам 1 и 3. Команда их не запускает, но контекст
 		// собирается один и тот же — неполный контекст здесь означал бы, что
 		// при следующем расширении команды шаги молча получат nil.
-		BL:  policy.LoadBlacklist(cfg.BlacklistFile),
+		BL:  blacklist,
 		Lic: policy.LoadLicensePolicy(cfg.AllowedLicensesFile),
 		Deps: pipeline.Deps{
 			Repo: r, Storage: st.Staging, Reports: st.Reports, Registry: reg,
