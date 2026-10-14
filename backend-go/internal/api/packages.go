@@ -167,6 +167,37 @@ func (h *PackagesHandler) Version(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errInternal("Не удалось собрать карточку пакета").Because(err))
 		return
 	}
+	links, err := h.Repo.ListPackageRequests(r.Context(), versionID)
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось получить связанные заявки пакета").Because(err))
+		return
+	}
+	user, ok := CurrentUser(r.Context())
+	if !ok {
+		writeError(w, r, errInternal("Маршрут карточки пакета не закрыт проверкой токена"))
+		return
+	}
+	requests := make([]map[string]any, 0, len(links))
+	for _, link := range links {
+		// Разработчику ссылка на чужую заявку бесполезна: сама карточка заявки
+		// корректно ответит 403. Ролевые очереди и администратор видят всю
+		// историю, автор — только свои заявки.
+		if !canSeeAllRequests(user) && link.AuthorID != user.ID {
+			continue
+		}
+		requests = append(requests, map[string]any{
+			"request_id":           link.Item.RequestID,
+			"request_item_id":      link.Item.ID,
+			"request_status":       link.RequestStatus,
+			"request_status_title": statusTitle(link.RequestStatus),
+			"item_status":          link.Item.Status,
+			"item_status_title":    statusTitle(link.Item.Status),
+			"current_step":         link.Item.CurrentStep,
+			"author":               link.Author,
+			"created_at":           link.Item.CreatedAt,
+		})
+	}
+	view["requests"] = requests
 	writeJSON(w, http.StatusOK, view)
 }
 

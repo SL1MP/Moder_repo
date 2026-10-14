@@ -1,11 +1,20 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import {
+  QueueFilters,
+  queueFilterParams,
+  type QueueFilterValue,
+} from '../components/QueueFilters'
 import { Alert, Badge, Empty, Loader, formatTime, scoreClass, useAsync, waitingLabel } from '../components/ui'
 import { api } from '../lib/api'
 
 export default function QueueSecurity({ onChange }: { onChange: () => void }) {
-  const { data, error, loading, reload } = useAsync(() => api.queueSecurity(), [])
+  const [filters, setFilters] = useState<QueueFilterValue>({ q: '', manager: '', status: '' })
+  const { data, error, loading, reload } = useAsync(
+    () => api.queueSecurity(queueFilterParams(filters)),
+    [filters.q, filters.manager, filters.status],
+  )
   const [busy, setBusy] = useState<number | null>(null)
   const [comment, setComment] = useState<Record<number, string>>({})
   const [failure, setFailure] = useState<string | null>(null)
@@ -37,10 +46,21 @@ export default function QueueSecurity({ onChange }: { onChange: () => void }) {
         </button>
       </div>
 
+      <QueueFilters
+        value={filters}
+        statuses={['awaiting_security', 'quarantined']}
+        onApply={setFilters}
+      />
+
       {error ? <Alert kind="error">{error}</Alert> : null}
       {failure ? <Alert kind="error">{failure}</Alert> : null}
       {loading ? <Loader /> : null}
       {data && !data.length ? <Empty text="Очередь пуста" /> : null}
+      {data && data.length ? (
+        <div className="small muted" style={{ marginBottom: 8 }}>
+          Найдено: {data.length}
+        </div>
+      ) : null}
 
       {(data ?? []).map((row) => (
         <div className="card" key={row.item_id}>

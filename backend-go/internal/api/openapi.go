@@ -295,6 +295,14 @@ func boolQuery(name, description string) openAPIParam {
 	return openAPIParam{Name: name, Description: description, Schema: map[string]any{"type": "boolean"}}
 }
 
+func queueFilterQuery(statusDescription string) []openAPIParam {
+	return []openAPIParam{
+		stringQuery("q", "Пакет, версия, автор, номер заявки или элемента"),
+		stringQuery("manager", "Код пакетного менеджера"),
+		stringQuery("status", statusDescription),
+	}
+}
+
 func openAPIRoutes() []openAPIRoute {
 	loginBody := jsonBody(refSchema("LoginRequest"), "Вход локального пользователя")
 	createRequestBody := map[string]any{
@@ -349,8 +357,8 @@ func openAPIRoutes() []openAPIRoute {
 		{Method: "POST", Path: "/api/v1/requests/{requestID}/cancel", OperationID: "cancelRequest", Summary: "Закрыть свою заявку", Tag: "Заявки", Body: genericJSONBody("Необязательная причина закрытия")},
 		{Method: "POST", Path: "/api/v1/dependencies/resolve", OperationID: "resolveDependencies", Summary: "Предварительно раскрыть дерево зависимостей", Tag: "Зависимости", Body: genericJSONBody("Менеджер, пакеты и глубина")},
 
-		{Method: "GET", Path: "/api/v1/queue/security", OperationID: "getSecurityQueue", Summary: "Получить очередь DevSecOps", Tag: "Очереди", Roles: []string{"devsecops"}},
-		{Method: "GET", Path: "/api/v1/queue/legal", OperationID: "getLegalQueue", Summary: "Получить очередь юристов", Tag: "Очереди", Roles: []string{"legal"}},
+		{Method: "GET", Path: "/api/v1/queue/security", OperationID: "getSecurityQueue", Summary: "Получить очередь DevSecOps", Tag: "Очереди", Roles: []string{"devsecops"}, Query: queueFilterQuery("awaiting_security или quarantined")},
+		{Method: "GET", Path: "/api/v1/queue/legal", OperationID: "getLegalQueue", Summary: "Получить очередь юристов", Tag: "Очереди", Roles: []string{"legal"}, Query: queueFilterQuery("awaiting_legal или license_claimed")},
 		{Method: "GET", Path: "/api/v1/queue/counters", OperationID: "getQueueCounters", Summary: "Получить счётчики очередей", Tag: "Очереди"},
 
 		{Method: "POST", Path: "/api/v1/items/{itemID}/quarantine/release", OperationID: "releaseQuarantine", Summary: "Досрочно снять карантин", Tag: "Решения", Roles: []string{"devsecops"}, Body: genericJSONBody("Комментарий")},

@@ -1,11 +1,20 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import {
+  QueueFilters,
+  queueFilterParams,
+  type QueueFilterValue,
+} from '../components/QueueFilters'
 import { Alert, Badge, Empty, Loader, formatTime, useAsync, waitingLabel } from '../components/ui'
 import { api, type LicenseClaim } from '../lib/api'
 
 export default function QueueLegal({ onChange }: { onChange: () => void }) {
-  const queue = useAsync(() => api.queueLegal(), [])
+  const [filters, setFilters] = useState<QueueFilterValue>({ q: '', manager: '', status: '' })
+  const queue = useAsync(
+    () => api.queueLegal(queueFilterParams(filters)),
+    [filters.q, filters.manager, filters.status],
+  )
   const claims = useAsync(() => api.licenseClaims('pending'), [])
   const [failure, setFailure] = useState<string | null>(null)
 
@@ -30,10 +39,21 @@ export default function QueueLegal({ onChange }: { onChange: () => void }) {
         </button>
       </div>
 
+      <QueueFilters
+        value={filters}
+        statuses={['awaiting_legal', 'license_claimed']}
+        onApply={setFilters}
+      />
+
       {queue.error ? <Alert kind="error">{queue.error}</Alert> : null}
       {failure ? <Alert kind="error">{failure}</Alert> : null}
       {queue.loading ? <Loader /> : null}
       {queue.data && !queue.data.length ? <Empty text="Очередь пуста" /> : null}
+      {queue.data && queue.data.length ? (
+        <div className="small muted" style={{ marginBottom: 8 }}>
+          Найдено: {queue.data.length}
+        </div>
+      ) : null}
 
       {(queue.data ?? []).map((row) => {
         const claim = claims.data?.find((c) => c.request_item_id === row.item_id)

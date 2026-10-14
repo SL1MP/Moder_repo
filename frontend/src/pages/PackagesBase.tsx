@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 
 import {
   Alert,
@@ -228,6 +228,38 @@ function PackageDetails({ id, me, onChanged, embedded = false }: { id: number; m
           </>
         ) : null}
       </dl>
+
+      {data.requests?.length ? (
+        <>
+          <h3 style={{ marginTop: 12 }}>Связанные заявки</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Заявка</th>
+                <th>Статус пакета</th>
+                <th>Автор</th>
+                <th>Добавлен</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.requests.map((request) => (
+                <tr key={request.request_item_id}>
+                  <td>
+                    <Link to={`/requests/${request.request_id}`}>
+                      заявка #{request.request_id}
+                    </Link>
+                  </td>
+                  <td>
+                    <Badge value={request.item_status} title={request.item_status_title} />
+                  </td>
+                  <td>{request.author ?? '—'}</td>
+                  <td className="small nowrap">{formatDate(request.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
 
       {data.install_command ? <Copyable command={data.install_command} /> : null}
 

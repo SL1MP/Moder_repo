@@ -463,6 +463,19 @@ export interface PackageVersion {
   install_command?: string | null
   vulnerabilities: Record<string, unknown>[]
   artifacts: Record<string, unknown>[]
+  requests?: PackageRequestLink[]
+}
+
+export interface PackageRequestLink {
+  request_id: number
+  request_item_id: number
+  request_status: string
+  request_status_title: string
+  item_status: string
+  item_status_title: string
+  current_step: string | null
+  author: string | null
+  created_at: string
 }
 
 export interface QueueItem {
@@ -689,8 +702,10 @@ export const api = {
       body: JSON.stringify({ approve: false, comment }),
     }),
 
-  queueSecurity: () => request<QueueItem[]>('/queue/security'),
-  queueLegal: () => request<QueueItem[]>('/queue/legal'),
+  queueSecurity: (params: Record<string, string> = {}) =>
+    request<QueueItem[]>(`/queue/security?${new URLSearchParams(params)}`),
+  queueLegal: (params: Record<string, string> = {}) =>
+    request<QueueItem[]>(`/queue/legal?${new URLSearchParams(params)}`),
   queueCounters: () => request<Record<string, number>>('/queue/counters'),
 
   /**

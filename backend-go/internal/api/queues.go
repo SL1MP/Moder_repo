@@ -3,10 +3,12 @@ package api
 import (
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"moderation/internal/domain"
 	"moderation/internal/repo"
 )
 
@@ -48,18 +50,43 @@ func (h *QueuesHandler) Security(w http.ResponseWriter, r *http.Request) {
 		[]string{"awaiting_security", "quarantined"},
 		// sast_scan в списке нет: SAST информационный, решения DevSecOps по
 		// нему не требуется, и пакет не должен попадать в очередь из-за него.
-		[]string{"dragon_scan", "sandbox_scan", "quarantine"}, "devsecops")
+		[]string{"dragon_scan", "sandbox_scan", "quarantine"},
+		[]string{"awaiting_security", "quarantined"}, "devsecops")
 }
 
 // Legal — GET /api/v1/queue/legal.
 func (h *QueuesHandler) Legal(w http.ResponseWriter, r *http.Request) {
-	h.queue(w, r, []string{"awaiting_legal", "license_claimed"}, []string{"license"}, "legal")
+	h.queue(w, r, []string{"awaiting_legal", "license_claimed"}, []string{"license"},
+		[]string{"awaiting_legal", "license_claimed"}, "legal")
 }
 
 func (h *QueuesHandler) queue(
-	w http.ResponseWriter, r *http.Request, statuses, steps []string, role string,
+	w http.ResponseWriter, r *http.Request, statuses, steps, viewStatuses []string, role string,
 ) {
-	rows, err := h.Repo.QueueItems(r.Context(), statuses, steps)
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(query) > 200 {
+		writeError(w, r, errValidation("Параметр q не должен быть длиннее 200 символов"))
+		return
+	}
+	// В интерфейсе номер заявки естественно вводят как «#123». В базе он
+	// числовой, поэтому убираем решётку до передачи полнотекстового фильтра.
+	if withoutHash := strings.TrimSpace(strings.TrimPrefix(query, "#")); withoutHash != "" {
+		query = withoutHash
+	}
+	manager := strings.TrimSpace(r.URL.Query().Get("manager"))
+	if manager != "" && !domain.Contains(domain.ManagerCodes, manager) {
+		writeError(w, r, errValidation("Неизвестный пакетный менеджер: "+manager))
+		return
+	}
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if status != "" && !domain.Contains(viewStatuses, status) {
+		writeError(w, r, errValidation("Статус не относится к этой очереди: "+status))
+		return
+	}
+
+	rows, err := h.Repo.QueueItems(r.Context(), statuses, steps, repo.QueueFilter{
+		Query: query, Manager: manager,
+	})
 	if err != nil {
 		writeError(w, r, errInternal("Не удалось получить очередь").Because(err))
 		return
@@ -83,6 +110,9 @@ func (h *QueuesHandler) queue(
 			if item.Status != "quarantined" {
 				viewStatus = "awaiting_security"
 			}
+		}
+		if status != "" && viewStatus != status {
+			continue
 		}
 		out = append(out, map[string]any{
 			"item_id":          item.ID,

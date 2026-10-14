@@ -334,6 +334,27 @@ func TestPackageVersionCard(t *testing.T) {
 	if payload["artifacts"] == nil || payload["vulnerabilities"] == nil {
 		t.Fatalf("списки должны быть пустыми массивами, а не null: %s", rec.Body.String())
 	}
+	requests, ok := payload["requests"].([]any)
+	if !ok || len(requests) != 1 {
+		t.Fatalf("в карточке должна быть связанная заявка: %s", rec.Body.String())
+	}
+	linked := requests[0].(map[string]any)
+	if linked["request_id"] != float64(f.requestID) || linked["request_item_id"] != float64(f.itemID) {
+		t.Fatalf("связь с заявкой разобрана неверно: %v", linked)
+	}
+}
+
+func TestPackageVersionHidesForeignRequestFromDeveloper(t *testing.T) {
+	f := newReadFixture(t)
+	rec := f.as(t, f.outsider, []string{"developer"},
+		fmt.Sprintf("/api/v1/packages/%d", f.versionID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	requests, ok := decodeObject(t, rec)["requests"].([]any)
+	if !ok || len(requests) != 0 {
+		t.Fatalf("разработчику нельзя выдавать ссылку на чужую недоступную заявку: %v", requests)
+	}
 }
 
 func TestApprovedPackageHasInstallCommand(t *testing.T) {

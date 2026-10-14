@@ -25,6 +25,14 @@ type QueueRow struct {
 	LicenseClaimID *int64
 }
 
+// QueueFilter ограничивает рабочую очередь до нужного менеджера и строки
+// поиска. Статус роли (например, license_claimed) вычисляется API после
+// чтения строки, поэтому здесь его нет.
+type QueueFilter struct {
+	Query   string
+	Manager string
+}
+
 // finishedStatuses — пакет с окончательным вердиктом ни в одной очереди не нужен.
 var finishedStatuses = []string{"approved", "rejected", "blacklisted", "revoked", "failed"}
 
@@ -39,7 +47,9 @@ var finishedStatuses = []string{"approved", "rejected", "blacklisted", "revoked"
 //
 // Номер заявления лицензии подтягивается тем же запросом (LATERAL), а не
 // отдельным на каждую строку: очередь юристов открывают десятки раз в день.
-func (r *Repo) QueueItems(ctx context.Context, statuses, stepCodes []string) ([]QueueRow, error) {
+func (r *Repo) QueueItems(
+	ctx context.Context, statuses, stepCodes []string, filter QueueFilter,
+) ([]QueueRow, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT ri.id, ri.request_id, ri.package_version_id, ri.requested_name, ri.requested_version,
 		       ri.dependency_kind, ri.parent_item_id, ri.depth, ri.required_range,
@@ -56,7 +66,8 @@ func (r *Repo) QueueItems(ctx context.Context, statuses, stepCodes []string) ([]
 			WHERE lc.package_version_id = pv.id AND lc.status = 'pending'
 			ORDER BY lc.id DESC LIMIT 1
 		) claim ON TRUE
-		WHERE ri.status = ANY($1)
+		WHERE (
+		      ri.status = ANY($1)
 		   OR (
 		        ri.status <> ALL($2)
 		        AND EXISTS (
@@ -66,8 +77,15 @@ func (r *Repo) QueueItems(ctx context.Context, statuses, stepCodes []string) ([]
 		            AND ps.result IN ('warn', 'fail')
 		        )
 		      )
+		)
+		  AND ($4 = '' OR p.manager = $4)
+		  AND ($5 = '' OR strpos(lower(concat_ws(' ',
+		        ri.requested_name, ri.requested_version, p.manager,
+		        coalesce(u.username, ''), coalesce(u.full_name, ''),
+		        ri.request_id::text, ri.id::text
+		      )), lower($5)) > 0)
 		ORDER BY ri.waiting_since ASC NULLS LAST, ri.id ASC
-	`, statuses, finishedStatuses, stepCodes)
+	`, statuses, finishedStatuses, stepCodes, filter.Manager, filter.Query)
 	if err != nil {
 		return nil, fmt.Errorf("чтение очереди: %w", err)
 	}

@@ -29,6 +29,16 @@ type VersionRow struct {
 	DisplayName string
 }
 
+// PackageRequestRow связывает версию пакета с заявкой, в которой она
+// проверялась. Эти строки показываются в деталях базы пакетов, чтобы решение
+// и его история не были оторваны от исходной заявки.
+type PackageRequestRow struct {
+	Item          domain.RequestItem
+	RequestStatus string
+	AuthorID      int64
+	Author        *string
+}
+
 const versionSelect = `
 	SELECT pv.id, pv.package_id, pv.version, pv.raw_version, pv.status, pv.published_at,
 	       pv.quarantine_until, pv.license_spdx, pv.license_source, pv.license_raw,
@@ -65,6 +75,43 @@ func (r *Repo) GetVersionRow(ctx context.Context, id int64) (*VersionRow, error)
 		return nil, fmt.Errorf("чтение версии пакета #%d: %w", id, err)
 	}
 	return out, nil
+}
+
+// ListPackageRequests возвращает связанные заявки от новой к старой.
+func (r *Repo) ListPackageRequests(ctx context.Context, packageVersionID int64) ([]PackageRequestRow, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT ri.id, ri.request_id, ri.package_version_id, ri.requested_name, ri.requested_version,
+		       ri.dependency_kind, ri.parent_item_id, ri.depth, ri.required_range,
+		       ri.status, ri.current_step, ri.next_action, ri.blocked_reason,
+		       ri.waiting_since, ri.finished_at, ri.created_at, ri.updated_at,
+		       mr.status, mr.author_id, u.username
+		FROM request_item ri
+		JOIN moderation_request mr ON mr.id = ri.request_id
+		LEFT JOIN "user" u ON u.id = mr.author_id
+		WHERE ri.package_version_id = $1
+		ORDER BY ri.id DESC
+	`, packageVersionID)
+	if err != nil {
+		return nil, fmt.Errorf("чтение заявок версии пакета: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PackageRequestRow
+	for rows.Next() {
+		var row PackageRequestRow
+		i := &row.Item
+		if err := rows.Scan(
+			&i.ID, &i.RequestID, &i.PackageVersionID, &i.RequestedName,
+			&i.RequestedVersion, &i.DependencyKind, &i.ParentItemID, &i.Depth,
+			&i.RequiredRange, &i.Status, &i.CurrentStep, &i.NextAction,
+			&i.BlockedReason, &i.WaitingSince, &i.FinishedAt, &i.CreatedAt, &i.UpdatedAt,
+			&row.RequestStatus, &row.AuthorID, &row.Author,
+		); err != nil {
+			return nil, fmt.Errorf("чтение связанной заявки версии пакета: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 // VersionSearch — параметры поиска по базе пакетов.

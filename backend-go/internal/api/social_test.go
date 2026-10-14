@@ -192,6 +192,48 @@ func TestQueueItemShape(t *testing.T) {
 	}
 }
 
+func TestQueueFiltersBySearchManagerAndRoleStatus(t *testing.T) {
+	f := newSocialFixture(t, "warn", "", "awaiting_legal")
+	base := "/api/v1/queue/legal?"
+
+	byRequest := decodeArray(t, f.do(t, f.outsider, []string{"legal"}, http.MethodGet,
+		base+"q=%23"+fmt.Sprint(f.requestID), ""))
+	if !containsQueueItem(byRequest, f.itemID) {
+		t.Fatal("поиск по номеру заявки с решёткой не нашёл пакет")
+	}
+
+	byManager := decodeArray(t, f.do(t, f.outsider, []string{"legal"}, http.MethodGet,
+		base+"manager=npm&status=awaiting_legal", ""))
+	if !containsQueueItem(byManager, f.itemID) {
+		t.Fatal("фильтр по менеджеру и ролевому статусу скрыл подходящий пакет")
+	}
+
+	wrongManager := decodeArray(t, f.do(t, f.outsider, []string{"legal"}, http.MethodGet,
+		base+"manager=pypi", ""))
+	if containsQueueItem(wrongManager, f.itemID) {
+		t.Fatal("фильтр по другому менеджеру оставил пакет npm")
+	}
+
+	wrongStatus := decodeArray(t, f.do(t, f.outsider, []string{"legal"}, http.MethodGet,
+		base+"status=license_claimed", ""))
+	if containsQueueItem(wrongStatus, f.itemID) {
+		t.Fatal("пакет без заявления лицензии попал под status=license_claimed")
+	}
+}
+
+func TestQueueRejectsUnknownFilters(t *testing.T) {
+	f := newSocialFixture(t, "warn", "", "awaiting_legal")
+	for _, path := range []string{
+		"/api/v1/queue/legal?manager=unknown",
+		"/api/v1/queue/legal?status=quarantined",
+	} {
+		rec := f.do(t, f.outsider, []string{"legal"}, http.MethodGet, path, "")
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: ожидался 422, получено %d: %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 // Очередь чужой роли открываться не должна: это рабочий список другой
 // команды, и разработчику там делать нечего.
 func TestQueueRoleGuard(t *testing.T) {
