@@ -315,7 +315,7 @@ curl -sS -X POST http://localhost:8080/api/v1/requests \
 | Песочница | `SANDBOX_URL`, `SANDBOX_TOKEN`, `SANDBOX_PRIORITY` | динамическая проверка архива, шаг `sandbox_scan` |
 | Уязвимости | `OSV_DB_SOURCE`, `OSV_PYPI_SNAPSHOT_PATH`, `OSV_NPM_SNAPSHOT_PATH`, `OSV_SYNC_INTERVAL_SECONDS`, `OSV_MAX_STALENESS_DAYS` | локальные снапшоты PyPI/npm, без сети к osv.dev |
 | Доступ | `OIDC_*`, `LOCAL_AUTH_ENABLED` | SSO/локальный вход; роли назначаются в самом сервисе |
-| GitLab | `GITLAB_*`, `FERNET_KEY` | чтение файлов зависимостей, шифрование токенов |
+| GitLab и web-секреты | `GITLAB_*`, `FERNET_KEY` | чтение файлов зависимостей, шифрование токенов и секретных настроек |
 | Лимиты | `MAX_UPLOAD_SIZE_BYTES`, `MAX_PACKAGES_PER_REQUEST`, `RATE_LIMIT_REQUESTS_PER_MINUTE` | защита от перегрузки |
 
 `config/blacklist.yml` и `config/licenses.yml` монтируются в контейнер и перечитываются при старте

@@ -201,9 +201,9 @@ type Config struct {
 	GitlabOAuthClientID string
 	GitlabOAuthSecret   string
 	GitlabRedirectURI   string
-	// FernetKey — ключ шифрования токенов GitLab. Формат тот же, что у
-	// python-версии (Fernet): токены, зашифрованные ею, лежат в базе, и
-	// go-версия обязана их читать.
+	// FernetKey — ключ шифрования токенов GitLab и секретов web-настроек.
+	// Формат тот же, что у python-версии (Fernet): уже зашифрованные значения
+	// в базе обязаны оставаться читаемыми.
 	FernetKey string
 
 	// Артефактори — учётные данные для публикации и режим «без записи».
