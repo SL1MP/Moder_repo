@@ -103,7 +103,8 @@ func TestGenericPublishSkipsExisting(t *testing.T) {
 func TestGenericListFilesReadsJFrogSHA2(t *testing.T) {
 	store := newStore(t, artifactstore.Config{Kind: artifactstore.KindGeneric},
 		func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/storage/pypi-moderated/?list" ||
+			_, hasListFlag := r.URL.Query()["list"]
+			if r.URL.Path != "/api/storage/pypi-moderated/" || !hasListFlag ||
 				r.URL.Query().Get("deep") != "1" || r.URL.Query().Get("listFolders") != "0" {
 				t.Errorf("неожиданный запрос листинга: %s?%s", r.URL.Path, r.URL.RawQuery)
 			}

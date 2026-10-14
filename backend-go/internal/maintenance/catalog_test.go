@@ -20,7 +20,7 @@ func TestParseCatalogPath(t *testing.T) {
 			got, ok := parseCatalogPath(tt.manager, tt.path)
 			if !ok || got.Name != tt.name || got.Version != tt.version {
 				t.Fatalf("parseCatalogPath(%q, %q) = %+v, %v; ожидалось %s@%s",
-					t.manager, tt.path, got, ok, tt.name, tt.version)
+					tt.manager, tt.path, got, ok, tt.name, tt.version)
 			}
 		})
 	}
