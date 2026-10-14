@@ -1085,9 +1085,6 @@ func TestSecurityOverrideUnblocksDangerousSandbox(t *testing.T) {
 	steps := stepsByCode(t, r, item.ID)
 	for _, code := range pipeline.SecurityBlockers {
 		want := "pass"
-		if code == "dragon_scan" {
-			want = "skipped" // Dragon в этом тестовом окружении выключен.
-		}
 		if steps[code].Result != want {
 			t.Errorf("шаг %s = %q, решение DevSecOps должно закрывать блокировки "+
 				"по содержимому сразу (ожидался %s)", code, steps[code].Result, want)

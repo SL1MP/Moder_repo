@@ -61,17 +61,17 @@ type Config struct {
 	// сертификата обязана быть видимым решением, а не строчкой в скрипте.
 	SandboxInsecureTLS bool
 
-	// Dragon orchestrates containerized scanners over the exact artifact stored
-	// in staging. Its token authorizes Moder_repo in Dragon; artifact storage credentials
-	// are configured read-only on Dragon runners and are never sent per task.
+	// Dragon информационно запускает сканеры над Go-архивом. Возвращённый
+	// SHA-256 сверяется для трассировки, но Dragon не блокирует публикацию.
 	DragonEnabled      bool
 	DragonURL          string
 	DragonToken        string
 	DragonPipelineID   string
-	DragonStagingURL   string
+	DragonRepositoryID string
 	DragonPollInterval time.Duration
 	DragonTimeout      time.Duration
-	DragonMinSeverity  string
+	DragonPublish      bool
+	DragonPriority     int
 
 	// SBOM — CycloneDX для пакетов, прошедших модерацию. Для Docker генератор
 	// запускает Syft по локальному OCI layout отдельно для каждой платформы.
@@ -318,10 +318,11 @@ func Load(getenv func(string) string) (*Config, error) {
 		DragonURL:          strings.TrimRight(strings.TrimSpace(getenv("DRAGON_URL")), "/"),
 		DragonToken:        strings.TrimSpace(getenv("DRAGON_TOKEN")),
 		DragonPipelineID:   strings.TrimSpace(getenv("DRAGON_PIPELINE_ID")),
-		DragonStagingURL:   strings.TrimRight(strings.TrimSpace(getenv("DRAGON_STAGING_URL")), "/"),
+		DragonRepositoryID: strings.TrimSpace(getenv("DRAGON_REPOSITORY_ID")),
 		DragonPollInterval: secondsOr(getenv("DRAGON_POLL_INTERVAL_SECONDS"), 5),
 		DragonTimeout:      secondsOr(getenv("DRAGON_TIMEOUT_SECONDS"), 25*60),
-		DragonMinSeverity:  valueOr(getenv("DRAGON_MIN_SEVERITY"), "high"),
+		DragonPublish:      boolOr(getenv("DRAGON_PUBLISH"), true),
+		DragonPriority:     intOr(getenv("DRAGON_PRIORITY"), 4),
 		SBOMEnabled:        boolOr(getenv("SBOM_ENABLED"), true),
 		SBOMSyftBinary:     valueOr(getenv("SBOM_SYFT_BINARY"), "syft"),
 
@@ -544,16 +545,12 @@ func Load(getenv func(string) string) (*Config, error) {
 		if strings.TrimSpace(cfg.DragonPipelineID) == "" {
 			errs = append(errs, errors.New("DRAGON_PIPELINE_ID: не задан при DRAGON_ENABLED=true"))
 		}
-		if strings.TrimSpace(cfg.DragonStagingURL) == "" {
-			errs = append(errs, errors.New(
-				"DRAGON_STAGING_URL: не задан при DRAGON_ENABLED=true — Runner не сможет скачать артефакт"))
+		if strings.TrimSpace(cfg.DragonRepositoryID) == "" {
+			errs = append(errs, errors.New("DRAGON_REPOSITORY_ID: не задан Go-репозиторий при DRAGON_ENABLED=true"))
 		}
 	}
-	if !domain.Contains([]string{"critical", "high", "medium", "low"},
-		strings.ToLower(strings.TrimSpace(cfg.DragonMinSeverity))) {
-		errs = append(errs, fmt.Errorf(
-			"DRAGON_MIN_SEVERITY: недопустимое значение %q, ожидается critical|high|medium|low",
-			cfg.DragonMinSeverity))
+	if cfg.DragonPriority < 0 {
+		errs = append(errs, fmt.Errorf("DRAGON_PRIORITY: ожидается неотрицательное целое число"))
 	}
 
 	// Тип артефактори проверяем на старте: опечатка ("nexsus") иначе всплыла

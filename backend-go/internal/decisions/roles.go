@@ -138,7 +138,7 @@ func (s *Service) DecideSecurity(ctx context.Context, item *domain.RequestItem, 
 				continue
 			}
 			reason, _ := step.Details["reason"].(string)
-			if reason == "sandbox_unavailable" || reason == "dragon_unavailable" {
+			if reason == "sandbox_unavailable" {
 				return nil, fmt.Errorf("%w: обязательный шаг %s не выполнен; восстановите интеграцию и перезапустите шаг",
 					ErrConflict, step.StepCode)
 			}

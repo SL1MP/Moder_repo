@@ -39,13 +39,13 @@ type Config struct {
 	// с явной пометкой, а не молча пропускается: «проверку не делали» обязано
 	// быть видно в карточке.
 	SandboxEnabled bool
-	// DragonEnabled включает внешнюю оркестрацию сканеров уже скачанного
-	// артефакта. DragonMinSeverity остаётся политикой Moder_repo: Dragon
-	// исполняет инструменты и возвращает факты, но не разрешает публикацию.
-	DragonEnabled     bool
-	DragonPipelineID  string
-	DragonStagingURL  string
-	DragonMinSeverity string
+	// DragonEnabled включает информационную оркестрацию сканеров скачанного
+	// Go-архива. Результат Dragon никогда не блокирует публикацию.
+	DragonEnabled      bool
+	DragonPipelineID   string
+	DragonRepositoryID string
+	DragonPublish      bool
+	DragonPriority     int
 	// SBOMEnabled — формировать CycloneDX между проверками и публикацией.
 	SBOMEnabled bool
 
@@ -102,7 +102,8 @@ type Deps struct {
 	// Sandbox — внешняя песочница шага sandbox_scan. nil означает «проверять
 	// нечем»: шаг позовёт DevSecOps, а не пропустит пакет.
 	Sandbox sandbox.Client
-	// Dragon сканирует точный объект из staging и обязан подтвердить SHA-256.
+	// Dragon информационно сканирует переданный Go-архив. Ошибки и находки не
+	// блокируют публикацию.
 	// nil допустим, пока DragonEnabled=false.
 	Dragon dragon.Scanner
 	// SBOM строит документы из уже скачанных байтов. Повторно обращаться к

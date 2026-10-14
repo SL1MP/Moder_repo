@@ -317,7 +317,7 @@ export interface RequestItem {
   can_restart: boolean
   /**
    * Шаги, по которым решение роли ещё не получено: `license` — юристы,
-   * `dragon_scan`/`sandbox_scan` — DevSecOps, `quarantine` — срок карантина. OSV сюда не
+	 * `sandbox_scan` — DevSecOps, `quarantine` — срок карантина. Dragon и OSV сюда не
    * входит: его результат информационный. Блокировок может быть
    * несколько сразу, поэтому статуса (он один) для интерфейса недостаточно:
    * более блокирующий скрыл бы блок второй роли.

@@ -26,12 +26,11 @@ import "moderation/internal/domain"
 //
 // Песочница стоит первой: её вердикт DANGEROUS — это «в пакете нашли вредонос
 // при запуске», то есть обязательная проверка важнее согласования лицензии.
-var BlockerPriority = []string{"sandbox_scan", "dragon_scan", "license", "quarantine"}
+var BlockerPriority = []string{"sandbox_scan", "license", "quarantine"}
 
 // BlockerStatus — статус пакета, пока шаг не погашен.
 var BlockerStatus = map[string]string{
 	"sandbox_scan": "awaiting_security",
-	"dragon_scan":  "awaiting_security",
 	"license":      "awaiting_legal",
 	"quarantine":   "quarantined",
 }
@@ -49,7 +48,6 @@ var OpenResults = map[string][]string{
 	// пометка в карточке и в отчёте, публикацию не держит (решение
 	// пользователя, docs/scanning-and-reports.md).
 	"sandbox_scan": {"warn", "fail"},
-	"dragon_scan":  {"warn", "fail"},
 	"license":      {"warn"},
 	"quarantine":   {"warn"},
 }
@@ -58,7 +56,6 @@ var OpenResults = map[string][]string{
 // решение (снять досрочно может DevSecOps, но обычный путь — истечение).
 var BlockerRole = map[string]string{
 	"sandbox_scan": "devsecops",
-	"dragon_scan":  "devsecops",
 	"license":      "legal",
 	"quarantine":   "",
 }
@@ -66,7 +63,6 @@ var BlockerRole = map[string]string{
 // BlockerWaitingFor — как назвать ожидание пользователю.
 var BlockerWaitingFor = map[string]string{
 	"sandbox_scan": "DevSecOps",
-	"dragon_scan":  "DevSecOps",
 	"license":      "юристов",
 	"quarantine":   "окончания карантина",
 }
@@ -78,7 +74,7 @@ var BlockerWaitingFor = map[string]string{
 // Снятых шагов тут нет по той же причине, что и в таблицах выше: снимать
 // нечего. Строки banner_scan со старым результатом warn перевела в info
 // миграция 0013.
-var SecurityBlockers = []string{"sandbox_scan", "dragon_scan"}
+var SecurityBlockers = []string{"sandbox_scan"}
 
 // PendingBlockers — шаги, ждущие решения роли, в порядке убывания блокирующей
 // силы.

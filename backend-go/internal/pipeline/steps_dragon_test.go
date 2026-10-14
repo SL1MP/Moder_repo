@@ -1,47 +1,32 @@
 package pipeline
 
 import (
+	"errors"
 	"testing"
 
 	"moderation/internal/dragon"
 )
 
-func TestDragonBlockingFindings(t *testing.T) {
-	summary := dragon.Summary{Critical: 1, High: 2, Medium: 3, Low: 4, Unknown: 5}
-	cases := map[string]int{
-		"critical": 6,
-		"high":     8,
-		"medium":   11,
-		"low":      15,
-	}
-	for threshold, want := range cases {
-		if got := dragonBlockingFindings(summary, threshold); got != want {
-			t.Errorf("threshold %s: got %d, want %d", threshold, got, want)
-		}
-	}
-}
-
-func TestStagingArtifactURLPreservesPathAndEscapesSegments(t *testing.T) {
-	got := stagingArtifactURL(
-		"http://nexus:8081/repository/moderation-staging/",
-		"docker/library/postgres/14.23@sha256:abc/image oci.tar.gz",
-	)
-	want := "http://nexus:8081/repository/moderation-staging/docker/library/postgres/14.23@sha256:abc/image%20oci.tar.gz"
-	if got != want {
-		t.Fatalf("URL = %q, want %q", got, want)
-	}
-}
-
 func TestDragonManagers(t *testing.T) {
-	for _, manager := range []string{"npm", "nuget", "pypi", "maven", "go", "conan", "docker"} {
-		if !dragonManagerSupported(manager) {
-			t.Errorf("manager %s должен поддерживаться", manager)
-		}
+	if !dragonManagerSupported("go") {
+		t.Error("Go должен поддерживаться")
 	}
-	for _, manager := range []string{"files", "git", "luarocks", "terraform", "php"} {
+	for _, manager := range []string{"npm", "nuget", "pypi", "maven", "conan", "docker", "files", "git", "luarocks", "terraform", "php"} {
 		if dragonManagerSupported(manager) {
 			t.Errorf("manager %s не должен поддерживаться", manager)
 		}
+	}
+}
+
+func TestDragonInformationNeverBlocksPublication(t *testing.T) {
+	outcome := dragonInformation("Dragon недоступен.", errors.New("timeout"), dragon.Result{
+		RunID: "run-1", Status: "submitted",
+	})
+	if outcome.Result != "info" || outcome.Stop || outcome.Defer || outcome.ItemStatus != "" {
+		t.Fatalf("информационный Dragon заблокировал публикацию: %+v", outcome)
+	}
+	if outcome.Details["run_id"] != "run-1" || outcome.Details["blocking"] != false {
+		t.Fatalf("детали Dragon = %+v", outcome.Details)
 	}
 }
 

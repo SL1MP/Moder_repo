@@ -69,7 +69,7 @@ var StepCodes = []string{
 	"quarantine",   // шаг 2
 	"license",      // шаг 3
 	"download",     // шаг 4
-	"dragon_scan",  // шаг 5 — оркестрация сканеров Dragon по точным байтам
+	"dragon_scan",  // шаг 5 — информационное сканирование Go-архива в Dragon
 	"vuln_scan",    // шаг 6 — уязвимости по снапшоту OSV
 	"sandbox_scan", // шаг 7 — динамический анализ в песочнице
 	"sbom",         // шаг 8 — CycloneDX SBOM проверенного артефакта

@@ -197,8 +197,9 @@ func pipelineConfig(cfg *config.Config) pipeline.Config {
 		SandboxEnabled:     cfg.SandboxEnabled,
 		DragonEnabled:      cfg.DragonEnabled,
 		DragonPipelineID:   cfg.DragonPipelineID,
-		DragonStagingURL:   cfg.DragonStagingURL,
-		DragonMinSeverity:  cfg.DragonMinSeverity,
+		DragonRepositoryID: cfg.DragonRepositoryID,
+		DragonPublish:      cfg.DragonPublish,
+		DragonPriority:     cfg.DragonPriority,
 		SBOMEnabled:        cfg.SBOMEnabled,
 
 		// Снятые шаги: конвейер их не запускает, значения переносятся, чтобы
@@ -224,7 +225,7 @@ func newDragon(cfg *config.Config) dragon.Scanner {
 		BaseURL:      cfg.DragonURL,
 		Token:        cfg.DragonToken,
 		PollInterval: cfg.DragonPollInterval, Timeout: cfg.DragonTimeout,
-		HTTPClient:   newHTTPClient(),
+		HTTPClient:   newArtifactHTTPClient(),
 	})
 }
 

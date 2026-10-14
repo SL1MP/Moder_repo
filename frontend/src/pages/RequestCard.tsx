@@ -580,7 +580,7 @@ function Actions({
   // Статус awaiting_security мог остаться у старой заявки, которую когда-то
   // заблокировал OSV. После перевода OSV в advisory решение DevSecOps должно
   // появляться только при открытой блокировке обязательной песочницы.
-  const waitsSecurity = pending.includes('sandbox_scan') || pending.includes('dragon_scan')
+  const waitsSecurity = pending.includes('sandbox_scan')
   const waitsLegal =
     pending.includes('license') ||
     item.status === 'awaiting_legal' ||
@@ -673,8 +673,6 @@ function SecurityBlock({
   const { comment, setComment, busy, error, run } = useDecision(onChanged)
   const sandboxStep = item.steps.find((step) => step.code === 'sandbox_scan')
   const sandboxUnavailable = sandboxStep?.details?.reason === 'sandbox_unavailable'
-  const dragonStep = item.steps.find((step) => step.code === 'dragon_scan')
-  const dragonUnavailable = dragonStep?.details?.reason === 'dragon_unavailable'
 
   return (
     <div className="card tight" style={{ marginTop: 12 }}>
@@ -684,12 +682,6 @@ function SecurityBlock({
         <Alert kind="warn">
           Песочница не выполнила обязательную проверку. Разрешить публикацию вручную нельзя:
           восстановите SANDBOX_URL/SANDBOX_TOKEN и перезапустите шаг.
-        </Alert>
-      ) : null}
-      {dragonUnavailable ? (
-        <Alert kind="warn">
-          Dragon не предоставил обязательное подтверждение SHA-256 и полный итог сканеров.
-          Разрешить публикацию вручную нельзя: восстановите интеграцию и перезапустите шаг.
         </Alert>
       ) : null}
       {isSec ? (
@@ -702,7 +694,7 @@ function SecurityBlock({
           <div className="row">
             <button
               className="primary small"
-              disabled={busy || sandboxUnavailable || dragonUnavailable}
+              disabled={busy || sandboxUnavailable}
               onClick={() => run(() => api.securityDecision(item.id, true, comment))}
             >
               разрешить публикацию

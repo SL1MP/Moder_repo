@@ -297,6 +297,14 @@ const DETAIL_LABELS: Record<string, string> = {
   age_days: 'возраст снапшота, дней',
   confirmed_for_other_version: 'подтверждена для версии',
   already_in_base: 'уже в базе',
+  run_id: 'запуск Dragon',
+  run_url: 'отчёт Dragon',
+  status_url: 'API статуса Dragon',
+  oakshield_url: 'отчёт Oakshield',
+  artifact_verified: 'SHA-256 подтверждён Dragon',
+  blocking: 'блокирует публикацию',
+  jobs: 'сканеры Dragon',
+  dragon_error: 'ошибка Dragon',
 }
 
 function StepDetails({ details, message }: { details: Record<string, unknown>; message?: string | null }) {
@@ -326,11 +334,18 @@ function StepDetails({ details, message }: { details: Record<string, unknown>; m
       ) : null}
       {rows.map(([key, value]) => (
         <div key={key}>
-          {DETAIL_LABELS[key] ?? key}: {formatDetail(value)}
+          {DETAIL_LABELS[key] ?? key}: <DetailValue value={value} />
         </div>
       ))}
     </div>
   )
+}
+
+function DetailValue({ value }: { value: unknown }) {
+  if (typeof value === 'string' && /^https?:\/\//i.test(value)) {
+    return <a href={value} target="_blank" rel="noreferrer">{value}</a>
+  }
+  return <>{formatDetail(value)}</>
 }
 
 function formatDetail(value: unknown): string {

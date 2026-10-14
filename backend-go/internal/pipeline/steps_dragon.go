@@ -3,15 +3,15 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 
 	"moderation/internal/dragon"
 )
 
-// DragonScanStep delegates execution to Dragon and applies the result locally.
-// Dragon cannot publish a package and does not make the moderation decision.
+// DragonScanStep sends the downloaded Go module archive to Dragon. The step
+// is informational by policy: submission errors, scanner failures and
+// findings are recorded, but none of them may stop publication.
 type DragonScanStep struct{}
 
 func (DragonScanStep) Code() string { return "dragon_scan" }
@@ -20,21 +20,19 @@ func (DragonScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error)
 	if !pc.Config.DragonEnabled {
 		return StepOutcome{
 			Result:  "skipped",
-			Message: "Сканирование Dragon выключено настройкой DRAGON_ENABLED.",
+			Message: "Информационное сканирование Dragon выключено настройкой DRAGON_ENABLED.",
 			Details: map[string]any{"applicable": false},
 		}, nil
 	}
 	if !dragonManagerSupported(pc.Package.Manager) {
 		return StepOutcome{
-			Result: "skipped",
-			Message: fmt.Sprintf("Dragon не применяется к менеджеру %s.", pc.Package.Manager),
-			Details: map[string]any{
-				"applicable": false, "manager": pc.Package.Manager,
-			},
+			Result:  "skipped",
+			Message: "Dragon применяется только к Go-модулям — шаг пропущен.",
+			Details: map[string]any{"applicable": false, "manager": pc.Package.Manager},
 		}, nil
 	}
 	if pc.Deps.Dragon == nil {
-		return dragonUnavailable("Клиент Dragon не настроен.", nil), nil
+		return dragonInformation("Go-пакет не отправлен в Dragon: клиент не настроен.", nil, dragon.Result{}), nil
 	}
 
 	artifact, err := pc.Deps.Repo.CurrentArtifact(ctx, pc.Version.ID)
@@ -43,128 +41,104 @@ func (DragonScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error)
 	}
 	if artifact == nil || artifact.StagingPath == nil || artifact.SHA256 == nil ||
 		strings.TrimSpace(*artifact.StagingPath) == "" || strings.TrimSpace(*artifact.SHA256) == "" {
-		return dragonUnavailable(
-			"Артефакт или его SHA-256 отсутствует в staging — Dragon нечего проверять.", nil), nil
+		return dragonInformation(
+			"Go-пакет не отправлен в Dragon: архив или его SHA-256 отсутствует во временном хранилище.",
+			nil, dragon.Result{}), nil
+	}
+	payload, err := pc.Payload(ctx, artifact)
+	if err != nil {
+		return dragonInformation("Go-пакет не отправлен в Dragon: архив не прочитан.", err, dragon.Result{}), nil
 	}
 
+	// Go-модули чувствительны к регистру: DisplayName хранит исходный путь,
+	// тогда как Name нормализован для поиска в базе.
+	name := strings.TrimSpace(pc.Package.DisplayName)
+	if name == "" {
+		name = strings.TrimSpace(pc.Package.Name)
+	}
 	size := int64(0)
 	if artifact.SizeBytes != nil {
 		size = *artifact.SizeBytes
 	}
 	result, scanErr := pc.Deps.Dragon.Scan(ctx, dragon.Request{
-		PipelineID: pc.Config.DragonPipelineID,
-		// The digest is part of the idempotency key: retrying the same bytes
-		// reuses a run, while a registry republish cannot reuse evidence for an
-		// older artifact that happened to belong to the same request item.
-		ExternalID: "moderation:item:" + strconv.FormatInt(pc.Item.ID, 10) + ":sha256:" + *artifact.SHA256,
-		Publish:    false,
+		PipelineID:   pc.Config.DragonPipelineID,
+		RepositoryID: pc.Config.DragonRepositoryID,
+		ExternalID:   "moderation:item:" + strconv.FormatInt(pc.Item.ID, 10) + ":sha256:" + *artifact.SHA256,
+		Publish:      pc.Config.DragonPublish,
+		Priority:     pc.Config.DragonPriority,
 		Artifact: dragon.Artifact{
-			Manager: pc.Package.Manager, Name: pc.Package.DisplayName,
+			Manager: pc.Package.Manager, Name: name,
 			Version: pc.Version.RawVersion, Filename: artifact.Filename,
-			URL: stagingArtifactURL(pc.Config.DragonStagingURL, *artifact.StagingPath),
-			SHA256: *artifact.SHA256, SizeBytes: size,
+			SHA256: *artifact.SHA256, SizeBytes: size, Payload: payload,
 		},
 	})
 	if scanErr != nil {
-		return dragonUnavailable("Dragon не завершил обязательное сканирование.", scanErr), nil
-	}
-
-	details := map[string]any{
-		"run_id": result.RunID, "run_url": result.RunURL,
-		"status": result.Status, "artifact_verified": result.ArtifactVerified,
-		"evidence_complete": result.EvidenceComplete,
-		"summary": result.Summary, "report_urls": result.ReportURLs,
-		"threshold": normalizedDragonSeverity(pc.Config.DragonMinSeverity),
-	}
-	if !result.ArtifactVerified {
-		details["reason"] = "dragon_unavailable"
-		return dragonUnavailable(
-			"Dragon не подтвердил SHA-256 скачанного артефакта — результат нельзя связать с проверяемыми байтами.",
-			nil).WithDetails(details), nil
-	}
-	if !result.Success {
-		details["reason"] = "dragon_unavailable"
-		return dragonUnavailable(
-			fmt.Sprintf("Dragon завершил сканирование со статусом %s.", result.Status), nil).
-			WithDetails(details), nil
-	}
-	if !result.EvidenceComplete {
-		details["reason"] = "dragon_unavailable"
-		return dragonUnavailable(
-			"Dragon выполнил сканеры, но не вернул полный нормализованный итог; автоматически считать пакет чистым нельзя.",
-			nil).WithDetails(details), nil
-	}
-
-	blocking := dragonBlockingFindings(result.Summary, pc.Config.DragonMinSeverity)
-	if blocking > 0 {
-		message := fmt.Sprintf(
-			"Dragon завершил сканирование и подтвердил SHA-256; найдено %d срабатываний, достигших порога %s.",
-			blocking, normalizedDragonSeverity(pc.Config.DragonMinSeverity))
-		if pc.SecurityOverride != nil {
-			return Info(message + " Публикация разрешена DevSecOps вручную.").WithDetails(details), nil
+		message := "Go-пакет не удалось отправить в Dragon. Публикация продолжается, потому что Dragon — информационная проверка."
+		if result.RunID != "" {
+			message = "Dragon принял Go-пакет, но итог сканирования получить не удалось. Публикация продолжается."
 		}
-		return Pending(message).
-			WithDetails(details).
-			WithStatus("awaiting_security", "awaiting_security").
-			WithNextAction("Дождитесь решения DevSecOps по отчётам Dragon.").
-			WithNotify(EventAwaitsSecurity, "devsecops"), nil
+		return dragonInformation(message, scanErr, result), nil
 	}
 
-	return Pass(fmt.Sprintf(
-		"Dragon завершил сканирование, подтвердил SHA-256 и не нашёл срабатываний уровня %s и выше.",
-		normalizedDragonSeverity(pc.Config.DragonMinSeverity))).WithDetails(details), nil
+	message := fmt.Sprintf("Dragon завершил информационное сканирование Go-пакета со статусом %s.", result.Status)
+	if strings.TrimSpace(result.Error) != "" {
+		message += " Ошибка Dragon: " + result.Error + "."
+	}
+	if result.Findings.Total > 0 {
+		message += fmt.Sprintf(
+			" Найдено: уязвимостей — %d, секретов — %d, находок анализа кода — %d.",
+			result.Findings.Vulnerabilities, result.Findings.Secrets, result.Findings.CodeFindings)
+	} else {
+		message += " По доступным логам счётчики находок равны нулю."
+	}
+	message += " Результат Dragon не блокирует публикацию пакета."
+	return dragonInformation(message, nil, result), nil
 }
 
-func dragonUnavailable(message string, err error) StepOutcome {
+func dragonInformation(message string, err error, result dragon.Result) StepOutcome {
+	details := map[string]any{
+		"applicable":        true,
+		"blocking":          false,
+		"run_id":            result.RunID,
+		"run_url":           result.RunURL,
+		"status_url":        result.StatusURL,
+		"status":            result.Status,
+		"done":              result.Done,
+		"success":           result.Success,
+		"dragon_error":      result.Error,
+		"artifact_verified": result.ArtifactVerified,
+		"findings":          result.Findings,
+		"jobs":              dragonJobDetails(result.Jobs),
+		"pipeline":          result.Pipeline,
+		"repository":        result.Repo,
+		"repository_id":     result.RepositoryID,
+		"archive_sha256":    result.ArchiveSHA256,
+		"archive_format":    result.ArchiveFormat,
+		"archive_files":     result.ArchiveFiles,
+		"archive_bytes":     result.ArchiveBytes,
+		"archive_skipped":   result.ArchiveSkipped,
+		"oakshield_url":     result.OakshieldURL,
+	}
 	if err != nil {
+		details["error"] = err.Error()
 		message += " Причина: " + err.Error()
 	}
-	return Pending(message).
-		WithDetails(map[string]any{"reason": "dragon_unavailable"}).
-		WithStatus("awaiting_security", "awaiting_security").
-		WithNextAction("DevSecOps: восстановите Dragon и перезапустите этот шаг; без фактического сканирования публикация запрещена.").
-		WithNotify(EventAwaitsSecurity, "devsecops")
+	return Info(message).WithDetails(details)
+}
+
+func dragonJobDetails(jobs []dragon.Job) []map[string]any {
+	out := make([]map[string]any, 0, len(jobs))
+	for _, job := range jobs {
+		out = append(out, map[string]any{
+			"id": job.ID, "name": job.Name, "stage": job.Stage,
+			"scanner": job.Scanner, "status": job.Status, "duration": job.Duration,
+			"allow_failure": job.AllowFailure, "test_id": job.TestID,
+			"report_size": job.ReportSize, "report_deleted": job.ReportDeleted,
+		})
+	}
+	return out
 }
 
 func dragonManagerSupported(manager string) bool {
-	switch manager {
-	case "npm", "nuget", "pypi", "maven", "go", "conan", "docker":
-		return true
-	default:
-		return false
-	}
+	return strings.EqualFold(strings.TrimSpace(manager), "go")
 }
-
-func stagingArtifactURL(base, key string) string {
-	parts := strings.Split(strings.TrimLeft(key, "/"), "/")
-	for i := range parts {
-		parts[i] = url.PathEscape(parts[i])
-	}
-	return strings.TrimRight(base, "/") + "/" + strings.Join(parts, "/")
-}
-
-func normalizedDragonSeverity(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "critical", "high", "medium", "low":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return "high"
-	}
-}
-
-func dragonBlockingFindings(summary dragon.Summary, threshold string) int {
-	// Неизвестная серьёзность не означает низкую: пока классификация не
-	// получена, находка требует решения DevSecOps при любом пороге.
-	count := summary.Critical + summary.Unknown
-	switch normalizedDragonSeverity(threshold) {
-	case "critical":
-		return count
-	case "high":
-		return count + summary.High
-	case "medium":
-		return count + summary.High + summary.Medium
-	default:
-		return count + summary.High + summary.Medium + summary.Low
-	}
-}
-
