@@ -255,6 +255,22 @@ func TestDockerCorporatePublicationReference(t *testing.T) {
 	}
 }
 
+func TestDockerDigestOnlyReference(t *testing.T) {
+	plugin := dockerPlugin(t, newDockerRegistry())
+	digest := "sha256:" + strings.Repeat("5", 64)
+	ref, err := registry.ParseEntry(plugin, "chrislusf/seaweedfs@"+digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Name != "chrislusf/seaweedfs" || ref.Version != digest {
+		t.Fatalf("digest-only ссылка разобрана неверно: %+v", ref)
+	}
+	want := "docker pull packages.example/docker-moderated/chrislusf/seaweedfs@" + digest
+	if got := plugin.InstallCommand(ref, "https://packages.example/artifactory", "docker-moderated"); got != want {
+		t.Fatalf("InstallCommand = %q, ожидалась %q", got, want)
+	}
+}
+
 // TestDockerMetadata — дата сборки и лицензия берутся из конфигурации образа,
 // а digest манифеста фиксирует содержимое: тег можно переставить, digest — нет.
 func TestDockerMetadata(t *testing.T) {

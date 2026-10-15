@@ -23,6 +23,23 @@ func digestOf(body []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+func TestDockerDigestOnlyReference(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("0", 64)
+	store, err := New(Config{
+		Kind: KindGeneric, BaseURL: "https://repo.example/artifactory",
+		DockerPublicURL: "https://packages.example/docker-moderated",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := Target{Repo: "docker-moderated", Manager: "docker",
+		Name: "chrislusf/seaweedfs", Version: digest}
+	if got := store.ArtifactURL(target); got !=
+		"https://packages.example/docker-moderated/chrislusf/seaweedfs@"+digest {
+		t.Fatalf("ArtifactURL = %q", got)
+	}
+}
+
 func testOCILayout(t *testing.T) ([]byte, string) {
 	t.Helper()
 	blobs := map[string][]byte{}

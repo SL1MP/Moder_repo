@@ -1,8 +1,12 @@
 package maintenance
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseCatalogPath(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
 	tests := []struct {
 		manager, path, name, version string
 	}{
@@ -15,6 +19,7 @@ func TestParseCatalogPath(t *testing.T) {
 		{"nuget", "newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg", "newtonsoft.json", "13.0.3"},
 		{"docker", "postgres/14.23/list.manifest.json", "postgres", "14.23"},
 		{"docker", "mcr.microsoft.com/dotnet/aspnet/10.0/manifest.json", "mcr.microsoft.com/dotnet/aspnet", "10.0"},
+		{"docker", "chrislusf/seaweedfs/" + digest + "/manifest.json", "chrislusf/seaweedfs", digest},
 		{"conan", "boost/1.90.0/boost-1.90.0.tgz", "boost", "1.90.0"},
 		{"conan", "boost/1.90.0/_/_/67c04388906d183b7bf506954ab/export/conan_export.tgz", "boost", "1.90.0"},
 		{"luarocks", "lua-cjson-2.1.0.10-1.src.rock", "lua-cjson", "2.1.0.10-1"},
@@ -32,14 +37,25 @@ func TestParseCatalogPath(t *testing.T) {
 	}
 }
 
-func TestParseCatalogPathSkipsDockerDigestCopies(t *testing.T) {
+func TestParseCatalogPathSkipsDockerBlobsAndInvalidDigests(t *testing.T) {
 	for _, file := range []string{
 		"postgres/sha256:0123456789abcdef/manifest.json",
 		"postgres/14.23/blobs/sha256/0123456789abcdef",
 	} {
 		if _, ok := parseCatalogPath("docker", file); ok {
-			t.Fatalf("технический Docker-объект распознан как тег: %s", file)
+			t.Fatalf("технический Docker-объект распознан как версия: %s", file)
 		}
+	}
+}
+
+func TestCatalogDockerVersion(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	checksum := strings.Repeat("b", 64)
+	if got := catalogDockerVersion("4.47", checksum); got != "4.47@sha256:"+checksum {
+		t.Fatalf("tag не закреплён checksum: %q", got)
+	}
+	if got := catalogDockerVersion(digest, checksum); got != digest {
+		t.Fatalf("digest-only версия изменена: %q", got)
 	}
 }
 

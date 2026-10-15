@@ -29,9 +29,11 @@ type catalogCoordinate struct {
 }
 
 var (
-	pypiWheelName = regexp.MustCompile(`^([A-Za-z0-9_.]+)-([0-9][A-Za-z0-9.!+_]*)-[^-]+-[^-]+-[^-]+\.whl$`)
-	pypiSdistName = regexp.MustCompile(`^(.+)-([0-9][A-Za-z0-9.!+_-]*)\.(?:tar\.gz|zip)$`)
-	luarocksName  = regexp.MustCompile(`^(.+)-([0-9][0-9A-Za-z.+_-]*)-([0-9]+)$`)
+	pypiWheelName      = regexp.MustCompile(`^([A-Za-z0-9_.]+)-([0-9][A-Za-z0-9.!+_]*)-[^-]+-[^-]+-[^-]+\.whl$`)
+	pypiSdistName      = regexp.MustCompile(`^(.+)-([0-9][A-Za-z0-9.!+_-]*)\.(?:tar\.gz|zip)$`)
+	luarocksName       = regexp.MustCompile(`^(.+)-([0-9][0-9A-Za-z.+_-]*)-([0-9]+)$`)
+	dockerDigestFolder = regexp.MustCompile(`(?i)^sha256:[0-9a-f]{64}$`)
+	dockerSHA256       = regexp.MustCompile(`(?i)^[0-9a-f]{64}$`)
 )
 
 // SyncTrustedCatalog выполняет один полный аддитивный обход. Отсутствующие в
@@ -90,8 +92,8 @@ func (s *Service) SyncTrustedCatalog(
 				skipped++
 				continue
 			}
-			if manager == "docker" && len(strings.TrimSpace(file.Checksum)) == 64 {
-				coordinate.Version += "@sha256:" + strings.ToLower(strings.TrimSpace(file.Checksum))
+			if manager == "docker" {
+				coordinate.Version = catalogDockerVersion(coordinate.Version, file.Checksum)
 			}
 			parsed++
 			result.Discovered++
@@ -229,17 +231,22 @@ func parseCatalogPath(manager, filePath string) (catalogCoordinate, bool) {
 			return catalogCoordinate{Name: group + ":" + artifact, Version: version}, group != ""
 		}
 	case "docker":
-		// JFrog stores tag manifests as image/name/<tag>/manifest.json (or
-		// list.manifest.json for a multi-platform image). Content-addressable
-		// copies live under sha256:<digest>; importing those would create a
-		// second fake package for every manifest and layer.
+		// JFrog stores both tag manifests and independently addressable
+		// content-addressable manifests under image/name/<reference>/. A
+		// sha256:<digest> directory is therefore a valid immutable Docker
+		// version in the catalog. Layers and other blobs are still ignored:
+		// only manifest.json/list.manifest.json are package entries.
 		if len(parts) >= 3 && (filename == "manifest.json" || filename == "list.manifest.json") {
-			tag := parts[len(parts)-2]
-			if strings.HasPrefix(strings.ToLower(tag), "sha256:") {
+			reference := parts[len(parts)-2]
+			if strings.HasPrefix(strings.ToLower(reference), "sha256:") &&
+				!dockerDigestFolder.MatchString(reference) {
 				return catalogCoordinate{}, false
 			}
 			name := strings.Join(parts[:len(parts)-2], "/")
-			return catalogCoordinate{Name: name, Version: tag}, name != "" && tag != ""
+			if dockerDigestFolder.MatchString(reference) {
+				reference = strings.ToLower(reference)
+			}
+			return catalogCoordinate{Name: name, Version: reference}, name != "" && reference != ""
 		}
 	case "conan":
 		// JFrog Conan repositories use
@@ -265,6 +272,21 @@ func parseCatalogPath(manager, filePath string) (catalogCoordinate, bool) {
 		}
 	}
 	return catalogCoordinate{}, false
+}
+
+// catalogDockerVersion keeps immutable digest-only references intact. For a
+// human-readable tag JFrog's checksum pins the tag to the exact manifest that
+// was discovered during this catalog run.
+func catalogDockerVersion(version, checksum string) string {
+	version = strings.TrimSpace(version)
+	if dockerDigestFolder.MatchString(version) {
+		return strings.ToLower(version)
+	}
+	checksum = strings.TrimSpace(checksum)
+	if dockerSHA256.MatchString(checksum) {
+		return version + "@sha256:" + strings.ToLower(checksum)
+	}
+	return version
 }
 
 func unescapeGoModule(value string) string {

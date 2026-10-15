@@ -65,11 +65,7 @@ func (n *Nexus) nexusOCIReference(t Target) string {
 		return ""
 	}
 	tag, digest := dockerTagAndDigest(t.Version)
-	ref := image + ":" + tag
-	if digest != "" {
-		ref += "@" + digest
-	}
-	return ref
+	return dockerImageReference(image, tag, digest)
 }
 
 func (n *Nexus) nexusTransportReference(t Target, byDigest bool) (string, bool, error) {

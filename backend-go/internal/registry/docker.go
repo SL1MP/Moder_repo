@@ -65,7 +65,9 @@ type Docker struct {
 func (*Docker) Code() string  { return "docker" }
 func (*Docker) Title() string { return "Docker (образы)" }
 
-func (*Docker) EntryFormat() string { return "image:tag@sha256:<64 hex>" }
+func (*Docker) EntryFormat() string {
+	return "image:tag[@sha256:<64 hex>] или image@sha256:<64 hex>"
+}
 
 // OSVEcosystem — образ целиком ни к какой экосистеме OSV не относится: в нём
 // пакеты нескольких экосистем сразу. Пустая строка честнее выдуманного имени.
@@ -93,6 +95,9 @@ func (*Docker) NormalizeVersion(version string) string {
 	if !pinned {
 		return strings.TrimSpace(tag)
 	}
+	if tag == "" {
+		return strings.ToLower(strings.TrimSpace(digest))
+	}
 	return strings.TrimSpace(tag) + "@" + strings.ToLower(strings.TrimSpace(digest))
 }
 
@@ -109,13 +114,25 @@ func (p *Docker) SplitEntry(entry string) (string, string, error) {
 		return "", "", invalidFormat(p.EntryFormat(),
 			"«%s» содержит больше одного разделителя @", text)
 	}
-	idx := strings.LastIndex(imageAndTag, ":")
+	lastColon := strings.LastIndex(imageAndTag, ":")
+	lastSlash := strings.LastIndex(imageAndTag, "/")
+	// Для image@digest двоеточие может относиться только к порту registry
+	// (registry:5000/team/image). Двоеточие после последнего слеша означает,
+	// что пользователь всё же указал tag: image:tag@digest.
+	if pinned && lastColon <= lastSlash && dockerDigestRe.MatchString(strings.TrimSpace(digest)) {
+		name := strings.TrimSpace(imageAndTag)
+		if name == "" {
+			return "", "", invalidFormat(p.EntryFormat(), "Имя Docker-образа пусто")
+		}
+		return name, strings.ToLower(strings.TrimSpace(digest)), nil
+	}
+	idx := lastColon
 	// Двоеточие есть и в адресе реестра с портом (registry:5000/app). Тег —
 	// это то, что после последнего двоеточия и без слешей.
 	if idx < 0 || strings.Contains(imageAndTag[idx+1:], "/") {
 		return "", "", invalidFormat(p.EntryFormat(),
-			"«%s» не соответствует формату docker. Ожидается: image:tag "+
-				"или image:tag@sha256:digest. Тег обязателен: «latest» по умолчанию "+
+			"«%s» не соответствует формату docker. Ожидается: image:tag, "+
+				"image:tag@sha256:digest или image@sha256:digest. «latest» по умолчанию "+
 				"указывает на разное содержимое в разное время", text)
 	}
 	version := strings.TrimSpace(imageAndTag[idx+1:])
@@ -143,6 +160,13 @@ func (p *Docker) ValidateName(name string) error {
 
 func (p *Docker) ValidateVersion(version string) error {
 	tag, digest, pinned := splitDockerVersion(version)
+	if pinned && tag == "" {
+		if !dockerDigestRe.MatchString(digest) {
+			return invalidFormat(p.EntryFormat(),
+				"Digest «%s» недопустим: ожидается sha256 и 64 шестнадцатеричных символа", digest)
+		}
+		return nil
+	}
 	if !dockerTagRe.MatchString(tag) {
 		return invalidFormat(p.EntryFormat(),
 			"Тег «%s» недопустим (буквы, цифры, «.», «-», «_», до 128 символов)", tag)
@@ -166,7 +190,11 @@ func (p *Docker) ValidateVersion(version string) error {
 // таким образом тег может быть передвинут в реестре, но модерироваться будут
 // ровно указанные пользователем байты.
 func splitDockerVersion(version string) (tag, digest string, pinned bool) {
-	tag, digest, pinned = strings.Cut(strings.TrimSpace(version), "@")
+	version = strings.TrimSpace(version)
+	if dockerDigestRe.MatchString(version) {
+		return "", strings.ToLower(version), true
+	}
+	tag, digest, pinned = strings.Cut(version, "@")
 	return strings.TrimSpace(tag), strings.TrimSpace(digest), pinned
 }
 
@@ -614,6 +642,9 @@ func (p *Docker) InstallCommand(ref Ref, baseURL, repo string) string {
 		prefix += "/" + strings.Trim(repo, "/")
 	}
 	if tag, digest, pinned := splitDockerVersion(ref.RawVersion); pinned {
+		if tag == "" {
+			return fmt.Sprintf("docker pull %s/%s@%s", prefix, name, digest)
+		}
 		return fmt.Sprintf("docker pull %s/%s:%s@%s", prefix, name, tag, digest)
 	}
 	return fmt.Sprintf("docker pull %s/%s:%s", prefix, name, ref.RawVersion)

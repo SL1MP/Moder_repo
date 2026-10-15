@@ -58,8 +58,37 @@ func escapedImage(name string) string {
 }
 
 func dockerTagAndDigest(version string) (tag, digest string) {
-	tag, digest, _ = strings.Cut(strings.TrimSpace(version), "@")
+	version = strings.TrimSpace(version)
+	if isDockerDigest(version) {
+		return "", strings.ToLower(version)
+	}
+	tag, digest, _ = strings.Cut(version, "@")
 	return strings.TrimSpace(tag), strings.TrimSpace(digest)
+}
+
+func isDockerDigest(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != len("sha256:")+64 || !strings.EqualFold(value[:len("sha256:")], "sha256:") {
+		return false
+	}
+	for _, char := range value[len("sha256:"):] {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') ||
+			(char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func dockerImageReference(image, tag, digest string) string {
+	if tag == "" && digest != "" {
+		return image + "@" + digest
+	}
+	ref := image + ":" + tag
+	if digest != "" {
+		ref += "@" + digest
+	}
+	return ref
 }
 
 func (g *Generic) manifestURL(t Target, reference string) string {
@@ -84,11 +113,7 @@ func (g *Generic) ociReference(t Target) string {
 			"/" + strings.Trim(t.Repo, "/")
 	}
 	tag, digest := dockerTagAndDigest(t.Version)
-	ref := fmt.Sprintf("%s/%s:%s", base, t.Name, tag)
-	if digest != "" {
-		ref += "@" + digest
-	}
-	return ref
+	return dockerImageReference(fmt.Sprintf("%s/%s", base, t.Name), tag, digest)
 }
 
 func (g *Generic) ociExists(ctx context.Context, t Target) (bool, error) {
