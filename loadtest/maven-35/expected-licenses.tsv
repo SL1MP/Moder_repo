@@ -1,0 +1,36 @@
+coordinate	expected_spdx_or_family	purpose
+org.apache.commons:commons-lang3:3.17.0	Apache-2.0	parent POM
+com.google.guava:guava:33.4.0-jre	Apache-2.0	direct POM
+com.fasterxml.jackson.core:jackson-databind:2.18.2	Apache-2.0	parent POM
+com.google.code.gson:gson:2.11.0	Apache-2.0	direct POM
+org.apache.logging.log4j:log4j-core:2.24.3	Apache-2.0	parent POM
+com.squareup.okhttp3:okhttp:4.12.0	Apache-2.0	parent POM
+com.squareup.retrofit2:retrofit:2.11.0	Apache-2.0	parent POM
+com.google.protobuf:protobuf-java:4.29.2	BSD-3-Clause	BSD normalization
+io.grpc:grpc-netty-shaded:1.69.0	Apache-2.0	parent POM
+org.springframework:spring-core:6.2.1	Apache-2.0	parent POM
+io.micrometer:micrometer-core:1.14.2	Apache-2.0	parent POM
+io.projectreactor:reactor-core:3.7.2	Apache-2.0	parent POM
+org.yaml:snakeyaml:2.3	Apache-2.0	direct POM
+commons-io:commons-io:2.18.0	Apache-2.0	parent POM
+commons-codec:commons-codec:1.17.2	Apache-2.0	parent POM
+org.projectlombok:lombok:1.18.36	MIT	MIT normalization
+org.slf4j:slf4j-api:2.0.16	MIT	parent POM
+org.postgresql:postgresql:42.7.5	PostgreSQL|BSD-2-Clause	non-Apache license
+org.bouncycastle:bcprov-jdk18on:1.79	MIT	license name/URL
+org.junit.jupiter:junit-jupiter:5.11.4	EPL-2.0	parent POM
+com.h2database:h2:2.3.232	EPL-1.0|MPL-2.0	multiple licenses
+jakarta.validation:jakarta.validation-api:3.1.0	EPL-2.0	Eclipse license
+org.hibernate.orm:hibernate-core:6.6.4.Final	LGPL-2.1-only|LGPL-2.1-or-later	copyleft/legal path
+com.mysql:mysql-connector-j:8.4.0	GPL-2.0-only|manual legal decision	GPL with FOSS exception
+org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21	Apache-2.0	parent POM and Gradle variants
+org.jetbrains.kotlin:kotlin-serialization:2.2.21	Apache-2.0	parent POM and Gradle variants
+org.jetbrains.kotlin:kotlin-allopen:2.2.21	Apache-2.0	parent POM
+org.jetbrains.kotlin:kotlin-noarg:2.2.21	Apache-2.0	parent POM
+org.jetbrains.kotlin:kotlin-lombok:2.2.21	Apache-2.0	parent POM
+org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.2.21	Apache-2.0	parent POM
+com.android.tools.build:gradle:8.7.3	Apache-2.0	Google Maven
+androidx.appcompat:appcompat:1.7.0	Apache-2.0	Google Maven/AAR
+org.jetbrains.kotlinx:kotlinx-coroutines-core-iosarm64:1.9.0	Apache-2.0	Kotlin Native/KLIB
+com.google.protobuf:protoc:4.29.2	BSD-3-Clause	platform executables
+org.apache.maven:apache-maven:3.9.5	Apache-2.0	ZIP distribution
