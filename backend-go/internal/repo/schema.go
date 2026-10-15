@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"moderation/internal/domain"
 )
 
