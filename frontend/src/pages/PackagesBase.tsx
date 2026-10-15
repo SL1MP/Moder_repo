@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import {
@@ -15,27 +15,30 @@ import {
 import { api, type Manager, type Me, type PackageVersion } from '../lib/api'
 
 const STATUSES = [
-  '',
-  'approved',
-  'quarantined',
-  'awaiting_legal',
-  'awaiting_security',
-  'rejected',
-  'revoked',
-  'blacklisted',
+  { value: '', label: 'все доступные статусы' },
+  { value: 'approved', label: 'одобрен' },
+  { value: 'quarantined', label: 'карантин' },
+  { value: 'awaiting_legal', label: 'ждёт юристов' },
+  { value: 'awaiting_security', label: 'ждёт DevSecOps' },
 ]
+
+const PAGE_SIZE = 50
+const VISIBLE_STATUSES = new Set(STATUSES.map((item) => item.value))
 
 export default function PackagesBase({ me }: { me: Me }) {
   const [params, setParams] = useSearchParams()
   const [query, setQuery] = useState(params.get('q') ?? '')
   const [manager, setManager] = useState<Manager | ''>('')
   const [version, setVersion] = useState('')
-  const [status, setStatus] = useState(params.get('status') ?? '')
+  const initialStatus = params.get('status') ?? ''
+  const [status, setStatus] = useState(VISIBLE_STATUSES.has(initialStatus) ? initialStatus : '')
   const [selected, setSelected] = useState<number | null>(null)
+  const [page, setPage] = useState(0)
   // Список менеджеров берём у сервиса, а не перечисляем здесь: их двенадцать,
   // и зашитый список молча отстаёт от бэкенда — ровно так docker не появлялся
   // в поиске после того, как его уже поддержали.
   const managers = useAsync(() => api.managers(), [])
+  useEffect(() => { setPage(0); setSelected(null) }, [query, manager, version, status])
 
   const { data, error, loading, reload } = useAsync(
     () =>
@@ -44,9 +47,10 @@ export default function PackagesBase({ me }: { me: Me }) {
         ...(manager ? { manager } : {}),
         ...(version ? { version } : {}),
         ...(status ? { status } : {}),
-        limit: '100',
+        limit: String(PAGE_SIZE),
+        offset: String(page * PAGE_SIZE),
       }),
-    [query, manager, version, status],
+    [query, manager, version, status, page],
   )
 
   return (
@@ -95,8 +99,8 @@ export default function PackagesBase({ me }: { me: Me }) {
             <span>Статус</span>
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
               {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s || 'все'}
+                <option key={s.value} value={s.value}>
+                  {s.label}
                 </option>
               ))}
             </select>
@@ -116,7 +120,7 @@ export default function PackagesBase({ me }: { me: Me }) {
           <div className="small muted" style={{ marginBottom: 6 }}>
             Найдено: {data.total}
           </div>
-          <table>
+          <div className="table-scroll package-base-table"><table>
             <thead>
               <tr>
                 <th>Пакет</th>
@@ -137,7 +141,19 @@ export default function PackagesBase({ me }: { me: Me }) {
                   me={me} onChanged={reload} />
               ))}
             </tbody>
-          </table>
+          </table></div>
+        </div>
+      ) : null}
+
+      {data && (page > 0 || (page + 1) * PAGE_SIZE < data.total) ? (
+        <div className="card tight row between">
+          <button className="ghost small" disabled={loading || page === 0}
+            onClick={() => setPage((current) => Math.max(0, current - 1))}>← предыдущая</button>
+          <span className="small muted">
+            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, data.total)} из {data.total}
+          </span>
+          <button className="ghost small" disabled={loading || (page + 1) * PAGE_SIZE >= data.total}
+            onClick={() => setPage((current) => current + 1)}>следующая →</button>
         </div>
       ) : null}
     </>
@@ -193,13 +209,18 @@ function PackageRow({ pkg, selected, onToggle, me, onChanged }: {
 function PackageDetails({ id, me, onChanged, embedded = false }: { id: number; me: Me; onChanged: () => void; embedded?: boolean }) {
   const { data, error, reload } = useAsync(() => api.packageById(id), [id])
   const [reason, setReason] = useState('')
+  const [deleteReason, setDeleteReason] = useState('')
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const isSec = me.roles.includes('devsecops') || me.roles.includes('admin')
+  const isAdmin = me.roles.includes('admin')
 
   if (error) return <Alert kind="error">{error}</Alert>
   if (!data) return <Loader />
 
   return (
     <div className={embedded ? 'package-details' : 'card'}>
+      {actionError ? <Alert kind="error">{actionError}</Alert> : null}
       <div className="row between">
         <h2 className="mono">
           {data.name} {data.version} <Badge value={data.status} />
@@ -232,7 +253,7 @@ function PackageDetails({ id, me, onChanged, embedded = false }: { id: number; m
       {data.requests?.length ? (
         <>
           <h3 style={{ marginTop: 12 }}>Связанные заявки</h3>
-          <table>
+          <div className="table-scroll"><table>
             <thead>
               <tr>
                 <th>Заявка</th>
@@ -257,7 +278,7 @@ function PackageDetails({ id, me, onChanged, embedded = false }: { id: number; m
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </>
       ) : null}
 
@@ -294,6 +315,21 @@ function PackageDetails({ id, me, onChanged, embedded = false }: { id: number; m
           </button>
         </div>
       ) : null}
+      {isAdmin && data.status !== 'deleted' && data.artifacts.some((artifact) => artifact.status === 'published') ? (
+        <div className="row destructive-action" style={{ marginTop: 12 }}>
+          <input className="wide" placeholder="Причина удаления из внутреннего артефактори (обязательна)"
+            value={deleteReason} onChange={(e) => setDeleteReason(e.target.value)} />
+          <button className="danger small nowrap" disabled={deleting || deleteReason.trim().length < 3}
+            onClick={() => {
+              if (!window.confirm(`Удалить ${data.name} ${data.version} из внутреннего артефактори?`)) return
+              setDeleting(true); setActionError(null)
+              api.deletePackage(data.id, deleteReason.trim())
+                .then(() => { reload(); onChanged() })
+                .catch((exc: Error) => setActionError(exc.message))
+                .finally(() => setDeleting(false))
+            }}>{deleting ? 'удаление…' : 'удалить из артефактори'}</button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -303,7 +339,7 @@ function Artifacts({ pkg }: { pkg: PackageVersion }) {
   return (
     <>
       <h3 style={{ marginTop: 12 }}>Артефакты</h3>
-      <table>
+      <div className="table-scroll artifact-table-wrap"><table>
         <thead>
           <tr>
             <th>Файл</th>
@@ -316,7 +352,9 @@ function Artifacts({ pkg }: { pkg: PackageVersion }) {
         <tbody>
           {pkg.artifacts.map((a, i) => (
             <tr key={i}>
-              <td className="mono">{String(a.filename)}</td>
+              <td className="mono artifact-name">
+                {a.nexus_url ? <a href={String(a.nexus_url)} target="_blank" rel="noreferrer">{String(a.filename)}</a> : String(a.filename)}
+              </td>
               <td className="mono small">{String(a.sha256 ?? '—').slice(0, 16)}…</td>
               <td className="num">{a.size_bytes ? `${Math.round(Number(a.size_bytes) / 1024)} КБ` : '—'}</td>
               <td className="small">
@@ -334,7 +372,7 @@ function Artifacts({ pkg }: { pkg: PackageVersion }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
     </>
   )
 }

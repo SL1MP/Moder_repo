@@ -2,12 +2,15 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"moderation/internal/artifactstore"
 	"moderation/internal/domain"
 	"moderation/internal/registry"
+	"moderation/internal/repo"
 	"moderation/internal/sbom"
 	"moderation/internal/storage"
 )
@@ -54,7 +57,9 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	// document: restart from sbom will reuse the staged artifact, not redownload.
 	if pc.Config.SBOMEnabled && sbom.Supports(pc.Package.Manager) {
 		docs, err := pc.Deps.Repo.ListSBOMDocuments(ctx, pc.Item.ID)
-		if err != nil { return StepOutcome{}, err }
+		if err != nil {
+			return StepOutcome{}, err
+		}
 		if len(docs) == 0 {
 			return Fail("Публикация остановлена: CycloneDX SBOM для этого прогона отсутствует.").
 				WithStatus("failed", "failed").
@@ -121,15 +126,21 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 		}, nil
 	}
 
-	url, how, err := publishArtifact(ctx, pc, artifact, target)
+	url, how, publishedFiles, err := publishArtifact(ctx, pc, artifact, target)
 	if err != nil {
 		return Fail(fmt.Sprintf("Публикация в артефактори не удалась: %v", err)).
 			WithStatus("failed", "failed").
 			WithNextAction("Сообщите администратору сервиса: артефактори отклонил выгрузку."), nil
 	}
 
-	if err := pc.Deps.Repo.MarkArtifactPublished(ctx, artifact.ID, url, pc.now()); err != nil {
-		return StepOutcome{}, err
+	if len(publishedFiles) > 0 {
+		if err := pc.Deps.Repo.UpsertPublishedArtifacts(ctx, pc.Version.ID, publishedFiles, pc.now()); err != nil {
+			return StepOutcome{}, err
+		}
+	} else {
+		if err := pc.Deps.Repo.MarkArtifactPublished(ctx, artifact.ID, url, pc.now()); err != nil {
+			return StepOutcome{}, err
+		}
 	}
 	// Промежуточная зона — временная: файл уходит из неё сразу после успешной
 	// публикации. При переносе он оттуда уже исчез (артефактори переложил его
@@ -138,6 +149,11 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	// published.
 	if err := clearStaging(ctx, pc, artifact, how); err != nil {
 		return StepOutcome{}, err
+	}
+	if len(publishedFiles) > 0 {
+		if err := pc.Deps.Repo.SetArtifactStatus(ctx, artifact.ID, "purged"); err != nil {
+			return StepOutcome{}, err
+		}
 	}
 
 	return StepOutcome{
@@ -259,51 +275,55 @@ func (m publishMode) title() string {
 // штатный для Artifactory.
 func publishArtifact(
 	ctx context.Context, pc *Context, artifact *domain.Artifact, target artifactstore.Target,
-) (string, publishMode, error) {
+) (string, publishMode, []repo.PublishedArtifact, error) {
 	// Docker repository — не файловое хранилище. Перенос .oci.tar.gz в него
 	// оставил бы один архив, который docker pull не видит. Публикуем содержимое
 	// OCI layout нативно: blobs, manifests всех платформ и index под тегом.
 	if target.Manager == "docker" {
 		publisher, ok := pc.Deps.Artifacts.(artifactstore.OCIPublisher)
 		if !ok {
-			return "", "", fmt.Errorf(
+			return "", "", nil, fmt.Errorf(
 				"настроенный артефактори (%s) не поддерживает нативную OCI-публикацию",
 				pc.Deps.Artifacts.Kind())
 		}
 		payload, err := pc.Payload(ctx, artifact)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		url, err := publisher.PublishOCI(ctx, target, payload)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
-		return url, publishByUpload, nil
+		return url, publishByUpload, nil, nil
 	}
 
 	if target.Manager == "maven" || target.Manager == "pypi" || target.Manager == "terraform" {
 		expectedSuffix := "." + target.Manager + "-release.tgz"
 		if !strings.HasSuffix(artifact.Filename, expectedSuffix) {
-			return "", "", fmt.Errorf(
+			return "", "", nil, fmt.Errorf(
 				"в staging лежит старый одиночный %s-артефакт %s; "+
 					"перезапустите заявку с шага «Скачивание артефакта», чтобы собрать весь релиз",
 				target.Manager, artifact.Filename)
 		}
 		publisher, ok := pc.Deps.Artifacts.(artifactstore.ReleaseBundlePublisher)
 		if !ok {
-			return "", "", fmt.Errorf(
+			return "", "", nil, fmt.Errorf(
 				"настроенный артефактори (%s) не поддерживает публикацию многофайловых %s-релизов",
 				pc.Deps.Artifacts.Kind(), target.Manager)
 		}
 		payload, err := pc.Payload(ctx, artifact)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		url, err := publisher.PublishReleaseBundle(ctx, target, payload)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
-		return url, publishByUpload, nil
+		published, err := publishedBundleFiles(pc, target, payload)
+		if err != nil {
+			return "", "", nil, err
+		}
+		return url, publishByUpload, published, nil
 	}
 
 	staging, ok := pc.Deps.Storage.(storage.Staging)
@@ -314,26 +334,62 @@ func publishArtifact(
 		err := staging.Move(ctx, *artifact.StagingPath, target.Repo, dstPath)
 		switch {
 		case err == nil:
-			return pc.Deps.Artifacts.ArtifactURL(target), publishByMove, nil
+			return pc.Deps.Artifacts.ArtifactURL(target), publishByMove, nil, nil
 		case storage.MoveUnsupported(err):
 			// Штатный случай, не авария: component API так не умеет, и совместимые с
 			// Artifactory только по PUT — тоже. Идём запасным путём молча:
 			// сообщать об этом на каждом пакете нечего, способ публикации и так
 			// попадает в details шага.
 		default:
-			return "", "", err
+			return "", "", nil, err
 		}
 	}
 
 	payload, err := pc.Payload(ctx, artifact)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	url, err := pc.Deps.Artifacts.Publish(ctx, target, payload)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
-	return url, publishByUpload, nil
+	return url, publishByUpload, nil, nil
+}
+
+func publishedBundleFiles(pc *Context, target artifactstore.Target, payload []byte) ([]repo.PublishedArtifact, error) {
+	files, err := registry.UnpackBundle(payload, target.Manager, 2*1024*1024*1024)
+	if err != nil {
+		return nil, err
+	}
+	plugin, err := pc.Plugin()
+	if err != nil {
+		return nil, err
+	}
+	ref := pc.Ref()
+	out := make([]repo.PublishedArtifact, 0, len(files))
+	for _, file := range files {
+		if target.Manager == "maven" && !registry.AllowedMavenAsset(file.Name) {
+			continue
+		}
+		// Terraform index.json is shared by every version of a provider. It is
+		// published and updated by publishTerraformBundle, but it must not be
+		// owned by one package version or removed together with that version.
+		if target.Manager == "terraform" && file.Name == "index.json" {
+			continue
+		}
+		part := target
+		part.Filename = file.Name
+		part.Path = plugin.ArtifactPath(ref, file.Name)
+		digest := sha256.Sum256(file.Data)
+		out = append(out, repo.PublishedArtifact{
+			Filename: file.Name, SourceURL: nil, SizeBytes: int64(len(file.Data)),
+			SHA256: hex.EncodeToString(digest[:]), URL: pc.Deps.Artifacts.ArtifactURL(part),
+		})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("bundle %s не содержит разрешённых артефактов", target.Manager)
+	}
+	return out, nil
 }
 
 // targetPath — путь файла в целевом репозитории. У generic-артефактори это

@@ -319,6 +319,23 @@ func TestNormalizeBlacklistRulesForWeb(t *testing.T) {
 	}
 }
 
+func TestWebLicensePolicyIsCompleteSnapshot(t *testing.T) {
+	entries, err := NormalizeLicenseEntries([]LicenseEntry{
+		{SPDXID: "MIT", Name: "MIT", Allowed: true},
+		{SPDXID: "AGPL-3.0-only", Name: "AGPL", Allowed: false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	licenses := NewLicensePolicy(entries, "database:license_policy")
+	if !licenses.IsAllowed("MIT") || !licenses.IsForbidden("AGPL-3.0-only") {
+		t.Fatalf("web-политика применена неверно: %+v", licenses)
+	}
+	if licenses.IsAllowed("Apache-2.0") {
+		t.Fatal("удалённая в web лицензия была повторно добавлена встроенным каталогом SPDX")
+	}
+}
+
 func policyWith(allowed, forbidden []string) *LicensePolicy {
 	p := &LicensePolicy{
 		Allowed:   map[string]LicenseEntry{},

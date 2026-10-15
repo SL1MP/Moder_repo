@@ -586,9 +586,9 @@ func (p *Maven) publishedAt(ctx context.Context, group, artifact, version string
 func (p *Maven) InstallCommand(ref Ref, baseURL, repo string) string {
 	group, artifact, _ := splitMavenName(ref.Name)
 	return fmt.Sprintf(
-		"добавьте репозиторий %s/repository/%s в pom.xml и зависимость "+
+		"добавьте репозиторий %s в pom.xml и зависимость "+
 			"<groupId>%s</groupId><artifactId>%s</artifactId><version>%s</version>",
-		strings.TrimRight(baseURL, "/"), repo, group, artifact, ref.RawVersion)
+		installRepositoryURL(baseURL, repo), group, artifact, ref.RawVersion)
 }
 
 func (p *Maven) ArtifactPath(ref Ref, filename string) string {

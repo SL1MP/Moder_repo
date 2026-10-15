@@ -625,6 +625,26 @@ func TestJFrogInstallCommands(t *testing.T) {
 			t.Errorf("%s: InstallCommand = %q, ожидалось вхождение %q", manager, got, tc.want)
 		}
 	}
+
+	readyEndpoints := []struct {
+		manager string
+		ref     registry.Ref
+		base    string
+	}{
+		{"maven", registry.Ref{Name: "com.google.guava:guava", DisplayName: "com.google.guava:guava", RawVersion: "33.4.0-jre"}, "https://repo.test/artifactory/maven-moderated"},
+		{"nuget", registry.Ref{Name: "pkg", DisplayName: "Pkg", RawVersion: "1.0.0"}, "https://repo.test/artifactory/api/nuget/v3/nuget-moderated"},
+		{"conan", registry.Ref{Name: "boost", DisplayName: "boost", RawVersion: "1.90.0"}, "https://repo.test/artifactory/api/conan/conan-moderated"},
+		{"php", registry.Ref{Name: "psr/log", DisplayName: "psr/log", RawVersion: "3.0.0"}, "https://repo.test/artifactory/api/composer/php-moderated"},
+		{"luarocks", registry.Ref{Name: "lua-cjson", DisplayName: "lua-cjson", RawVersion: "2.1.0.10-1"}, "https://repo.test/artifactory/luarocks-moderated"},
+		{"terraform", registry.Ref{Name: "hashicorp/aws", DisplayName: "hashicorp/aws", Version: "5.31.0", RawVersion: "5.31.0"}, "https://repo.test/artifactory/terraform-moderated"},
+	}
+	for _, tc := range readyEndpoints {
+		plugin := pluginFor(t, tc.manager, f)
+		got := plugin.InstallCommand(tc.ref, tc.base, "")
+		if !strings.Contains(got, tc.base) || strings.Contains(got, "/repository//") {
+			t.Errorf("%s: InstallCommand = %q, готовый endpoint %q потерян", tc.manager, got, tc.base)
+		}
+	}
 }
 
 func TestOSVEcosystems(t *testing.T) {

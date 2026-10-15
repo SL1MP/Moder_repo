@@ -397,12 +397,21 @@ func providerShortName(name string) string {
 func (p *Terraform) InstallCommand(ref Ref, baseURL, repo string) string {
 	version, _ := splitTerraformVersion(ref.Version)
 	return fmt.Sprintf(
-		"укажите зеркало %s/repository/%s/ в ~/.terraformrc (provider_installation → network_mirror) "+
+		"укажите зеркало %s/ в ~/.terraformrc (provider_installation → network_mirror) "+
 			"и требование source = \"%s\", version = \"%s\"",
-		strings.TrimRight(baseURL, "/"), repo, ref.DisplayName, version)
+		installRepositoryURL(baseURL, repo), ref.DisplayName, version)
 }
 
 func (p *Terraform) ArtifactPath(ref Ref, filename string) string {
 	version, _ := splitTerraformVersion(ref.Version)
-	return fmt.Sprintf("registry.terraform.io/%s/%s/%s", ref.Name, version, filename)
+	root := fmt.Sprintf("registry.terraform.io/%s", ref.Name)
+	// index.json is shared by every version and <version>.json is the version
+	// descriptor. Only platform archives live in the version directory.
+	// Keeping the same layout here and in artifactstore.publishTerraformBundle
+	// is important: package details and administrative deletion must address
+	// the files that Terraform CLI actually reads.
+	if filename == "index.json" || filename == version+".json" {
+		return root + "/" + filename
+	}
+	return fmt.Sprintf("%s/%s/%s", root, version, filename)
 }

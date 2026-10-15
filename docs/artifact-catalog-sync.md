@@ -32,7 +32,7 @@ ARTIFACT_TOKEN=<access-token>
 ARTIFACT_REPO_PYPI=pypi-moderated
 ARTIFACT_REPO_NPM=npm-moderated
 ARTIFACT_REPO_GO=go-moderated
-ARTIFACT_CATALOG_SYNC_MANAGERS=pypi,npm,go
+ARTIFACT_CATALOG_SYNC_MANAGERS=pypi,npm,go,nuget,conan,docker,luarocks,maven,php,terraform
 MAINTENANCE_ENABLED=true
 ```
 
@@ -63,7 +63,9 @@ MAINTENANCE_ENABLED=true
 ## Запуск и наблюдение
 
 - кнопкой «синхронизировать сейчас» на странице «Настройка»;
-- через API — `POST /api/v1/admin/artifact-catalog-sync` с ролью `admin`.
+- через API — `POST /api/v1/admin/artifact-catalog-sync` с ролью `admin`;
+  тело `{ "managers": ["pypi", "npm", "go", "nuget", "conan", "docker", "luarocks", "maven", "php", "terraform"] }`
+  позволяет выбрать менеджеры конкретного ручного запуска;
 - через CLI — `moderation maintenance --catalog-sync`.
 
 Перезапуск `worker-go` не создаёт новый запуск. Если вручную поставленная
@@ -79,15 +81,17 @@ HTTP-запрос только создаёт запись запуска и с�
 ## Поддерживаемые раскладки
 
 Импорт включается только для менеджеров, чью файловую раскладку сервис умеет
-однозначно разобрать: PyPI, npm, Go modules, Maven, NuGet, Conan, LuaRocks,
-Composer и Terraform. Для Maven применяются те же allow/deny-маски файлов,
-что и при публикации: source/javadoc и checksum/signature sidecar-файлы в
-каталог не добавляются.
+однозначно разобрать: PyPI, npm, Go modules, Maven, NuGet, Conan, Docker,
+LuaRocks, Composer и Terraform. Для Maven применяются те же allow/deny-маски
+файлов, что и при публикации: source/javadoc и checksum/signature
+sidecar-файлы в каталог не добавляются.
 
-Docker намеренно не включён в файловый обход. Для него корректный источник —
-Docker Registry API v2: тег должен быть связан с digest OCI index и всеми
-platform manifests. Добавлять Docker как набор файлов из storage API нельзя,
-поскольку разработчик не сможет выполнить нормальный `docker pull`.
+Для Docker импортируются только теговые `manifest.json` и
+`list.manifest.json`. Технические каталоги `sha256:*`, config и layers
+пропускаются; версия сохраняется как `tag@sha256:<digest>`, чтобы ссылка и
+последующее административное удаление относились к неизменяемому manifest.
+Режимы `git` и `files` не участвуют в синхронизации: по их физическому пути
+нельзя восстановить исходный URL и полную контрольную сумму без домыслов.
 
 ## Массовый первичный импорт
 

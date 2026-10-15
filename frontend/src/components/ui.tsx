@@ -28,6 +28,7 @@ export const STATUS_LABELS: Record<string, string> = {
   // «Отклонён»: то решение роли («нельзя»), а это отказ автора.
   cancelled: 'Закрыто автором',
   revoked: 'Отозван',
+  deleted: 'Удалён',
   blacklisted: 'Blacklist',
   failed: 'Ошибка',
   pass: 'пройден',

@@ -32,6 +32,7 @@ var VersionStatuses = []string{
 	"license_claimed",   // разработчик заявил лицензию, ждёт юриста
 	"awaiting_security", // ждёт решения DevSecOps (шаг 5)
 	"approved",          // опубликована в артефактори
+	"deleted",           // удалена администратором из внутреннего артефактори
 	"rejected",          // отклонена
 	"revoked",           // отозвана (blacklist или новая CVE)
 	"blacklisted",       // запрещена правилами blacklist
@@ -144,7 +145,7 @@ var PendingVersionStatuses = []string{
 
 // BlockedVersionStatuses — пакет проверку не прошёл: ставить нельзя, нужна
 // замена или решение роли.
-var BlockedVersionStatuses = []string{"rejected", "blacklisted", "revoked", "failed"}
+var BlockedVersionStatuses = []string{"rejected", "blacklisted", "revoked", "deleted", "failed"}
 
 // CheckStates — состояния ответа POST /packages/check. Намеренно не совпадают
 // со статусами версии: разработчику важен не внутренний статус, а можно ли уже
@@ -153,6 +154,7 @@ var CheckStates = []string{"approved", "in_progress", "blocked", "not_found", "i
 
 var StatusTitles = map[string]string{
 	"new":                "Новый",
+	"deleted":            "Удалён",
 	"queued":             "В очереди",
 	"checking":           "Проверяется",
 	"running":            "Проверяется",

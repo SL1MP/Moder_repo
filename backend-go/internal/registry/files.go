@@ -127,8 +127,8 @@ func fileNameFromURL(raw string) string {
 }
 
 func (p *Files) InstallCommand(ref Ref, baseURL, repo string) string {
-	return fmt.Sprintf("curl -fLO %s/repository/%s/%s",
-		strings.TrimRight(baseURL, "/"), repo, p.ArtifactPath(ref, fileNameFromURL(ref.Name)))
+	return fmt.Sprintf("curl -fLO %s/%s",
+		installRepositoryURL(baseURL, repo), p.ArtifactPath(ref, fileNameFromURL(ref.Name)))
 }
 
 func (p *Files) ArtifactPath(ref Ref, filename string) string {

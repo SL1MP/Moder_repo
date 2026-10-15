@@ -421,7 +421,7 @@ func shortRevision(revision string) string {
 }
 
 func (p *Conan) InstallCommand(ref Ref, baseURL, repo string) string {
-	remote := fmt.Sprintf("%s/repository/%s", strings.TrimRight(baseURL, "/"), repo)
+	remote := installRepositoryURL(baseURL, repo)
 	return fmt.Sprintf("conan remote add internal %s && conan install --requires=%s/%s -r internal",
 		remote, ref.DisplayName, ref.RawVersion)
 }

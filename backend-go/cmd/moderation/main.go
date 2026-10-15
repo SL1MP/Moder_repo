@@ -318,6 +318,12 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 			policies.ReplaceBlacklist(rules, "database:blacklist_policy")
 			logger.Info("web-версия blacklist загружена", "правил", len(rules))
 		}
+		if entries, configured, err := r.LicenseEntries(context.Background()); err != nil {
+			logger.Warn("web-версия политики лицензий не загружена, используется файл", "error", err)
+		} else if configured {
+			policies.ReplaceLicenses(entries, "database:license_policy")
+			logger.Info("web-версия политики лицензий загружена", "записей", len(entries))
+		}
 	}
 	licenses, blacklist := policies.Licenses(), policies.Blacklist()
 	if licenses.Failed() {
@@ -347,24 +353,34 @@ func buildOptions(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (
 	// честного «выдача отчётов отключена» в логе пользователь получал бы
 	// ошибку на каждой попытке открыть отчёт.
 	st, storesErr := newStores(cfg, newArtifactHTTPClient())
-	if storesErr == nil {
-		probe, cancel := context.WithTimeout(context.Background(), storeProbeTimeout)
-		storesErr = st.Reports.EnsureBucket(probe)
-		cancel()
-	}
 	if storesErr != nil {
 		logger.Error("хранилище отчётов недоступно, выдача отчётов отключена",
 			"артефактори", cfg.ArtifactBaseURL, "репозиторий", cfg.ArtifactRepoReports,
 			"error", storesErr)
 		st = nil
 	} else {
-		options.Reports = &api.ReportsHandler{Repo: repo.New(pool), Storage: st.Reports}
-		options.SBOMs = &api.SBOMsHandler{Repo: repo.New(pool), Storage: st.Reports}
-		logger.Info("хранилище отчётов подключено",
-			"артефактори", cfg.ArtifactBaseURL, "репозиторий", cfg.ArtifactRepoReports)
+		probe, cancel := context.WithTimeout(context.Background(), storeProbeTimeout)
+		reportsErr := st.Reports.EnsureBucket(probe)
+		cancel()
+		if reportsErr != nil {
+			// Ошибка только репозитория отчётов не должна отключать клиент
+			// целевых репозиториев: он всё ещё нужен административному удалению
+			// пакетов и ручной синхронизации каталога.
+			logger.Error("хранилище отчётов недоступно, выдача отчётов отключена",
+				"артефактори", cfg.ArtifactBaseURL, "репозиторий", cfg.ArtifactRepoReports,
+				"error", reportsErr)
+		} else {
+			options.Reports = &api.ReportsHandler{Repo: repo.New(pool), Storage: st.Reports}
+			options.SBOMs = &api.SBOMsHandler{Repo: repo.New(pool), Storage: st.Reports}
+			logger.Info("хранилище отчётов подключено",
+				"артефактори", cfg.ArtifactBaseURL, "репозиторий", cfg.ArtifactRepoReports)
+		}
 	}
 
 	options.Packages = &api.PackagesHandler{Repo: r, Registry: reg, Cfg: cfg}
+	if st != nil {
+		options.Packages.Artifacts = st.Artifacts
+	}
 	// Очередь конвейера одна на весь сервис: и создание заявок, и решения
 	// ролей кладут работу в неё же.
 	pipelineQueue := queue.New(pool, cfg.PipelineStuckAfter*3)

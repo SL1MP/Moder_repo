@@ -566,7 +566,13 @@ func Load(getenv func(string) string) (*Config, error) {
 }
 
 var artifactCatalogSyncManagers = []string{
-	"pypi", "npm", "go", "nuget", "conan", "luarocks", "maven", "php", "terraform",
+	"pypi", "npm", "go", "nuget", "conan", "docker", "luarocks", "maven", "php", "terraform",
+}
+
+// ArtifactCatalogManagers — менеджеры, чью файловую раскладку можно
+// безопасно импортировать из storage API внутреннего артефактори.
+func ArtifactCatalogManagers() []string {
+	return append([]string(nil), artifactCatalogSyncManagers...)
 }
 
 func csvValues(raw string) []string {
@@ -708,9 +714,9 @@ func (c *Config) ArtifactInstallLocation(manager string) (baseURL, repo string) 
 	}
 	repo = c.ArtifactRepo(manager)
 
-	// JFrog принимает загрузку файлов по /artifactory/{repo}/..., но штатные
+	// Generic Artifactory принимает загрузку файлов по /artifactory/{repo}/..., но штатные
 	// клиенты пакетных менеджеров читают репозитории через format-specific API.
-	// Протокол component repository использует /repository/{repo}. Передаём готовый JFrog
+	// Протокол component repository использует /repository/{repo}. Передаём готовый
 	// endpoint и пустое имя repo: плагины воспринимают такую пару как уже
 	// собранный адрес и не добавляют служебный префикс.
 	if strings.EqualFold(strings.TrimSpace(c.ArtifactStore), "generic") {
@@ -721,6 +727,14 @@ func (c *Config) ArtifactInstallLocation(manager string) (baseURL, repo string) 
 			return fmt.Sprintf("%s/api/npm/%s", strings.TrimRight(baseURL, "/"), repo), ""
 		case "go":
 			return fmt.Sprintf("%s/api/go/%s", strings.TrimRight(baseURL, "/"), repo), ""
+		case "nuget":
+			return fmt.Sprintf("%s/api/nuget/v3/%s", strings.TrimRight(baseURL, "/"), repo), ""
+		case "conan":
+			return fmt.Sprintf("%s/api/conan/%s", strings.TrimRight(baseURL, "/"), repo), ""
+		case "php":
+			return fmt.Sprintf("%s/api/composer/%s", strings.TrimRight(baseURL, "/"), repo), ""
+		default:
+			return fmt.Sprintf("%s/%s", strings.TrimRight(baseURL, "/"), repo), ""
 		}
 	}
 	return baseURL, repo

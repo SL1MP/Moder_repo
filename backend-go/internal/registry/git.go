@@ -287,8 +287,8 @@ func repoShortName(name string) string {
 }
 
 func (p *Git) InstallCommand(ref Ref, baseURL, repo string) string {
-	return fmt.Sprintf("curl -fLO %s/repository/%s/%s",
-		strings.TrimRight(baseURL, "/"), repo,
+	return fmt.Sprintf("curl -fLO %s/%s",
+		installRepositoryURL(baseURL, repo),
 		p.ArtifactPath(ref, fmt.Sprintf("%s-%s.tar.gz",
 			safeFilename(repoShortName(ref.Name)), safeFilename(ref.RawVersion))))
 }

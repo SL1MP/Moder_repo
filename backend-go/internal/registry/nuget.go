@@ -150,7 +150,10 @@ func (p *NuGet) resolveCatalogEntry(ctx context.Context, raw json.RawMessage) (n
 }
 
 func (p *NuGet) InstallCommand(ref Ref, baseURL, repo string) string {
-	source := fmt.Sprintf("%s/repository/%s/index.json", strings.TrimRight(baseURL, "/"), repo)
+	source := installRepositoryURL(baseURL, repo)
+	if repo != "" {
+		source += "/index.json"
+	}
 	return fmt.Sprintf("dotnet nuget add source %s -n internal && dotnet add package %s -v %s -s %s",
 		source, ref.DisplayName, ref.RawVersion, source)
 }

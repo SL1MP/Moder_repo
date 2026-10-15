@@ -75,9 +75,16 @@ func (g *Generic) blobURL(t Target, digest string) string {
 // ociReference — ссылка для docker pull. /artifactory — REST-корень JFrog,
 // но repository-path access у Docker идёт через <host>/<repo>/<image>.
 func (g *Generic) ociReference(t Target) string {
-	base := strings.TrimSuffix(strings.TrimRight(g.cfg.BaseURL, "/"), "/artifactory")
+	// Явный публичный Docker prefix уже содержит имя Docker-репозитория или
+	// отдельный connector port. Если он не задан, выводим repository-path URL
+	// из внутреннего REST-корня JFrog.
+	base := strings.TrimRight(g.cfg.DockerPublicURL, "/")
+	if base == "" {
+		base = strings.TrimSuffix(strings.TrimRight(g.cfg.BaseURL, "/"), "/artifactory") +
+			"/" + strings.Trim(t.Repo, "/")
+	}
 	tag, digest := dockerTagAndDigest(t.Version)
-	ref := fmt.Sprintf("%s/%s/%s:%s", base, t.Repo, t.Name, tag)
+	ref := fmt.Sprintf("%s/%s:%s", base, t.Name, tag)
 	if digest != "" {
 		ref += "@" + digest
 	}

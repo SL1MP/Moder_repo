@@ -1,9 +1,14 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"moderation/internal/config"
 	"moderation/internal/domain"
 )
 
@@ -19,10 +24,12 @@ func (h *AdminHandler) ArtifactCatalogSyncStatus(w http.ResponseWriter, r *http.
 		writeError(w, r, errInternal("Не удалось прочитать состояние синхронизации").Because(err))
 		return
 	}
+	managers := h.catalogManagers()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":             h.Cfg != nil && h.Cfg.MaintenanceEnabled && len(h.Cfg.ArtifactCatalogSyncManagers) > 0,
+		"enabled":             h.Cfg != nil && h.Cfg.MaintenanceEnabled && len(managers) > 0,
 		"maintenance_enabled": h.Cfg != nil && h.Cfg.MaintenanceEnabled,
-		"managers":            h.catalogManagers(),
+		"managers":            managers,
+		"available_managers":  config.ArtifactCatalogManagers(),
 		"last_run":            run,
 	})
 }
@@ -37,6 +44,29 @@ func (h *AdminHandler) StartArtifactCatalogSync(w http.ResponseWriter, r *http.R
 		return
 	}
 	managers := h.catalogManagers()
+	var payload struct {
+		Managers []string `json:"managers"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 32<<10)).Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, r, errValidation("Ожидается JSON {managers: [...]} ").Because(err))
+		return
+	}
+	if len(payload.Managers) > 0 {
+		allowed, seen := config.ArtifactCatalogManagers(), map[string]bool{}
+		managers = managers[:0]
+		for _, manager := range payload.Managers {
+			manager = strings.ToLower(strings.TrimSpace(manager))
+			if manager == "" || seen[manager] {
+				continue
+			}
+			if !domain.Contains(allowed, manager) {
+				writeError(w, r, errValidation("Менеджер "+manager+" не поддерживает синхронизацию каталога"))
+				return
+			}
+			seen[manager] = true
+			managers = append(managers, manager)
+		}
+	}
 	if h.Cfg == nil || !h.Cfg.MaintenanceEnabled {
 		writeError(w, r, errValidation("Включите MAINTENANCE_ENABLED: синхронизацию выполняет worker"))
 		return

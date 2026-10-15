@@ -50,6 +50,60 @@ type LicensePolicy struct {
 	Err string
 }
 
+// NewLicensePolicy собирает рабочий справочник из полного web-снимка.
+// В отличие от первоначальной загрузки licenses.yml здесь не дополняем
+// список встроенным каталогом SPDX: иначе удаление разрешённой лицензии в
+// интерфейсе не имело бы эффекта — она тут же появилась бы снова.
+func NewLicensePolicy(entries []LicenseEntry, source string) *LicensePolicy {
+	p := &LicensePolicy{
+		Allowed: map[string]LicenseEntry{}, Forbidden: map[string]LicenseEntry{},
+		Path: source, LoadedAt: time.Now().UTC(),
+	}
+	for _, entry := range entries {
+		key := normalizeSPDX(entry.SPDXID)
+		if key == "" {
+			continue
+		}
+		if entry.Allowed {
+			p.Allowed[key] = entry
+		} else {
+			p.Forbidden[key] = entry
+			delete(p.Allowed, key)
+		}
+	}
+	return p
+}
+
+// NormalizeLicenseEntries проверяет полную web-политику. Одинаковый SPDX ID
+// не может одновременно находиться в двух списках: неоднозначная политика
+// хуже явной ошибки сохранения.
+func NormalizeLicenseEntries(input []LicenseEntry) ([]LicenseEntry, error) {
+	if len(input) > 5000 {
+		return nil, fmt.Errorf("слишком много лицензий: максимум 5000")
+	}
+	seen := map[string]bool{}
+	out := make([]LicenseEntry, 0, len(input))
+	for i, entry := range input {
+		entry.SPDXID = strings.TrimSpace(entry.SPDXID)
+		entry.Name = strings.TrimSpace(entry.Name)
+		entry.URL = strings.TrimSpace(entry.URL)
+		entry.Notes = strings.TrimSpace(entry.Notes)
+		key := normalizeSPDX(entry.SPDXID)
+		if key == "" {
+			return nil, fmt.Errorf("лицензия %d: SPDX ID обязателен", i+1)
+		}
+		if seen[key] {
+			return nil, fmt.Errorf("лицензия %q указана несколько раз", entry.SPDXID)
+		}
+		seen[key] = true
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].SPDXID) < strings.ToLower(out[j].SPDXID)
+	})
+	return out, nil
+}
+
 // Failed — справочник не загрузился.
 func (p *LicensePolicy) Failed() bool { return p != nil && p.Err != "" }
 

@@ -242,6 +242,28 @@ func TestDownloaderManagers(t *testing.T) {
 	}
 }
 
+func TestTerraformArtifactPathsMatchNetworkMirrorLayout(t *testing.T) {
+	plugin, err := newAll(nil).Get("terraform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := registry.MakeRef(plugin, "hashicorp/aws", "5.31.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"index.json": "registry.terraform.io/hashicorp/aws/index.json",
+		"5.31.0.json": "registry.terraform.io/hashicorp/aws/5.31.0.json",
+		"terraform-provider-aws_5.31.0_linux_amd64.zip":
+			"registry.terraform.io/hashicorp/aws/5.31.0/terraform-provider-aws_5.31.0_linux_amd64.zip",
+	}
+	for filename, expected := range want {
+		if got := plugin.ArtifactPath(ref, filename); got != expected {
+			t.Errorf("ArtifactPath(%q) = %q, ожидалось %q", filename, got, expected)
+		}
+	}
+}
+
 // TestOSVEcosystemIsEmptyWhereBaseHasNone — экосистема OSV либо настоящая,
 // либо пустая.
 //

@@ -6,6 +6,7 @@ import {
   type AdminUser,
   type ArtifactCatalogSyncStatus,
   type BlacklistRule,
+  type LicensePolicyEntry,
   type Manager,
   type Me,
   type OIDCSettings,
@@ -19,8 +20,9 @@ export default function SettingsPage({ me }: { me: Me }) {
   const catalogSync = useAsync(() => api.artifactCatalogSyncStatus(), [])
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'general' | 'users' | 'oidc'>('general')
+  const [activeTab, setActiveTab] = useState<'overview' | 'artifact' | 'integrations' | 'policies' | 'users'>('overview')
   const isAdmin = me.roles.includes('admin')
+  const canEditLicenses = isAdmin || me.roles.includes('legal')
   const isSec = me.roles.includes('devsecops') || isAdmin
 
   useEffect(() => {
@@ -30,12 +32,30 @@ export default function SettingsPage({ me }: { me: Me }) {
     return () => window.clearInterval(timer)
   }, [catalogSync.data?.last_run?.status])
 
-  const sections = new Map<string, typeof settings.data>()
+  const sections = new Map<string, SettingRow[]>()
   for (const row of settings.data ?? []) {
     const list = sections.get(row.section) ?? []
     list.push(row)
-    sections.set(row.section, list as never)
+    sections.set(row.section, list)
   }
+
+  const settingsSections = (names: string[]) => names.map((section) => {
+    const rows = sections.get(section)
+    if (!rows?.length) return null
+    return <div className="card" key={section}>
+      <h2>{section}</h2>
+      <div className="table-scroll"><table>
+        <thead><tr><th>Переменная</th><th>Значение</th><th>Описание</th></tr></thead>
+        <tbody>{rows.map((row) => <tr key={row.env}>
+          <td className="mono nowrap">{row.env}</td>
+          <SettingValue row={row} isAdmin={isAdmin} onSaved={(text) => {
+            setMessage(text); settings.reload()
+          }} onError={setError} />
+          <td className="small dim">{row.description}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </div>
+  })
 
   return (
     <>
@@ -43,10 +63,9 @@ export default function SettingsPage({ me }: { me: Me }) {
         <div>
           <h1>Настройка</h1>
           <p className="page-hint">
-            Общие адреса и пороги можно сохранить здесь. <code>api-go</code> переключится на
-            новую конфигурацию без остановки, а <code>worker-go</code> автоматически
-            перезапустится. Ручной перезапуск и пересборка не нужны. OIDC и его секрет на
-            отдельной вкладке применяются сразу.
+            Общие адреса и пороги можно сохранить здесь. Процессы автоматически
+            перечитают сохранённую конфигурацию — ручной перезапуск и пересборка не нужны.
+            OIDC и его секрет на отдельной вкладке применяются сразу.
           </p>
         </div>
         {isAdmin ? (
@@ -72,75 +91,49 @@ export default function SettingsPage({ me }: { me: Me }) {
       </div>
 
       <div className="settings-tabs">
-        <button className={activeTab === 'general' ? 'active' : ''} onClick={() => setActiveTab('general')}>
-          Конфигурация и состояние
-        </button>
+        <button className={activeTab === 'overview' ? 'active' : ''} onClick={() => setActiveTab('overview')}>Сервис</button>
+        <button className={activeTab === 'artifact' ? 'active' : ''} onClick={() => setActiveTab('artifact')}>Артефактори</button>
+        <button className={activeTab === 'integrations' ? 'active' : ''} onClick={() => setActiveTab('integrations')}>Интеграции</button>
+        <button className={activeTab === 'policies' ? 'active' : ''} onClick={() => setActiveTab('policies')}>Политики</button>
         {isAdmin ? (
           <button className={activeTab === 'users' ? 'active' : ''} onClick={() => setActiveTab('users')}>
             Пользователи и роли
           </button>
         ) : null}
-        {isAdmin ? (
-          <button className={activeTab === 'oidc' ? 'active' : ''} onClick={() => setActiveTab('oidc')}>
-            OIDC / Keycloak
-          </button>
-        ) : null}
       </div>
-
-      {activeTab === 'users' && isAdmin ? <UsersPanel /> : activeTab === 'oidc' && isAdmin ? <OIDCPanel /> : <>
 
       {message ? <Alert kind="ok">{message}</Alert> : null}
       {error ? <Alert kind="error">{error}</Alert> : null}
       {settings.error ? <Alert kind="error">{settings.error}</Alert> : null}
       {settings.loading ? <Loader /> : null}
 
-      {system.data ? <QueueCard info={system.data} isAdmin={isAdmin} onDone={() => system.reload()} /> : null}
+      {activeTab === 'users' && isAdmin ? <UsersPanel /> : null}
 
-      {catalogSync.data ? (
+      {activeTab === 'overview' && system.data ? <QueueCard info={system.data} isAdmin={isAdmin} onDone={() => system.reload()} /> : null}
+      {activeTab === 'overview' ? settingsSections(['Общие', 'Пороги', 'Лимиты', 'Надёжность']) : null}
+
+      {activeTab === 'artifact' && catalogSync.data ? (
         <ArtifactCatalogSyncCard
           info={catalogSync.data}
           isAdmin={isAdmin}
           onDone={() => catalogSync.reload()}
         />
       ) : null}
+      {activeTab === 'artifact' ? settingsSections(['Артефактори']) : null}
 
-      {policies.data?.vuln_index ? <VulnIndexCard info={policies.data.vuln_index} isSec={isSec} /> : null}
+      {activeTab === 'integrations' && isAdmin ? <OIDCPanel /> : null}
+      {activeTab === 'integrations' ? settingsSections(['Песочница', 'Dragon', 'GitLab', 'Доступ']) : null}
 
-      {[...sections.entries()].map(([section, rows]) => (
-        <div className="card" key={section}>
-          <h2>{section}</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Переменная</th>
-                <th>Значение</th>
-                <th>Описание</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(rows ?? []).map((row) => (
-                <tr key={row.env}>
-                  <td className="mono nowrap">{row.env}</td>
-                  <SettingValue row={row} isAdmin={isAdmin} onSaved={(text) => {
-                    setMessage(text)
-                    settings.reload()
-                  }} onError={setError} />
-                  <td className="small dim">{row.description}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
+      {activeTab === 'policies' && policies.data?.vuln_index ? <VulnIndexCard info={policies.data.vuln_index} isSec={isSec} /> : null}
+      {activeTab === 'policies' ? settingsSections(['Уязвимости', 'Политики']) : null}
 
-      {policies.data?.blacklist ? (
+      {activeTab === 'policies' && policies.data?.blacklist ? (
         <div className="card">
           <div className="row between">
             <div>
               <h2>Blacklist</h2>
               <p className="small dim">
-                Источник <code>{policies.data.blacklist.path}</code>, применён{' '}
-                {formatTime(policies.data.blacklist.loaded_at)}. Совпадение останавливает конвейер
+                Применён {formatTime(policies.data.blacklist.loaded_at)}. Совпадение останавливает конвейер
                 на шаге 1 — пакет не скачивается.
               </p>
             </div>
@@ -159,40 +152,77 @@ export default function SettingsPage({ me }: { me: Me }) {
         </div>
       ) : null}
 
-      {policies.data?.licenses ? (
+      {activeTab === 'policies' && policies.data?.licenses ? (
         <div className="card">
-          <h2>Справочник лицензий (SPDX)</h2>
-          <p className="small dim">
-            Файл <code>{policies.data.licenses.path}</code>, загружен{' '}
-            {formatTime(policies.data.licenses.loaded_at)}.
-          </p>
-          <div className="grid cols-2">
-            <div>
-              <h3>Разрешены</h3>
-              <div className="row">
-                {(policies.data.licenses.allowed ?? []).map((l: Record<string, string>) => (
-                  <span className="badge mono pass" key={l.spdx_id} title={l.notes ?? ''}>
-                    {l.spdx_id}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div>
-              <h3>Запрещены</h3>
-              <div className="row">
-                {(policies.data.licenses.forbidden ?? []).map((l: Record<string, string>) => (
-                  <span className="badge mono fail" key={l.spdx_id} title={l.notes ?? ''}>
-                    {l.spdx_id}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
+          <LicensePolicyEditor
+            allowed={policies.data.licenses.allowed ?? []}
+            forbidden={policies.data.licenses.forbidden ?? []}
+            loadedAt={policies.data.licenses.loaded_at}
+            editable={canEditLicenses}
+            onSaved={(text) => { setMessage(text); policies.reload() }}
+          />
         </div>
       ) : null}
-      </>}
     </>
   )
+}
+
+function LicensePolicyEditor({ allowed, forbidden, loadedAt, editable, onSaved }: {
+  allowed: LicensePolicyEntry[]
+  forbidden: LicensePolicyEntry[]
+  loadedAt: string
+  editable: boolean
+  onSaved: (message: string) => void
+}) {
+  const [entries, setEntries] = useState<LicensePolicyEntry[]>([...allowed, ...forbidden])
+  const [filter, setFilter] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => setEntries([...allowed, ...forbidden]), [allowed, forbidden])
+  const needle = filter.trim().toLowerCase()
+  const visible = entries.map((entry, index) => ({ entry, index })).filter(({ entry }) =>
+    !needle || [entry.spdx_id, entry.name, entry.notes].some((value) =>
+      String(value ?? '').toLowerCase().includes(needle)),
+  )
+  const change = (index: number, patch: Partial<LicensePolicyEntry>) =>
+    setEntries((current) => current.map((entry, i) => i === index ? { ...entry, ...patch } : entry))
+  return <>
+    <div className="row between">
+      <div>
+        <h2>Политика лицензий (SPDX)</h2>
+        <p className="small dim">Применена {formatTime(loadedAt)}</p>
+      </div>
+      <span className="badge info">{allowed.length} разрешено · {forbidden.length} запрещено</span>
+    </div>
+    {error ? <Alert kind="error">{error}</Alert> : null}
+    <div className="row" style={{ marginBottom: 10 }}>
+      <input className="wide" value={filter} onChange={(event) => setFilter(event.target.value)}
+        placeholder="Фильтр по SPDX ID, названию или примечанию" />
+      {editable ? <button className="small" onClick={() => setEntries((current) => [...current, {
+        spdx_id: '', name: '', url: '', notes: '', allowed: true,
+      }])}>+ лицензия</button> : null}
+    </div>
+    <div className="table-scroll policy-table-wrap">
+      <table>
+        <thead><tr><th>SPDX ID</th><th>Название</th><th>Решение</th><th>Примечание</th>{editable ? <th /> : null}</tr></thead>
+        <tbody>{visible.map(({ entry, index }) => <tr key={`${entry.spdx_id}-${index}`}>
+          <td>{editable ? <input className="mono" value={entry.spdx_id} onChange={(e) => change(index, { spdx_id: e.target.value })} /> : <span className="mono">{entry.spdx_id}</span>}</td>
+          <td>{editable ? <input value={entry.name ?? ''} onChange={(e) => change(index, { name: e.target.value })} /> : (entry.name || '—')}</td>
+          <td>{editable ? <select value={entry.allowed ? 'allow' : 'deny'} onChange={(e) => change(index, { allowed: e.target.value === 'allow' })}>
+            <option value="allow">разрешена</option><option value="deny">запрещена</option>
+          </select> : <span className={`badge ${entry.allowed ? 'pass' : 'fail'}`}>{entry.allowed ? 'разрешена' : 'запрещена'}</span>}</td>
+          <td>{editable ? <input value={entry.notes ?? ''} onChange={(e) => change(index, { notes: e.target.value })} /> : (entry.notes || '—')}</td>
+          {editable ? <td><button className="small danger" onClick={() => setEntries((current) => current.filter((_, i) => i !== index))}>удалить</button></td> : null}
+        </tr>)}</tbody>
+      </table>
+    </div>
+    {editable ? <button className="primary" disabled={busy || entries.some((entry) => !entry.spdx_id.trim())}
+      onClick={() => {
+        setBusy(true); setError(null)
+        api.saveLicensePolicy(entries).then((result) => onSaved(result.message))
+          .catch((exc: Error) => setError(exc.message)).finally(() => setBusy(false))
+      }}>{busy ? 'Сохранение…' : 'Сохранить политику лицензий'}</button> : null}
+  </>
 }
 
 function ArtifactCatalogSyncCard({
@@ -206,6 +236,8 @@ function ArtifactCatalogSyncCard({
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [selectedManagers, setSelectedManagers] = useState<string[]>(info.managers)
+  useEffect(() => setSelectedManagers(info.managers), [info.managers.join(',')])
   const run = info.last_run
   const statusTitle: Record<string, string> = {
     queued: 'ожидает worker', running: 'выполняется', succeeded: 'завершена', failed: 'ошибка',
@@ -219,14 +251,23 @@ function ArtifactCatalogSyncCard({
             Доверенные moderated-репозитории: {info.managers.length ? info.managers.join(', ') : 'не выбраны'}.
             Найденные пакеты сразу появляются в web-базе без повторной модерации.
           </p>
+          {isAdmin ? <div className="row" style={{ marginTop: 8 }}>
+            {(info.available_managers ?? info.managers).map((manager) => <label className="row" style={{ margin: 0 }} key={manager}>
+              <input type="checkbox" checked={selectedManagers.includes(manager)} onChange={(event) =>
+                setSelectedManagers((current) => event.target.checked
+                  ? [...current, manager]
+                  : current.filter((value) => value !== manager))} />
+              <span className="mono">{manager}</span>
+            </label>)}
+          </div> : null}
         </div>
         {isAdmin ? (
           <button
             className="small"
-            disabled={busy || !info.enabled || run?.status === 'running' || run?.status === 'queued'}
+            disabled={busy || !info.maintenance_enabled || selectedManagers.length === 0 || run?.status === 'running' || run?.status === 'queued'}
             onClick={() => {
               setBusy(true); setError(null)
-              api.startArtifactCatalogSync()
+              api.startArtifactCatalogSync(selectedManagers)
                 .then(() => onDone())
                 .catch((exc: Error) => setError(exc.message))
                 .finally(() => setBusy(false))
@@ -239,8 +280,8 @@ function ArtifactCatalogSyncCard({
       {error ? <Alert kind="error">{error}</Alert> : null}
       {!info.maintenance_enabled ? (
         <Alert kind="warn">Включите MAINTENANCE_ENABLED: фоновую синхронизацию выполняет worker.</Alert>
-      ) : !info.enabled ? (
-        <Alert kind="warn">Задайте ARTIFACT_CATALOG_SYNC_MANAGERS, например <code>pypi,npm,go</code>.</Alert>
+      ) : selectedManagers.length === 0 ? (
+        <Alert kind="warn">Выберите хотя бы один пакетный менеджер для синхронизации.</Alert>
       ) : run ? (
         <div className="grid cols-2">
           <dl>
@@ -288,6 +329,7 @@ function BlacklistEditor({ initialRules, isAdmin, onSaved }: {
   const [rules, setRules] = useState<BlacklistRule[]>(initialRules)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
 
   useEffect(() => setRules(initialRules), [initialRules])
 
@@ -297,12 +339,22 @@ function BlacklistEditor({ initialRules, isAdmin, onSaved }: {
   const add = () => setRules((current) => [...current, {
     manager: '', name: '', versions: '*', reason: '', added_by: '', added_at: '',
   }])
+  const needle = filter.trim().toLowerCase()
+  const visibleRules = rules.map((rule, index) => ({ rule, index })).filter(({ rule }) =>
+    !needle || [rule.manager, rule.name, rule.versions, rule.reason, rule.added_by]
+      .some((value) => String(value ?? '').toLowerCase().includes(needle)),
+  )
 
   return <>
     {error ? <Alert kind="error">{error}</Alert> : null}
     {rules.length === 0 ? (
       <Alert kind="info">Blacklist пуст: ни один пакет не запрещён правилами.</Alert>
     ) : null}
+    <div className="row" style={{ marginBottom: 10 }}>
+      <input className="wide" value={filter} onChange={(event) => setFilter(event.target.value)}
+        placeholder="Фильтр по менеджеру, пакету, версии, причине или автору" />
+      <span className="small muted">Показано {visibleRules.length} из {rules.length}</span>
+    </div>
     <div className="blacklist-table-wrap">
       <table className={isAdmin ? 'blacklist-editor' : ''}>
         <thead>
@@ -316,7 +368,7 @@ function BlacklistEditor({ initialRules, isAdmin, onSaved }: {
           </tr>
         </thead>
         <tbody>
-          {rules.map((rule, index) => (
+          {visibleRules.map(({ rule, index }) => (
             <tr key={index}>
               <td>{isAdmin ? (
                 <select className="wide" aria-label={`Менеджер правила ${index + 1}`}

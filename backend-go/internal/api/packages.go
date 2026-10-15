@@ -1,13 +1,15 @@
 package api
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
-
-	"time"
 
 	"moderation/internal/artifactstore"
 	"moderation/internal/config"
@@ -68,6 +70,129 @@ func MountPackages(r chi.Router, h *PackagesHandler, a *Auth) {
 			sub.Post("/api/v1/packages/{versionID}/revoke", h.Revoke)
 		})
 	}
+	if h.Artifacts != nil {
+		r.Group(func(sub chi.Router) {
+			sub.Use(a.Authenticate)
+			sub.Use(RequireRoles("admin"))
+			sub.Delete("/api/v1/packages/{versionID}", h.DeletePackage)
+		})
+	}
+}
+
+// DeletePackage удаляет опубликованную версию из внутреннего артефактори.
+// Это административная операция с обязательной причиной; отзыв DevSecOps
+// остаётся отдельным действием и отдельным статусом.
+func (h *PackagesHandler) DeletePackage(w http.ResponseWriter, r *http.Request) {
+	versionID, ok := pathInt64(w, r, "versionID")
+	if !ok {
+		return
+	}
+	var payload struct{ Reason string `json:"reason"` }
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&payload); err != nil {
+		writeError(w, r, errValidation("Ожидается JSON {reason: ...}").Because(err))
+		return
+	}
+	payload.Reason = strings.TrimSpace(payload.Reason)
+	if len([]rune(payload.Reason)) < 3 {
+		writeError(w, r, errValidation("Укажите причину удаления (не менее 3 символов)"))
+		return
+	}
+	row, err := h.Repo.GetVersionRow(r.Context(), versionID)
+	if err != nil {
+		writeError(w, r, errInternal("Версия пакета не прочитана").Because(err))
+		return
+	}
+	if row == nil {
+		writeError(w, r, errNotFound("Версия пакета не найдена"))
+		return
+	}
+	if row.Version.Status == "deleted" {
+		writeError(w, r, errConflict("Пакет уже удалён"))
+		return
+	}
+	if h.Cfg == nil || h.Registry == nil {
+		writeError(w, r, errInternal("Конфигурация внутреннего артефактори не подключена"))
+		return
+	}
+	plugin, err := h.Registry.Get(row.Manager)
+	if err != nil {
+		writeError(w, r, errValidation("Неизвестный пакетный менеджер").Because(err))
+		return
+	}
+	artifacts, err := h.Repo.ListArtifacts(r.Context(), versionID)
+	if err != nil {
+		writeError(w, r, errInternal("Артефакты пакета не прочитаны").Because(err))
+		return
+	}
+	ref := registry.Ref{Manager: row.Manager, Name: row.Name, DisplayName: row.DisplayName,
+		Version: row.Version.Version, RawVersion: row.Version.RawVersion}
+	removed := 0
+	for _, artifact := range artifacts {
+		if artifact.NexusURL == nil || strings.TrimSpace(*artifact.NexusURL) == "" || artifact.Status != "published" {
+			continue
+		}
+		target := artifactstore.Target{
+			Repo: h.Cfg.ArtifactRepo(row.Manager), Manager: row.Manager,
+			Name: registry.PublishedName(row.Manager, row.Name), DisplayName: row.DisplayName,
+			Version: row.Version.RawVersion, Filename: artifact.Filename,
+			Path: plugin.ArtifactPath(ref, artifact.Filename), SourceURL: deref(artifact.SourceURL),
+		}
+		if repoName, storedPath, exactPath := artifactLocationFromURL(*artifact.NexusURL); repoName != "" {
+			target.Repo = repoName
+			if h.Artifacts.Kind() == artifactstore.KindGeneric && exactPath && storedPath != "" {
+				target.Path = storedPath
+			}
+		}
+		deleted, deleteErr := h.Artifacts.Delete(r.Context(), target)
+		if deleteErr != nil {
+			writeError(w, r, errInternal("Внутренний артефактори не удалил пакет").Because(deleteErr))
+			return
+		}
+		if deleted {
+			removed++
+		}
+	}
+	if err := h.Repo.MarkPackageDeleted(r.Context(), versionID, payload.Reason, h.now()); err != nil {
+		writeError(w, r, errInternal("Статус удалённого пакета не сохранён").Because(err))
+		return
+	}
+	actor, _ := CurrentUser(r.Context())
+	entityID := strconv.FormatInt(versionID, 10)
+	entry := domain.AuditLog{Action: "package_deleted", EntityType: "package_version",
+		EntityID: &entityID, Source: "ui", IP: ClientIP(r), Comment: &payload.Reason,
+		OldValue: map[string]any{"status": row.Version.Status},
+		NewValue: map[string]any{"status": "deleted", "reason": payload.Reason, "removed_artifacts": removed},
+		CreatedAt: h.now()}
+	if actor != nil {
+		entry.ActorID, entry.ActorName = &actor.ID, actor.Username
+		entry.ActorRole = firstRole(actor.Roles)
+	}
+	if rid := RequestID(r.Context()); rid != "" {
+		entry.RequestID = &rid
+	}
+	if err := h.Repo.InsertAuditLog(r.Context(), entry); err != nil {
+		// Физическое удаление и статус уже зафиксированы. Возвращать 500 здесь
+		// опасно: администратор повторит действие, хотя пакет уже удалён.
+		defaultLogger.Printf("[%s] аудит удаления пакета %d не записан: %v",
+			RequestID(r.Context()), versionID, err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "deleted", "reason": payload.Reason, "removed_artifacts": removed,
+	})
+}
+
+func artifactLocationFromURL(raw string) (repository, artifactPath string, exactPath bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", "", false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for i, part := range parts {
+		if (part == "repository" || part == "artifactory") && i+1 < len(parts) {
+			return parts[i+1], strings.Join(parts[i+2:], "/"), part == "artifactory"
+		}
+	}
+	return "", "", false
 }
 
 // Managers — GET /api/v1/managers. Порядок совпадает с python-версией
@@ -123,9 +248,15 @@ func (h *PackagesHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	visibleStatuses := []string{"approved", "awaiting_legal", "awaiting_security", "quarantined"}
+	status := strings.TrimSpace(q.Get("status"))
+	if status != "" && !domain.Contains(visibleStatuses, status) {
+		writeError(w, r, errValidation("Недопустимый статус для базы пакетов"))
+		return
+	}
 	rows, total, err := h.Repo.SearchVersions(r.Context(), repo.VersionSearch{
 		Query: q.Get("q"), Manager: q.Get("manager"),
-		Version: q.Get("version"), Status: q.Get("status"),
+		Version: q.Get("version"), Status: status, Statuses: visibleStatuses,
 		Limit: limit, Offset: offset,
 	})
 	if err != nil {
@@ -228,7 +359,7 @@ func (h *PackagesHandler) versionSummary(r *http.Request, row *repo.VersionRow) 
 		"max_vuln_score":   v.MaxVulnScore,
 		"status_reason":    v.StatusReason,
 		"vulnerabilities":  vulnerabilityViews(vulns, true),
-		"artifacts":        h.artifactViews(artifacts),
+		"artifacts":        h.artifactViews(row, artifacts),
 	}
 	// Команда установки имеет смысл только у одобренного пакета: у остального
 	// она вела бы в репозиторий, где артефакта нет.
@@ -279,12 +410,37 @@ func vulnerabilityViews(vulns []domain.Vulnerability, full bool) []map[string]an
 	return out
 }
 
-func (h *PackagesHandler) artifactViews(artifacts []domain.Artifact) []map[string]any {
+func (h *PackagesHandler) artifactViews(row *repo.VersionRow, artifacts []domain.Artifact) []map[string]any {
 	out := make([]map[string]any, 0, len(artifacts))
+	plugin, _ := h.Registry.Get(row.Manager)
+	ref := registry.Ref{Manager: row.Manager, Name: row.Name, DisplayName: row.DisplayName,
+		Version: row.Version.Version, RawVersion: row.Version.RawVersion}
 	for _, a := range artifacts {
+		if strings.HasSuffix(a.Filename, "."+row.Manager+"-release.tgz") {
+			continue
+		}
+		if row.Manager == "maven" && !registry.AllowedMavenAsset(a.Filename) {
+			continue
+		}
 		var publicURL *string
-		if a.NexusURL != nil {
+		if a.NexusURL != nil && a.Status == "published" {
 			value := *a.NexusURL
+			// URL строится заново по текущей конфигурации. Поэтому смена
+			// внутреннего артефактори или его публичного адреса не оставляет в
+			// карточках исторический http://nexus:8081.
+			if h.Artifacts != nil && plugin != nil && h.Cfg != nil {
+				target := artifactstore.Target{
+					Repo: h.Cfg.ArtifactRepo(row.Manager), Manager: row.Manager,
+					Name: registry.PublishedName(row.Manager, row.Name), DisplayName: row.DisplayName,
+					Version: row.Version.RawVersion, Filename: a.Filename,
+					Path: plugin.ArtifactPath(ref, a.Filename), SourceURL: deref(a.SourceURL),
+				}
+				if _, storedPath, exactPath := artifactLocationFromURL(value);
+					h.Artifacts.Kind() == artifactstore.KindGeneric && exactPath && storedPath != "" {
+					target.Path = storedPath
+				}
+				value = h.Artifacts.ArtifactURL(target)
+			}
 			if h.Cfg != nil {
 				value = h.Cfg.PublicArtifactURL(value)
 			}

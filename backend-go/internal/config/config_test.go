@@ -141,6 +141,14 @@ func TestGenericInstallLocationsUseJFrogFormatAPIs(t *testing.T) {
 			"ARTIFACT_REPO_PYPI":       "pypi-moderated",
 			"ARTIFACT_REPO_NPM":        "npm-moderated",
 			"ARTIFACT_REPO_GO":         "go-moderated",
+			"ARTIFACT_REPO_NUGET":      "nuget-moderated",
+			"ARTIFACT_REPO_CONAN":      "conan-moderated",
+			"ARTIFACT_REPO_PHP":        "php-moderated",
+			"ARTIFACT_REPO_MAVEN":      "maven-moderated",
+			"ARTIFACT_REPO_LUAROCKS":   "luarocks-moderated",
+			"ARTIFACT_REPO_TERRAFORM":  "terraform-moderated",
+			"ARTIFACT_REPO_GIT":        "git-moderated",
+			"ARTIFACT_REPO_FILES":      "files-moderated",
 		}
 		return values[key]
 	})
@@ -149,9 +157,17 @@ func TestGenericInstallLocationsUseJFrogFormatAPIs(t *testing.T) {
 	}
 
 	cases := map[string]string{
-		"pypi": "https://repo.example/artifactory/api/pypi/pypi-moderated",
-		"npm":  "https://repo.example/artifactory/api/npm/npm-moderated",
-		"go":   "https://repo.example/artifactory/api/go/go-moderated",
+		"pypi":      "https://repo.example/artifactory/api/pypi/pypi-moderated",
+		"npm":       "https://repo.example/artifactory/api/npm/npm-moderated",
+		"go":        "https://repo.example/artifactory/api/go/go-moderated",
+		"nuget":     "https://repo.example/artifactory/api/nuget/v3/nuget-moderated",
+		"conan":     "https://repo.example/artifactory/api/conan/conan-moderated",
+		"php":       "https://repo.example/artifactory/api/composer/php-moderated",
+		"maven":     "https://repo.example/artifactory/maven-moderated",
+		"luarocks":  "https://repo.example/artifactory/luarocks-moderated",
+		"terraform": "https://repo.example/artifactory/terraform-moderated",
+		"git":       "https://repo.example/artifactory/git-moderated",
+		"files":     "https://repo.example/artifactory/files-moderated",
 	}
 	for manager, wantBase := range cases {
 		base, repo := cfg.ArtifactInstallLocation(manager)
@@ -535,17 +551,17 @@ func TestArtifactCatalogSyncConfiguration(t *testing.T) {
 	}
 }
 
-func TestArtifactCatalogRejectsManagersWithoutSafeImporter(t *testing.T) {
+func TestArtifactCatalogRejectsModesWithoutSafeCoordinates(t *testing.T) {
 	_, err := Load(func(key string) string {
 		if key == "DATABASE_URL" {
 			return "postgres://localhost/moderation"
 		}
 		if key == "ARTIFACT_CATALOG_SYNC_MANAGERS" {
-			return "docker"
+			return "files"
 		}
 		return ""
 	})
-	if err == nil || !strings.Contains(err.Error(), "docker") {
-		t.Fatalf("небезопасный импорт Docker должен быть отклонён: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "files") {
+		t.Fatalf("импорт без восстанавливаемых координат должен быть отклонён: %v", err)
 	}
 }

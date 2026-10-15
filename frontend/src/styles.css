@@ -126,7 +126,7 @@ h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; color: var(--text-dim);
 .nav-count { background: var(--accent); color: var(--on-accent); border-radius: 9px; padding: 0 6px; font-size: 10.5px; font-weight: 600; }
 .nav-count.muted { background: var(--border-strong); color: var(--text-dim); }
 
-.content { padding: 28px 30px 56px; width: 100%; max-width: 1540px; }
+.content { padding: 28px 30px 56px; width: 100%; max-width: 1540px; min-width: 0; }
 .topbar { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .topbar .who { color: var(--text-faint); font-size: 12px; }
 .page-hint { color: var(--text-dim); font-size: 12px; margin: 0 0 12px; }
@@ -139,6 +139,7 @@ h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; color: var(--text-dim);
   padding: 12px 14px;
   margin-bottom: 12px;
   box-shadow: var(--card-shadow);
+  min-width: 0;
 }
 .card.tight { padding: 10px 12px; }
 .grid { display: grid; gap: 12px; }
@@ -156,8 +157,13 @@ tr.selected-row td { background: var(--accent-dim); border-bottom-color: transpa
 tr.details-row:hover td, tr.details-row td { background: transparent; padding: 0 8px 12px; }
 .package-details {
   border: 1px solid var(--border-strong); border-top: 2px solid var(--accent);
-  border-radius: 0 0 var(--radius) var(--radius); padding: 14px; background: var(--details-bg);
+  border-radius: 0 0 var(--radius) var(--radius); padding: 14px; background: var(--details-bg); min-width: 0;
 }
+.table-scroll { width: 100%; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.package-base-table > table { min-width: 980px; }
+.artifact-table-wrap > table { min-width: 900px; }
+.artifact-name { max-width: 430px; overflow-wrap: anywhere; word-break: break-word; }
+.policy-table-wrap > table { min-width: 940px; }
 td.num { text-align: right; font-family: var(--mono); }
 
 input, select, textarea, button {
@@ -194,7 +200,7 @@ button.small { padding: 3px 7px; font-size: 12px; }
 .badge.awaiting_security, .badge.partially_approved, .badge.pending {
   background: var(--warn-bg); border-color: var(--warn); color: var(--warn);
 }
-.badge.fail, .badge.rejected, .badge.revoked, .badge.blacklisted, .badge.failed {
+.badge.fail, .badge.rejected, .badge.revoked, .badge.deleted, .badge.blacklisted, .badge.failed {
   background: var(--fail-bg); border-color: var(--fail); color: var(--fail);
 }
 .badge.info { background: var(--info-bg); border-color: var(--info); color: var(--info); }
@@ -210,6 +216,7 @@ button.small { padding: 3px 7px; font-size: 12px; }
 .pill-tabs button.active { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
 .settings-tabs {
   display: flex; gap: 22px; margin: -2px 0 18px; border-bottom: 1px solid var(--border);
+  overflow-x: auto; white-space: nowrap;
 }
 .settings-tabs button {
   background: transparent; border: 0; border-bottom: 2px solid transparent;

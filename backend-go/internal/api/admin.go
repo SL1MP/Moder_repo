@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"strconv"
@@ -8,8 +9,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-
-	"context"
 
 	"moderation/internal/auth"
 	"moderation/internal/config"
@@ -77,6 +76,11 @@ func MountAdmin(r chi.Router, h *AdminHandler, a *Auth) {
 	})
 	r.Group(func(sub chi.Router) {
 		sub.Use(a.Authenticate)
+		sub.Use(RequireRoles("admin", "legal"))
+		sub.Put("/api/v1/admin/policies/licenses", h.UpdateLicenses)
+	})
+	r.Group(func(sub chi.Router) {
+		sub.Use(a.Authenticate)
 		sub.Use(RequireRoles("admin"))
 		sub.Put("/api/v1/settings", h.UpdateSettings)
 		sub.Get("/api/v1/admin/users", h.Users)
@@ -117,6 +121,7 @@ func (h *AdminHandler) Reload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	previousBlacklist := h.Policies.Blacklist()
+	previousLicenses := h.Policies.Licenses()
 	result := h.Policies.Reload()
 	// Сохранённая в web политика имеет приоритет над начальным YAML и после
 	// ручного перечитывания не должна внезапно исчезнуть.
@@ -131,6 +136,20 @@ func (h *AdminHandler) Reload(w http.ResponseWriter, r *http.Request) {
 			result.BlacklistPath = "database:blacklist_policy"
 			result.BlacklistRules = len(rules)
 			result.BlacklistError = ""
+		}
+		if entries, configured, err := h.Repo.LicenseEntries(r.Context()); err != nil {
+			result.LicensesError = err.Error()
+			if previousLicenses != nil && previousLicenses.Path == "database:license_policy" {
+				combined := append(previousLicenses.SortedAllowed(), previousLicenses.SortedForbidden()...)
+				h.Policies.ReplaceLicenses(combined, previousLicenses.Path)
+			}
+		} else if configured {
+			h.Policies.ReplaceLicenses(entries, "database:license_policy")
+			licenses := h.Policies.Licenses()
+			result.LicensesPath = "database:license_policy"
+			result.LicensesAllow = len(licenses.Allowed)
+			result.LicensesForbid = len(licenses.Forbidden)
+			result.LicensesError = ""
 		}
 	}
 

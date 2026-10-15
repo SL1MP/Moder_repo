@@ -31,6 +31,7 @@ type catalogCoordinate struct {
 var (
 	pypiWheelName = regexp.MustCompile(`^([A-Za-z0-9_.]+)-([0-9][A-Za-z0-9.!+_]*)-[^-]+-[^-]+-[^-]+\.whl$`)
 	pypiSdistName = regexp.MustCompile(`^(.+)-([0-9][A-Za-z0-9.!+_-]*)\.(?:tar\.gz|zip)$`)
+	luarocksName  = regexp.MustCompile(`^(.+)-([0-9][0-9A-Za-z.+_-]*)-([0-9]+)$`)
 )
 
 // SyncTrustedCatalog выполняет один полный аддитивный обход. Отсутствующие в
@@ -89,6 +90,9 @@ func (s *Service) SyncTrustedCatalog(
 				skipped++
 				continue
 			}
+			if manager == "docker" && len(strings.TrimSpace(file.Checksum)) == 64 {
+				coordinate.Version += "@sha256:" + strings.ToLower(strings.TrimSpace(file.Checksum))
+			}
 			parsed++
 			result.Discovered++
 			displayName := strings.TrimSpace(coordinate.Name)
@@ -99,14 +103,21 @@ func (s *Service) SyncTrustedCatalog(
 				continue
 			}
 			target := artifactstore.Target{
-				Repo: repository, Manager: manager, Name: normalizedName,
+				Repo: repository, Manager: manager, Name: registry.PublishedName(manager, normalizedName),
 				DisplayName: displayName, Version: coordinate.Version,
 				Filename: path.Base(file.Path), Path: file.Path,
+			}
+			filename := path.Base(file.Path)
+			if manager == "conan" {
+				// Native Conan layouts contain repeated filenames in recipe and
+				// package revisions. Keep the repository-relative path so every
+				// physical artifact receives its own link and can be deleted later.
+				filename = strings.Trim(file.Path, "/")
 			}
 			artifact := repo.CatalogArtifact{
 				Manager: manager, Name: normalizedName, DisplayName: displayName,
 				Version: normalizedVersion, RawVersion: coordinate.Version,
-				Filename: path.Base(file.Path), URL: s.Artifacts.ArtifactURL(target),
+				Filename: filename, URL: s.Artifacts.ArtifactURL(target),
 				SizeBytes: file.SizeBytes, SHA256: file.Checksum,
 				PublishedAt: file.LastModified,
 			}
@@ -217,7 +228,28 @@ func parseCatalogPath(manager, filePath string) (catalogCoordinate, bool) {
 			group := strings.Join(parts[:len(parts)-3], ".")
 			return catalogCoordinate{Name: group + ":" + artifact, Version: version}, group != ""
 		}
-	case "nuget", "conan", "php":
+	case "docker":
+		// JFrog stores tag manifests as image/name/<tag>/manifest.json (or
+		// list.manifest.json for a multi-platform image). Content-addressable
+		// copies live under sha256:<digest>; importing those would create a
+		// second fake package for every manifest and layer.
+		if len(parts) >= 3 && (filename == "manifest.json" || filename == "list.manifest.json") {
+			tag := parts[len(parts)-2]
+			if strings.HasPrefix(strings.ToLower(tag), "sha256:") {
+				return catalogCoordinate{}, false
+			}
+			name := strings.Join(parts[:len(parts)-2], "/")
+			return catalogCoordinate{Name: name, Version: tag}, name != "" && tag != ""
+		}
+	case "conan":
+		// JFrog Conan repositories use
+		// name/version/user/channel/revision/export/... (and deeper package
+		// revisions). Name and version are therefore always the first two
+		// path segments, not the two directories preceding the file.
+		if len(parts) >= 3 {
+			return catalogCoordinate{Name: parts[0], Version: parts[1]}, true
+		}
+	case "nuget", "php":
 		if len(parts) >= 3 {
 			return catalogCoordinate{Name: strings.Join(parts[:len(parts)-2], "/"), Version: parts[len(parts)-2]}, true
 		}
@@ -228,12 +260,8 @@ func parseCatalogPath(manager, filePath string) (catalogCoordinate, bool) {
 	case "luarocks":
 		// name-version-revision.(src|all).rock либо name-version.rockspec.
 		base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(filename, ".src.rock"), ".all.rock"), ".rockspec")
-		fields := strings.Split(base, "-")
-		for i := len(fields) - 1; i > 0; i-- {
-			if len(fields[i]) > 0 && fields[i][0] >= '0' && fields[i][0] <= '9' {
-				name, version := strings.Join(fields[:i], "-"), strings.Join(fields[i:], "-")
-				return catalogCoordinate{Name: name, Version: version}, name != ""
-			}
+		if match := luarocksName.FindStringSubmatch(base); len(match) == 4 {
+			return catalogCoordinate{Name: match[1], Version: match[2] + "-" + match[3]}, true
 		}
 	}
 	return catalogCoordinate{}, false

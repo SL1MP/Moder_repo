@@ -202,6 +202,7 @@ func buildScanContext(ctx context.Context, r *repo.Repo, st *stores, cfg *config
 	httpClient := newHTTPClient()
 	reg := newRegistry(cfg, httpClient)
 	blacklist := policy.LoadBlacklist(cfg.BlacklistFile)
+	licenses := policy.LoadLicensePolicy(cfg.AllowedLicensesFile)
 	if r != nil {
 		rules, configured, err := r.BlacklistRules(ctx)
 		if err != nil {
@@ -212,6 +213,13 @@ func buildScanContext(ctx context.Context, r *repo.Repo, st *stores, cfg *config
 				Rules: rules, Path: "database:blacklist_policy", LoadedAt: time.Now().UTC(),
 			}
 		}
+		entries, configured, err := r.LicenseEntries(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("web-версия политики лицензий: %w", err)
+		}
+		if configured {
+			licenses = policy.NewLicensePolicy(entries, "database:license_policy")
+		}
 	}
 
 	return &pipeline.Context{
@@ -220,7 +228,7 @@ func buildScanContext(ctx context.Context, r *repo.Repo, st *stores, cfg *config
 		// собирается один и тот же — неполный контекст здесь означал бы, что
 		// при следующем расширении команды шаги молча получат nil.
 		BL:  blacklist,
-		Lic: policy.LoadLicensePolicy(cfg.AllowedLicensesFile),
+		Lic: licenses,
 		Deps: pipeline.Deps{
 			Repo: r, Storage: st.Staging, Reports: st.Reports, Registry: reg,
 			// Индекс уязвимостей и артефактори нужны шагам 5 и 7. Команде

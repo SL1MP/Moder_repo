@@ -19,26 +19,31 @@ const PAGE_SIZE = 25
 
 export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'mine' | 'all' }) {
   const [status, setStatus] = useState('')
+  const [query, setQuery] = useState('')
+  const [manager, setManager] = useState('')
   const [page, setPage] = useState(0)
   const navigate = useNavigate()
   // Чужие заявки видят только эти роли; разработчику переключатель не нужен —
   // API всё равно отдаст ему лишь свои.
   const canSeeAll = me.roles.some((r) => ['admin', 'devsecops', 'legal'].includes(r))
+  const managers = useAsync(() => api.managers(), [])
   // Область берётся из маршрута, а не из локального состояния: пункт меню
   // «Мои заявки» обязан показывать именно свои, а не то, что осталось от
   // прошлого переключения.
   const mine = scope === 'mine' || !canSeeAll
-  useEffect(() => setPage(0), [mine, status])
+  useEffect(() => setPage(0), [mine, status, query, manager])
   const { data, error, loading, reload } = useAsync(
     () => api.requests({
       ...(status ? { status } : {}),
+      ...(query ? { q: query } : {}),
+      ...(manager ? { manager } : {}),
       mine: String(mine),
       // Берём одну лишнюю запись: она не показывается, но точно говорит,
       // доступна ли следующая страница без отдельного COUNT на каждый клик.
       limit: String(PAGE_SIZE + 1),
       offset: String(page * PAGE_SIZE),
     }),
-    [status, mine, page],
+    [status, query, manager, mine, page],
   )
   const rows = (data ?? []).slice(0, PAGE_SIZE)
   const hasNext = (data?.length ?? 0) > PAGE_SIZE
@@ -66,6 +71,18 @@ export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'm
       </div>
 
       <div className="card tight row">
+        <label style={{ margin: 0, minWidth: 240 }}>
+          <span>Поиск</span>
+          <input className="wide" value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder="номер, пакет, версия, автор, причина" />
+        </label>
+        <label style={{ margin: 0 }}>
+          <span>Менеджер</span>
+          <select value={manager} onChange={(e) => setManager(e.target.value)}>
+            <option value="">все</option>
+            {(managers.data ?? []).map((item) => <option key={item.code} value={item.code}>{item.title}</option>)}
+          </select>
+        </label>
         <div className="pill-tabs" style={{ margin: 0 }}>
           {STATUS_FILTERS.map((f) => (
             <button
@@ -96,7 +113,7 @@ export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'm
 
       {data && rows.length ? (
         <div className="card">
-          <table>
+          <div className="table-scroll"><table>
             <thead>
               <tr>
                 <th>Заявка</th>
@@ -129,7 +146,7 @@ export default function RequestList({ me, scope = 'mine' }: { me: Me; scope?: 'm
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </div>
       ) : null}
 

@@ -74,6 +74,9 @@ func newReadFixture(t *testing.T) *readFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := r.UpdatePackageVersionStatus(ctx, ver.ID, "awaiting_legal", nil); err != nil {
+		t.Fatal(err)
+	}
 
 	now := time.Now().UTC()
 	for _, s := range []struct{ code, result string }{
@@ -307,7 +310,7 @@ func TestPackageSearchEscapesLikeWildcards(t *testing.T) {
 
 func TestPackageSearchLimitValidated(t *testing.T) {
 	f := newReadFixture(t)
-	for _, q := range []string{"limit=1000", "limit=абв", "offset=-1"} {
+	for _, q := range []string{"limit=1000", "limit=абв", "offset=-1", "status=deleted"} {
 		rec := f.as(t, f.author, []string{"developer"}, "/api/v1/packages?"+q)
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Errorf("%s: ожидался 422, получено %d", q, rec.Code)

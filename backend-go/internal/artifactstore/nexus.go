@@ -68,6 +68,9 @@ func (n *Nexus) ArtifactURL(t Target) string {
 			return fileURL
 		}
 	}
+	if t.Manager == "terraform" && strings.TrimSpace(t.Path) != "" {
+		return n.fileURL(t.Repo, t.Path)
+	}
 	return n.fileURL(t.Repo, n.assetPath(t))
 }
 
@@ -603,8 +606,23 @@ func (n *Nexus) Delete(ctx context.Context, t Target) (bool, error) {
 	if t.Manager == "docker" {
 		return n.deleteOCI(ctx, t)
 	}
-	search := fmt.Sprintf("%s/service/rest/v1/search?repository=%s&name=%s&version=%s",
-		n.cfg.BaseURL, url.QueryEscape(t.Repo), url.QueryEscape(t.Name), url.QueryEscape(t.Version))
+	if domainUsesRawFiles(t.Manager) && strings.TrimSpace(t.Path) != "" {
+		return n.DeleteFile(ctx, t.Repo, t.Path)
+	}
+	query := url.Values{}
+	query.Set("repository", t.Repo)
+	query.Set("version", t.Version)
+	if t.Manager == "maven" {
+		group, artifact, ok := strings.Cut(t.Name, ":")
+		if !ok || group == "" || artifact == "" {
+			return false, fmt.Errorf("некорректная Maven-координата %q", t.Name)
+		}
+		query.Set("group", group)
+		query.Set("name", artifact)
+	} else {
+		query.Set("name", t.Name)
+	}
+	search := n.cfg.BaseURL + "/service/rest/v1/search?" + query.Encode()
 	resp, err := n.do(ctx, http.MethodGet, search, nil, map[string]string{"Accept": "application/json"})
 	if err != nil {
 		return false, err
@@ -643,4 +661,13 @@ func (n *Nexus) Delete(ctx context.Context, t Target) (bool, error) {
 		}
 	}
 	return removed, nil
+}
+
+func domainUsesRawFiles(manager string) bool {
+	switch manager {
+	case "go", "terraform", "luarocks", "git", "files":
+		return true
+	default:
+		return false
+	}
 }

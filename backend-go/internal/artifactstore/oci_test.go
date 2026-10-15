@@ -124,7 +124,10 @@ func TestGenericPublishesEveryPlatformAsNativeOCI(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store, err := New(Config{Kind: KindGeneric, BaseURL: srv.URL + "/artifactory", HTTPClient: srv.Client()})
+	store, err := New(Config{
+		Kind: KindGeneric, BaseURL: srv.URL + "/artifactory", HTTPClient: srv.Client(),
+		DockerPublicURL: "https://packages.example/docker-internal",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +149,9 @@ func TestGenericPublishesEveryPlatformAsNativeOCI(t *testing.T) {
 	if manifestTypes["14.23"] != mediaOCIIndex {
 		t.Errorf("Content-Type корня = %q, ожидался OCI index", manifestTypes["14.23"])
 	}
-	if strings.Contains(published, "/artifactory/") || !strings.Contains(published, "/docker-internal/postgres:14.23@") {
-		t.Errorf("ссылка docker pull сформирована неверно: %s", published)
+	wantPublished := "https://packages.example/docker-internal/postgres:14.23@" + indexDigest
+	if published != wantPublished {
+		t.Errorf("ссылка docker pull = %s, ожидалась %s", published, wantPublished)
 	}
 }
 

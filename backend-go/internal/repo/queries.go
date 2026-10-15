@@ -116,12 +116,13 @@ func (r *Repo) ListPackageRequests(ctx context.Context, packageVersionID int64) 
 
 // VersionSearch — параметры поиска по базе пакетов.
 type VersionSearch struct {
-	Query   string
-	Manager string
-	Version string
-	Status  string
-	Limit   int
-	Offset  int
+	Query    string
+	Manager  string
+	Version  string
+	Status   string
+	Statuses []string
+	Limit    int
+	Offset   int
 }
 
 // SearchVersions — поиск по базе пакетов. Возвращает страницу и общее число
@@ -192,6 +193,8 @@ func versionSearchWhere(s VersionSearch) (string, []any) {
 	}
 	if s.Status != "" {
 		add(`pv.status = $%d`, s.Status)
+	} else if len(s.Statuses) > 0 {
+		add(`pv.status = ANY($%d)`, s.Statuses)
 	}
 	if len(conds) == 0 {
 		return "", args
@@ -282,6 +285,7 @@ type RequestFilter struct {
 	AuthorID *int64
 	Status   string
 	Manager  string
+	Query    string
 	Limit    int
 	Offset   int
 }
@@ -302,6 +306,18 @@ func (r *Repo) ListRequests(ctx context.Context, f RequestFilter) ([]RequestList
 	}
 	if f.Manager != "" {
 		add(`mr.manager = $%d`, f.Manager)
+	}
+	if q := strings.TrimSpace(f.Query); q != "" {
+		args = append(args, "%"+escapeLike(strings.ToLower(q))+"%")
+		index := len(args)
+		conds = append(conds, fmt.Sprintf(`(
+			CAST(mr.id AS text) LIKE $%d ESCAPE '\' OR
+			lower(COALESCE(u.username, '')) LIKE $%d ESCAPE '\' OR
+			lower(COALESCE(mr.reason, '')) LIKE $%d ESCAPE '\' OR
+			EXISTS (SELECT 1 FROM request_item sri WHERE sri.request_id = mr.id AND
+				(lower(sri.requested_name) LIKE $%d ESCAPE '\' OR
+				 lower(sri.requested_version) LIKE $%d ESCAPE '\'))
+		)`, index, index, index, index, index))
 	}
 	where := ""
 	if len(conds) > 0 {

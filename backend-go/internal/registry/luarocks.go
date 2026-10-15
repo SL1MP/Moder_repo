@@ -131,7 +131,7 @@ func luaRockspecField(source, field string) string {
 }
 
 func (p *LuaRocks) InstallCommand(ref Ref, baseURL, repo string) string {
-	server := fmt.Sprintf("%s/repository/%s", strings.TrimRight(baseURL, "/"), repo)
+	server := installRepositoryURL(baseURL, repo)
 	return fmt.Sprintf("luarocks install --server=%s %s %s", server, ref.DisplayName, ref.RawVersion)
 }
 

@@ -90,6 +90,7 @@ func (h *RequestsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	filter := repo.RequestFilter{
 		Status: q.Get("status"), Manager: q.Get("manager"),
+		Query: q.Get("q"),
 		Limit: limit, Offset: offset,
 	}
 	// mine=true просят явно; без прав на чужие заявки фильтр по автору

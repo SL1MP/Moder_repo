@@ -64,6 +64,15 @@ func (h *Holder) ReplaceBlacklist(rules []Rule, source string) {
 	h.reloadedAt.Store(now.UnixNano())
 }
 
+// ReplaceLicenses атомарно переключает проверку лицензий на политику,
+// сохранённую через web. Карты собираются заново и после публикации указателя
+// больше не изменяются, поэтому api-go и worker читают согласованный снимок.
+func (h *Holder) ReplaceLicenses(entries []LicenseEntry, source string) {
+	policy := NewLicensePolicy(entries, source)
+	h.licenses.Store(policy)
+	h.reloadedAt.Store(policy.LoadedAt.UnixNano())
+}
+
 // ReloadedAt — когда политики последний раз перечитывали.
 func (h *Holder) ReloadedAt() time.Time {
 	return time.Unix(0, h.reloadedAt.Load()).UTC()

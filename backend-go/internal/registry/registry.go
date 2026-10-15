@@ -345,3 +345,16 @@ func NewWithPlugin(base *Registry, plugin Plugin) *Registry {
 	}
 	return &Registry{plugins: plugins, order: order}
 }
+
+// installRepositoryURL accepts both forms used by Config:
+//   - base URL plus repository name for a component repository;
+//   - a complete format-specific endpoint with an empty repository name.
+// The latter is required by format-specific APIs and prevents plugins from
+// appending /repository/{name} to an already complete URL.
+func installRepositoryURL(baseURL, repo string) string {
+	baseURL = strings.TrimRight(baseURL, "/")
+	if strings.TrimSpace(repo) == "" {
+		return baseURL
+	}
+	return fmt.Sprintf("%s/repository/%s", baseURL, repo)
+}

@@ -191,7 +191,7 @@ func composerFieldUnset(fields []string, wanted string) bool {
 }
 
 func (p *PHP) InstallCommand(ref Ref, baseURL, repo string) string {
-	source := fmt.Sprintf("%s/repository/%s", strings.TrimRight(baseURL, "/"), repo)
+	source := installRepositoryURL(baseURL, repo)
 	return fmt.Sprintf(
 		"composer config repositories.internal composer %s && composer require %s:%s",
 		source, ref.DisplayName, ref.RawVersion)

@@ -190,6 +190,14 @@ export interface BlacklistRule {
   added_at: string
 }
 
+export interface LicensePolicyEntry {
+  spdx_id: string
+  name: string
+  url: string
+  notes: string
+  allowed: boolean
+}
+
 export interface Me {
   id: number
   username: string
@@ -610,6 +618,7 @@ export interface ArtifactCatalogSyncStatus {
   enabled: boolean
   maintenance_enabled: boolean
   managers: string[]
+  available_managers: string[]
   last_run: ArtifactCatalogSyncRun | null
 }
 
@@ -724,6 +733,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ approve: false, comment }),
     }),
+  deletePackage: (id: number, reason: string) =>
+    request<{ status: string; reason: string; removed_artifacts: number }>(`/packages/${id}`, {
+      method: 'DELETE', body: JSON.stringify({ reason }),
+    }),
 
   queueSecurity: (params: Record<string, string> = {}) =>
     request<QueueItem[]>(`/queue/security?${new URLSearchParams(params)}`),
@@ -818,6 +831,11 @@ export const api = {
       '/admin/policies/blacklist',
       { method: 'PUT', body: JSON.stringify({ rules }) },
     ),
+  saveLicensePolicy: (entries: LicensePolicyEntry[]) =>
+    request<{ allowed: LicensePolicyEntry[]; forbidden: LicensePolicyEntry[]; loaded_at: string; message: string }>(
+      '/admin/policies/licenses',
+      { method: 'PUT', body: JSON.stringify({ entries }) },
+    ),
   reloadConfig: () => request<Record<string, any>>('/admin/reload', { method: 'POST' }),
   systemStatus: () => request<Record<string, any>>('/system/status'),
   sweepQueue: () => request<Record<string, any>>('/admin/queue-sweep', { method: 'POST' }),
@@ -826,7 +844,9 @@ export const api = {
   osvVersions: () => request<Record<string, unknown>[]>('/admin/osv-versions'),
   syncOsv: () => request<Record<string, unknown>>('/admin/osv-sync', { method: 'POST' }),
   artifactCatalogSyncStatus: () => request<ArtifactCatalogSyncStatus>('/artifact-catalog-sync'),
-  startArtifactCatalogSync: () => request<ArtifactCatalogSyncRun>('/admin/artifact-catalog-sync', { method: 'POST' }),
+  startArtifactCatalogSync: (managers?: string[]) => request<ArtifactCatalogSyncRun>('/admin/artifact-catalog-sync', {
+    method: 'POST', body: JSON.stringify({ managers: managers ?? [] }),
+  }),
 
   gitlabStatus: () => request<Record<string, unknown>>('/gitlab/status'),
   gitlabAuthorize: () => request<{ authorize_url: string; state: string }>('/gitlab/authorize'),

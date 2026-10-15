@@ -11,6 +11,17 @@ import (
 	"moderation/internal/domain"
 )
 
+// PublishedArtifact — один реальный файл многофайлового релиза. Transport
+// bundle сюда не входит: разработчик устанавливает wheel/jar/zip, а не
+// служебный архив, которым worker перенёс релиз через staging.
+type PublishedArtifact struct {
+	Filename  string
+	SourceURL *string
+	SizeBytes int64
+	SHA256    string
+	URL       string
+}
+
 // Операции, нужные шагам конвейера 4–8: артефакты, находки сканеров,
 // уязвимости, версии снапшота OSV и отчёты о сканировании.
 
@@ -87,6 +98,37 @@ func (r *Repo) MarkArtifactPublished(ctx context.Context, id int64, url string, 
 	return nil
 }
 
+// UpsertPublishedArtifacts сохраняет каждый реально опубликованный файл.
+func (r *Repo) UpsertPublishedArtifacts(
+	ctx context.Context, versionID int64, artifacts []PublishedArtifact, at time.Time,
+) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("начало сохранения опубликованных артефактов: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, artifact := range artifacts {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO artifact
+				(package_version_id, filename, source_url, size_bytes, sha256,
+				 checksum_algo, nexus_url, published_at, status)
+			VALUES ($1, $2, $3, $4, $5, 'sha256', $6, $7, 'published')
+			ON CONFLICT ON CONSTRAINT uq_artifact_package_version_id_filename DO UPDATE
+			SET source_url = COALESCE(EXCLUDED.source_url, artifact.source_url),
+			    size_bytes = EXCLUDED.size_bytes, sha256 = EXCLUDED.sha256,
+			    checksum_algo = 'sha256', nexus_url = EXCLUDED.nexus_url,
+			    published_at = EXCLUDED.published_at, status = 'published'`,
+			versionID, artifact.Filename, artifact.SourceURL, artifact.SizeBytes,
+			artifact.SHA256, artifact.URL, at); err != nil {
+			return fmt.Errorf("сохранение опубликованного файла %s: %w", artifact.Filename, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("фиксация опубликованных артефактов: %w", err)
+	}
+	return nil
+}
+
 // MarkArtifactPurged — объект удалён из карантинной зоны. keepStatus=true
 // оставляет статус published: объект удаляется и после успешной публикации,
 // и это не «purged», а штатная уборка.
@@ -97,6 +139,32 @@ func (r *Repo) MarkArtifactPurged(ctx context.Context, id int64, at time.Time, k
 	}
 	if _, err := r.pool.Exec(ctx, query, id, at); err != nil {
 		return fmt.Errorf("отметка объекта удалённым из хранилища: %w", err)
+	}
+	return nil
+}
+
+// MarkPackageDeleted фиксирует успешное административное удаление и одним
+// UPDATE помечает все его опубликованные файлы убранными. URL остаётся в БД
+// для аудита, но API не предлагает его как доступный артефакт.
+func (r *Repo) MarkPackageDeleted(ctx context.Context, versionID int64, reason string, at time.Time) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("начало фиксации удаления пакета: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `
+		UPDATE package_version
+		SET status = 'deleted', status_reason = $2, revoked_at = $3, updated_at = $3
+		WHERE id = $1`, versionID, reason, at); err != nil {
+		return fmt.Errorf("статус удалённого пакета: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE artifact SET status = 'purged' WHERE package_version_id = $1 AND status = 'published'`,
+		versionID); err != nil {
+		return fmt.Errorf("статусы удалённых артефактов: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("фиксация удаления пакета: %w", err)
 	}
 	return nil
 }
