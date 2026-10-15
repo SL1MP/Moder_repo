@@ -93,7 +93,7 @@ var valueMigrations = map[string]string{
 	"info":      "backend-go/migrations/0010_sast_advisory (или alembic 0005_sast_advisory)",
 	"running":   "backend-go/migrations/0019_pipeline_step_running",
 	"cancelled": "backend-go/migrations/0011_cancel_request (или alembic 0006_cancel_request)",
-	"deleted":   "backend-go/migrations/0030_catalog_admin_controls",
+	"deleted":   "backend-go/migrations/0031_package_version_status_constraint",
 	"dry_run": "backend-go/migrations/0007_dry_run_status и 0009_request_dry_run " +
 		"(или alembic 0006_cancel_request)",
 	"banner_scan": "backend-go/migrations/0004_step_codes_content_scans (или alembic 0004)",
