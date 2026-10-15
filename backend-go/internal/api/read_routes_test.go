@@ -310,11 +310,35 @@ func TestPackageSearchEscapesLikeWildcards(t *testing.T) {
 
 func TestPackageSearchLimitValidated(t *testing.T) {
 	f := newReadFixture(t)
-	for _, q := range []string{"limit=1000", "limit=абв", "offset=-1", "status=deleted"} {
+	for _, q := range []string{"limit=1000", "limit=абв", "offset=-1", "status=failed"} {
 		rec := f.as(t, f.author, []string{"developer"}, "/api/v1/packages?"+q)
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Errorf("%s: ожидался 422, получено %d", q, rec.Code)
 		}
+	}
+}
+
+func TestPackageSearchShowsDeletedVersion(t *testing.T) {
+	f := newReadFixture(t)
+	reason := "заменён проверенной сборкой"
+	if err := f.repo.UpdatePackageVersionStatus(
+		context.Background(), f.versionID, "deleted", &reason,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := f.as(t, f.author, []string{"developer"},
+		"/api/v1/packages?status=deleted")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	payload := decodeObject(t, rec)
+	if payload["total"] != float64(1) {
+		t.Fatalf("удалённая версия скрыта из базы пакетов: total=%v", payload["total"])
+	}
+	item := payload["items"].([]any)[0].(map[string]any)
+	if item["status"] != "deleted" || item["status_reason"] != reason {
+		t.Fatalf("неверная карточка удалённой версии: %v", item)
 	}
 }
 

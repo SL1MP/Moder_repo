@@ -150,11 +150,11 @@ func (r *Repo) UpdatePackageVersionStatus(ctx context.Context, id int64, status 
 func (r *Repo) UpdatePackageVersionQuarantine(ctx context.Context, id int64, status string, quarantineUntil *time.Time) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE package_version SET
-		    status = $2,
+		    status = $2::text,
 		    quarantine_until = $3,
-		    status_reason = CASE WHEN $2 = 'approved' THEN NULL ELSE status_reason END,
-		    approved_at = CASE WHEN $2 = 'approved' THEN COALESCE(approved_at, now()) ELSE approved_at END,
-		    revoked_at = CASE WHEN $2 = 'approved' THEN NULL ELSE revoked_at END,
+		    status_reason = CASE WHEN $2::text = 'approved' THEN NULL ELSE status_reason END,
+		    approved_at = CASE WHEN $2::text = 'approved' THEN COALESCE(approved_at, now()) ELSE approved_at END,
+		    revoked_at = CASE WHEN $2::text = 'approved' THEN NULL ELSE revoked_at END,
 		    updated_at = now()
 		WHERE id = $1
 	`, id, status, quarantineUntil)

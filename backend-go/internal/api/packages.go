@@ -248,7 +248,13 @@ func (h *PackagesHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	visibleStatuses := []string{"approved", "awaiting_legal", "awaiting_security", "quarantined"}
+	// Удалённая версия остаётся частью истории каталога: администратору и
+	// разработчику нужно видеть причину удаления и связанные заявки. Она не
+	// получает команду установки и рабочие ссылки, но не должна исчезать из
+	// поиска сразу после административного действия.
+	visibleStatuses := []string{
+		"approved", "awaiting_legal", "awaiting_security", "quarantined", "deleted",
+	}
 	status := strings.TrimSpace(q.Get("status"))
 	if status != "" && !domain.Contains(visibleStatuses, status) {
 		writeError(w, r, errValidation("Недопустимый статус для базы пакетов"))

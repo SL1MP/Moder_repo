@@ -130,6 +130,20 @@ func TestHappyPath_PyPI_AllStepsPass(t *testing.T) {
 			t.Fatalf("request_item %d не найден среди siblings по package_version_id", id)
 		}
 	}
+
+	// Регрессия SQLSTATE 42P08: один параметр использовался и как значение
+	// varchar-столбца, и как text в CASE, поэтому PostgreSQL не мог вывести
+	// единый тип уже после физической публикации артефакта.
+	if err := r.UpdatePackageVersionQuarantine(ctx, ver.ID, "approved", nil); err != nil {
+		t.Fatalf("финальный статус опубликованной версии: %v", err)
+	}
+	approved, err := r.GetPackageVersion(ctx, ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.Status != "approved" || approved.ApprovedAt == nil {
+		t.Fatalf("версия не зафиксирована как approved: %+v", approved)
+	}
 }
 
 // TestIdempotencyKey_NoDuplicate — контракт "повтор с тем же Idempotency-Key не

@@ -20,6 +20,7 @@ const STATUSES = [
   { value: 'quarantined', label: 'карантин' },
   { value: 'awaiting_legal', label: 'ждёт юристов' },
   { value: 'awaiting_security', label: 'ждёт DevSecOps' },
+  { value: 'deleted', label: 'удалён' },
 ]
 
 const PAGE_SIZE = 50
