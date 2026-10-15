@@ -75,6 +75,17 @@ func Run(ctx context.Context, pc *Context, fromCode string) (Result, error) {
 			return result, err
 		}
 		outcome, err := step.Run(ctx, pc)
+		// API мог остановить пакет, пока внешний вызов шага был в работе.
+		// Не позволяем уже полученному результату вернуть stopped/cancelled в
+		// running/ожидание. Текущий pipeline_step маршрут остановки уже пометил
+		// warn; worker потеряет владение строкой и завершит прогон.
+		if fresh, readErr := r.GetRequestItem(ctx, pc.Item.ID); readErr != nil {
+			return result, readErr
+		} else if fresh != nil && domain.Contains([]string{"stopped", "cancelled"}, fresh.Status) {
+			result.ItemStatus = fresh.Status
+			result.Blocked = true
+			return result, nil
+		}
 		// Метрику пишем и по упавшему шагу: прогон, оборвавшийся ошибкой, —
 		// это тоже исход, и не видеть его на графике хуже всего. Результат
 		// «error» в шкале pipeline_step.result отсутствует намеренно: там

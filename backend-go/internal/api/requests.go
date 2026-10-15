@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -53,6 +54,7 @@ func MountRequests(r chi.Router, h *RequestsHandler, a *Auth) {
 		if h.Queue != nil {
 			sub.Post("/{requestID}/retry", h.Retry)
 			sub.Post("/{requestID}/items/{itemID}/retry", h.RetryItem)
+			sub.Post("/{requestID}/items/{itemID}/stop", h.StopItem)
 		}
 		sub.Post("/{requestID}/cancel", h.Cancel)
 	})
@@ -239,6 +241,7 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 			"code_findings":      codeFindingViews(findings[item.PackageVersionID]),
 			"steps":              h.stepViews(itemSteps),
 			"can_restart":        h.canRestartItem(r, req, &item),
+			"can_stop":           h.canStopItem(r, req, &item),
 		}
 		// Дерево зависимостей: кто притащил этот пакет и по какому требованию.
 		// Юристу и DevSecOps это меняет разговор: «эта GPL пришла через вот
@@ -301,13 +304,26 @@ func (h *RequestsHandler) canRestartItem(
 		return false
 	}
 	switch item.Status {
-	case "approved", "rejected", "revoked", "blacklisted", "cancelled", "queued":
+	case "approved", "rejected", "revoked", "blacklisted", "queued":
 		return false
 	case "running":
 		return h.Queue != nil && item.UpdatedAt.Before(time.Now().UTC().Add(-h.Queue.StaleAfter))
 	default:
 		return h.Queue != nil
 	}
+}
+
+func (h *RequestsHandler) canStopItem(
+	r *http.Request, req *domain.ModerationRequest, item *domain.RequestItem,
+) bool {
+	user, ok := CurrentUser(r.Context())
+	if !ok || h.Queue == nil || (req.AuthorID != user.ID && !user.HasRole("admin", "devsecops")) {
+		return false
+	}
+	return domain.Contains([]string{
+		"queued", "running", "quarantined", "awaiting_legal",
+		"license_claimed", "awaiting_security",
+	}, item.Status)
 }
 
 func (h *RequestsHandler) installCommand(row repo.VersionRow) string {
@@ -338,6 +354,7 @@ func requestSummary(total int, counts map[string]int) map[string]any {
 		// списку статусов, что и сам UPDATE в репозитории.
 		"cancellable":       cancellableCount(counts),
 		"cancelled":         counts["cancelled"],
+		"stopped":           counts["stopped"],
 		"approved":          counts["approved"],
 		"awaiting_security": counts["awaiting_security"],
 		"awaiting_legal":    counts["awaiting_legal"] + counts["license_claimed"],
@@ -488,8 +505,9 @@ func nilIfEmpty(v string) any {
 
 // Retry — POST /api/v1/requests/{requestID}/retry.
 //
-// Перезапускаются только упавшие пакеты: перезапуск уже одобренного отозвал бы
-// решение, а перезапуск ждущего роли обнулил бы ожидание.
+// Перезапускаются упавшие, остановленные и закрытые пакеты. Всегда начинаем с
+// db_check: если версия тем временем опубликована другой заявкой, первый же
+// шаг синхронизирует статус до approved и остальные проверки не выполняются.
 func (h *RequestsHandler) Retry(w http.ResponseWriter, r *http.Request) {
 	requestID, ok := pathInt64(w, r, "requestID")
 	if !ok {
@@ -526,7 +544,7 @@ func (h *RequestsHandler) Retry(w http.ResponseWriter, r *http.Request) {
 	}
 	restarted := 0
 	for _, item := range items {
-		if item.Status != "failed" {
+		if !domain.Contains([]string{"failed", "stopped", "cancelled"}, item.Status) {
 			continue
 		}
 		// С начала, а не с прежнего шага: причина падения может быть выше по
@@ -552,6 +570,104 @@ func (h *RequestsHandler) Retry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload["restarted"] = restarted
+	writeJSON(w, http.StatusOK, payload)
+}
+
+type stopItemBody struct {
+	Reason string `json:"reason"`
+}
+
+// StopItem — POST /api/v1/requests/{requestID}/items/{itemID}/stop.
+// Останавливает только этот прогон; package_version не блокируется, поэтому
+// другой разработчик может создать заявку на ту же версию.
+func (h *RequestsHandler) StopItem(w http.ResponseWriter, r *http.Request) {
+	requestID, ok := pathInt64(w, r, "requestID")
+	if !ok {
+		return
+	}
+	itemID, ok := pathInt64(w, r, "itemID")
+	if !ok {
+		return
+	}
+	user, ok := CurrentUser(r.Context())
+	if !ok {
+		writeError(w, r, errInternal("Маршрут остановки не закрыт проверкой токена"))
+		return
+	}
+	req, err := h.Repo.GetModerationRequest(r.Context(), requestID)
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось прочитать заявку").Because(err))
+		return
+	}
+	if req == nil {
+		writeError(w, r, errNotFound("Заявка #"+strconv.FormatInt(requestID, 10)+" не найдена"))
+		return
+	}
+	if req.AuthorID != user.ID && !user.HasRole("admin", "devsecops") {
+		writeError(w, r, errForbidden("Остановить проверку может её автор, DevSecOps или администратор"))
+		return
+	}
+	item, err := h.Repo.GetRequestItem(r.Context(), itemID)
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось прочитать пакет заявки").Because(err))
+		return
+	}
+	if item == nil || item.RequestID != requestID {
+		writeError(w, r, errNotFound("Пакет не найден в этой заявке"))
+		return
+	}
+	body := stopItemBody{}
+	if r.Body != nil {
+		err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+		if err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, r, errBadRequest("Тело остановки не разобрано как JSON"))
+			return
+		}
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if len([]rune(reason)) > 1000 {
+		writeError(w, r, errValidation("Причина остановки не должна превышать 1000 символов"))
+		return
+	}
+	stopped, err := h.Queue.Stop(r.Context(), itemID, reason)
+	if err != nil {
+		if schemaErr := schemaError(err); schemaErr != nil {
+			writeError(w, r, schemaErr)
+			return
+		}
+		writeError(w, r, errInternal("Проверка пакета не остановлена").Because(err))
+		return
+	}
+	if !stopped {
+		writeError(w, r, errConflict("Пакет уже завершён или уже остановлен"))
+		return
+	}
+	if _, err := h.Repo.RecomputeRequestStatus(r.Context(), requestID); err != nil {
+		defaultLogger.Printf("[%s] статус заявки #%d не пересчитан: %v", RequestID(r.Context()), requestID, err)
+	}
+	entityID := strconv.FormatInt(itemID, 10)
+	entry := domain.AuditLog{
+		ActorID: &user.ID, ActorName: user.Username,
+		Action: "request_item_stopped", EntityType: "request_item", EntityID: &entityID,
+		NewValue: map[string]any{"request_id": requestID, "reason": reason}, Source: "ui",
+		IP: ClientIP(r), CreatedAt: time.Now().UTC(),
+	}
+	if role := auth.PrimaryRole(user.Roles); role != "" {
+		entry.ActorRole = &role
+	}
+	if rid := RequestID(r.Context()); rid != "" {
+		entry.RequestID = &rid
+	}
+	if err := h.Repo.InsertAuditLog(r.Context(), entry); err != nil {
+		defaultLogger.Printf("[%s] аудит остановки пакета #%d не записан: %v",
+			RequestID(r.Context()), itemID, err)
+	}
+	payload, err := h.requestPayload(r, mustReread(r, h, requestID, req))
+	if err != nil {
+		writeError(w, r, errInternal("Не удалось собрать карточку заявки").Because(err))
+		return
+	}
+	payload["stopped_item"] = itemID
 	writeJSON(w, http.StatusOK, payload)
 }
 
@@ -611,6 +727,12 @@ func (h *RequestsHandler) RetryItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.FromStep == "" {
+		body.FromStep = "db_check"
+	}
+	if domain.Contains([]string{"stopped", "cancelled"}, item.Status) {
+		// После явной остановки всегда сначала сверяем общую package_version:
+		// её могла уже опубликовать другая заявка. DbCheck тогда завершит пакет
+		// как approved без повторения дорогих проверок.
 		body.FromStep = "db_check"
 	}
 	if !pipeline.IsActiveStep(body.FromStep) {

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"moderation/internal/domain"
 )
 
 // CatalogSyncRun — служебный запуск обхода артефактори. Его status описывает
@@ -299,15 +301,32 @@ func (r *Repo) UpsertTrustedCatalogArtifacts(
 			    attempts = 0, resume_from_step = NULL, updated_at = now()
 			WHERE package_version_id = $1 AND status NOT IN ('approved', 'cancelled')
 			RETURNING id, request_id
-		), steps AS (
+		), cleared_blockers AS (
 			UPDATE pipeline_step ps
-			SET result = 'pass', message = $2,
-			    details = jsonb_build_object('source', 'artifact_catalog'),
-			    started_at = COALESCE(ps.started_at, now()), finished_at = now()
-			FROM changed c WHERE ps.request_item_id = c.id AND ps.step_code = 'publish'
+			SET result = 'info',
+			    message = 'Ожидание больше не актуально: пакет найден во внутреннем артефактори.',
+			    finished_at = COALESCE(ps.finished_at, now())
+			FROM changed c
+			WHERE ps.request_item_id = c.id
+			  AND ((ps.step_code = 'sandbox_scan' AND ps.result IN ('warn', 'fail'))
+			    OR (ps.step_code IN ('license', 'quarantine') AND ps.result = 'warn'))
 			RETURNING ps.request_item_id
+		), steps AS (
+			INSERT INTO pipeline_step
+			    (request_item_id, step_code, step_order, result, message, details,
+			     started_at, finished_at)
+			SELECT c.id, 'publish', $3, 'pass', $2,
+			       jsonb_build_object('source', 'artifact_catalog'), now(), now()
+			FROM changed c
+			ON CONFLICT (request_item_id, step_code) DO UPDATE SET
+			    result = EXCLUDED.result, message = EXCLUDED.message,
+			    details = EXCLUDED.details,
+			    started_at = COALESCE(pipeline_step.started_at, EXCLUDED.started_at),
+			    finished_at = EXCLUDED.finished_at
+			RETURNING request_item_id
 		)
-		SELECT DISTINCT request_id FROM changed ORDER BY request_id`, versionID, reason)
+		SELECT DISTINCT request_id FROM changed ORDER BY request_id`,
+		versionID, reason, domain.StepOrder["publish"])
 	if err != nil {
 		return CatalogUpsertResult{}, fmt.Errorf("обновление старых заявок: %w", err)
 	}

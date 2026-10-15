@@ -232,6 +232,22 @@ func TestApprovePublishedSiblings(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Остановленный прогон может не успеть создать шаг publish. Поздняя
+	// публикация другой заявки всё равно должна обновить и статус, и историю.
+	stoppedReq := newRequest()
+	stoppedItem := newItem(stoppedReq)
+	if err := r.UpdateRequestItemStatus(ctx, stoppedItem.ID, "stopped", &license,
+		strPtr("Остановлено пользователем"), strPtr("Можно перезапустить"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.UpsertPipelineStep(ctx, domain.PipelineStep{
+		RequestItemID: stoppedItem.ID, StepCode: "license",
+		StepOrder: domain.StepOrder["license"], Result: "warn",
+		Message: strPtr("Ждёт решения юриста"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	successReq := newRequest()
 	successItem := newItem(successReq)
 	successMessage := "Пакет опубликован: http://nexus:8081/repository/pypi-internal/pkg.whl"
@@ -252,8 +268,8 @@ func TestApprovePublishedSiblings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(requestIDs) != 2 {
-		t.Fatalf("синхронизированы заявки %v, ожидалось две старые заявки", requestIDs)
+	if len(requestIDs) != 3 {
+		t.Fatalf("синхронизированы заявки %v, ожидалось три старые заявки", requestIDs)
 	}
 	updated, err := r.GetRequestItem(ctx, failedItem.ID)
 	if err != nil || updated == nil {
@@ -269,6 +285,15 @@ func TestApprovePublishedSiblings(t *testing.T) {
 	updatedLicense, err := r.GetRequestItem(ctx, licenseItem.ID)
 	if err != nil || updatedLicense == nil || updatedLicense.Status != "approved" {
 		t.Fatalf("старая ошибка не была синхронизирована: item=%+v err=%v", updatedLicense, err)
+	}
+	updatedStopped, err := r.GetRequestItem(ctx, stoppedItem.ID)
+	if err != nil || updatedStopped == nil || updatedStopped.Status != "approved" {
+		t.Fatalf("остановленный пакет не был синхронизирован: item=%+v err=%v", updatedStopped, err)
+	}
+	stoppedSteps, err := r.ListStepsByItem(ctx, stoppedItem.ID)
+	if err != nil || len(stoppedSteps) != 2 || stoppedSteps[0].Result != "info" ||
+		stoppedSteps[1].StepCode != "publish" || stoppedSteps[1].Result != "pass" {
+		t.Fatalf("для остановленного пакета не создан шаг публикации: steps=%+v err=%v", stoppedSteps, err)
 	}
 	status, err := r.RecomputeRequestStatus(ctx, failedReq.ID)
 	if err != nil || status != "approved" {

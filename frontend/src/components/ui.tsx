@@ -27,6 +27,7 @@ export const STATUS_LABELS: Record<string, string> = {
   // cancelled — автор закрыл заявку: пакеты больше не нужны. Отдельно от
   // «Отклонён»: то решение роли («нельзя»), а это отказ автора.
   cancelled: 'Закрыто автором',
+  stopped: 'Проверка остановлена',
   revoked: 'Отозван',
   deleted: 'Удалён',
   blacklisted: 'Blacklist',
@@ -125,10 +126,14 @@ export function Pipeline({
   steps,
   onRestart,
   restartingStep,
+  onStop,
+  stopping,
 }: {
   steps: Step[]
   onRestart?: (step: Step) => void
   restartingStep?: string | null
+  onStop?: (step: Step) => void
+  stopping?: boolean
 }) {
   return (
     <div className="pipeline">
@@ -153,6 +158,11 @@ export function Pipeline({
                 onClick={() => onRestart(step)}
               >
                 {restartingStep === step.code ? 'запускаю…' : 'повторить отсюда'}
+              </button>
+            ) : null}
+            {onStop && step.result === 'running' ? (
+              <button className="danger small" disabled={stopping} onClick={() => onStop(step)}>
+                {stopping ? 'останавливаю…' : 'остановить'}
               </button>
             ) : null}
           </div>

@@ -149,7 +149,13 @@ func (r *Repo) UpdatePackageVersionStatus(ctx context.Context, id int64, status 
 // карантина, как делает шаг QuarantineStep (не полный UPDATE строки).
 func (r *Repo) UpdatePackageVersionQuarantine(ctx context.Context, id int64, status string, quarantineUntil *time.Time) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE package_version SET status = $2, quarantine_until = $3, updated_at = now()
+		UPDATE package_version SET
+		    status = $2,
+		    quarantine_until = $3,
+		    status_reason = CASE WHEN $2 = 'approved' THEN NULL ELSE status_reason END,
+		    approved_at = CASE WHEN $2 = 'approved' THEN COALESCE(approved_at, now()) ELSE approved_at END,
+		    revoked_at = CASE WHEN $2 = 'approved' THEN NULL ELSE revoked_at END,
+		    updated_at = now()
 		WHERE id = $1
 	`, id, status, quarantineUntil)
 	if err != nil {
@@ -190,7 +196,7 @@ func (r *Repo) ApprovePublishedSiblings(
 	rows, err := r.pool.Query(ctx, `
 		WITH source AS (
 			SELECT ri.package_version_id, ri.next_action,
-			       ps.message, ps.details, ps.started_at
+			       ps.message, ps.details, ps.started_at, ps.step_order
 			FROM request_item ri
 			JOIN pipeline_step ps
 			  ON ps.request_item_id = ri.id AND ps.step_code = 'publish'
@@ -207,14 +213,29 @@ func (r *Repo) ApprovePublishedSiblings(
 			  AND ri.status <> 'approved'
 			  AND ri.status <> 'cancelled'
 			RETURNING ri.id, ri.request_id
-		), updated_steps AS (
+		), cleared_blockers AS (
 			UPDATE pipeline_step ps
-			SET result = 'pass', message = source.message, details = source.details,
-			    started_at = COALESCE(ps.started_at, source.started_at),
-			    finished_at = now()
-			FROM source, updated_items ui
-			WHERE ps.request_item_id = ui.id AND ps.step_code = 'publish'
+			SET result = 'info',
+			    message = 'Ожидание больше не актуально: пакет опубликован другой заявкой.',
+			    finished_at = COALESCE(ps.finished_at, now())
+			FROM updated_items ui
+			WHERE ps.request_item_id = ui.id
+			  AND ((ps.step_code = 'sandbox_scan' AND ps.result IN ('warn', 'fail'))
+			    OR (ps.step_code IN ('license', 'quarantine') AND ps.result = 'warn'))
 			RETURNING ps.request_item_id
+		), updated_steps AS (
+			INSERT INTO pipeline_step
+			    (request_item_id, step_code, step_order, result, message, details,
+			     started_at, finished_at)
+			SELECT ui.id, 'publish', source.step_order, 'pass', source.message,
+			       source.details, source.started_at, now()
+			FROM source, updated_items ui
+			ON CONFLICT (request_item_id, step_code) DO UPDATE SET
+			    result = EXCLUDED.result, message = EXCLUDED.message,
+			    details = EXCLUDED.details,
+			    started_at = COALESCE(pipeline_step.started_at, EXCLUDED.started_at),
+			    finished_at = EXCLUDED.finished_at
+			RETURNING request_item_id
 		)
 		SELECT DISTINCT request_id FROM updated_items ORDER BY request_id
 	`, sourceItemID)

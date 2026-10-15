@@ -47,6 +47,30 @@ func TestPackageManagersProduceCanonicalCycloneDX(t *testing.T) {
 	}
 }
 
+func TestPackageSBOMIncludesOSVVulnerabilities(t *testing.T) {
+	docs, err := (DefaultGenerator{Now: func() time.Time {
+		return time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	}}).Generate(context.Background(), Input{
+		Manager: "maven", Name: "org.apache.logging.log4j:log4j-core",
+		Version: "2.25.0", RawVersion: "2.25.0",
+		Vulnerabilities: []Vulnerability{{
+			ID: "CVE-2026-0001", Summary: "test finding", Severity: "high",
+			CVSSScore: 8.1, CVSSVector: "CVSS:3.1/AV:N/AC:L", FixedVersions: []string{"2.25.1"},
+		}},
+	})
+	if err != nil { t.Fatal(err) }
+	var body map[string]any
+	if err := json.Unmarshal(docs[0].Body, &body); err != nil { t.Fatal(err) }
+	vulns, ok := body["vulnerabilities"].([]any)
+	if !ok || len(vulns) != 1 { t.Fatalf("vulnerabilities = %#v", body["vulnerabilities"]) }
+	vuln := vulns[0].(map[string]any)
+	if vuln["id"] != "CVE-2026-0001" { t.Fatalf("id = %v", vuln["id"]) }
+	affects := vuln["affects"].([]any)
+	if got := affects[0].(map[string]any)["ref"]; got != "pkg:maven/org.apache.logging.log4j/log4j-core@2.25.0" {
+		t.Fatalf("affects.ref = %v", got)
+	}
+}
+
 func TestDockerProducesDocumentPerPlatformAndSkipsAttestation(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "calls.log")

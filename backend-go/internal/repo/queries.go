@@ -550,6 +550,7 @@ func (r *Repo) RecomputeRequestStatus(ctx context.Context, requestID int64) (str
 		SET status = CASE
 			WHEN NOT EXISTS (SELECT 1 FROM all_items) THEN 'pending'
 			WHEN NOT EXISTS (SELECT 1 FROM s) THEN 'cancelled'
+			WHEN NOT EXISTS (SELECT 1 FROM s WHERE status <> 'stopped') THEN 'stopped'
 			WHEN EXISTS (SELECT 1 FROM s WHERE status IN ('queued', 'running')) THEN 'pending'
 			WHEN EXISTS (SELECT 1 FROM s WHERE status = 'awaiting_security') THEN 'awaiting_security'
 			WHEN EXISTS (SELECT 1 FROM s WHERE status IN ('awaiting_legal', 'license_claimed'))
@@ -583,7 +584,7 @@ func (r *Repo) RecomputeRequestStatus(ctx context.Context, requestID int64) (str
 // это не вердикт, и автор вправе сказать «уже не надо» вместо перезапуска.
 var CancellableItemStatuses = []string{
 	"queued", "running", "quarantined", "awaiting_legal", "license_claimed",
-	"awaiting_security", "failed",
+	"awaiting_security", "stopped", "failed",
 }
 
 // CancelRequestItems отменяет пакеты заявки и возвращает число отменённых.

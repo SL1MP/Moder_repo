@@ -43,7 +43,7 @@ var VersionStatuses = []string{
 // Держать 1:1 с CHECK-ограничением в migrations/0011.
 var RequestStatuses = []string{
 	"pending", "awaiting_security", "awaiting_legal", "quarantined",
-	"approved", "partially_approved", "dry_run", "rejected", "cancelled", "failed",
+	"approved", "partially_approved", "dry_run", "rejected", "stopped", "cancelled", "failed",
 }
 
 // ItemStatuses — статус request_item, гранулярнее RequestStatuses (см.
@@ -56,7 +56,7 @@ var RequestStatuses = []string{
 var ItemStatuses = []string{
 	"queued", "running", "quarantined", "awaiting_legal", "license_claimed",
 	"awaiting_security", "approved", "dry_run", "rejected", "revoked", "blacklisted",
-	"cancelled", "failed",
+	"stopped", "cancelled", "failed",
 }
 
 var RequestSources = []string{"api", "ui", "cli", "gitlab"}
@@ -174,6 +174,7 @@ var StatusTitles = map[string]string{
 	// rejected: то решение роли («нельзя»), а это отказ автора («уже не
 	// нужно»), и в отчётности их путать нельзя.
 	"cancelled":   "Отменено автором",
+	"stopped":     "Проверка остановлена",
 	"revoked":     "Отозван",
 	"blacklisted": "Запрещён (blacklist)",
 	"failed":      "Ошибка проверки",

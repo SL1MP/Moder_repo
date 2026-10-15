@@ -193,6 +193,9 @@ func (s *Service) Parse(ctx context.Context, in Input) (ParseResult, error) {
 			return ParseResult{}, err
 		}
 		result.Packages = append(result.Packages, parsed)
+		if parsed.ExistingStatus == "deleted" && parsed.Message != "" {
+			result.Warnings = append(result.Warnings, parsed.Message)
+		}
 	}
 	return result, nil
 }
@@ -344,6 +347,16 @@ func (s *Service) classify(ctx context.Context, ref registry.Ref, raw, kind stri
 		}
 		parsed.Message = strings.TrimSpace(fmt.Sprintf("%s %s: %s. %s",
 			ref.DisplayName, ref.RawVersion, statusTitle(existing.Status), reason))
+	case "deleted":
+		// Удаление не является вечным запретом: новую заявку создаём, но явно
+		// предупреждаем автора и сохраняем причину в предупреждениях заявки.
+		reason := "причина не указана"
+		if existing.StatusReason != nil && strings.TrimSpace(*existing.StatusReason) != "" {
+			reason = strings.TrimSpace(*existing.StatusReason)
+		}
+		parsed.Message = fmt.Sprintf(
+			"%s %s ранее удалён из внутреннего артефактори. Причина: %s. Пакет будет проверен и опубликован заново.",
+			ref.DisplayName, ref.RawVersion, reason)
 	}
 	return parsed, nil
 }

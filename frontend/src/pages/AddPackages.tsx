@@ -582,6 +582,7 @@ function ParseResult({ result }: { result: CreateRequestResult }) {
                         {p.required_range ? <code className="dep-range">{p.required_range}</code> : null}
                       </>
                     ) : null}
+                    {p.message ? <div className="small warn-text">{p.message}</div> : null}
                   </td>
                 </tr>
               ))}

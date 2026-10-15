@@ -77,7 +77,7 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
           </p>
         </div>
         <div className="row">
-          {data.summary.failed ? (
+          {data.can_restart ? (
             <button
               className="small"
               onClick={() => api.retryRequest(requestId).then(reload).catch(() => reload())}
@@ -95,7 +95,7 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
                 const left = data.summary.cancellable
                 if (!window.confirm(
                   `Закрыть заявку #${requestId}? Проверка ${left} ` +
-                    'незавершённых пакетов будет прекращена. Вернуть их можно только новой заявкой.',
+                    'незавершённых пакетов будет прекращена. При необходимости эту же заявку можно перезапустить.',
                 )) {
                   return
                 }
@@ -132,6 +132,7 @@ export default function RequestCard({ me, onChange }: { me: Me; onChange: () => 
           <Summary label="В карантине" value={s.quarantined} warn />
           <Summary label="Отклонено" value={s.rejected} bad />
           {s.cancelled ? <Summary label="Закрыто автором" value={s.cancelled} /> : null}
+          {s.stopped ? <Summary label="Остановлено" value={s.stopped} /> : null}
           {s.failed ? <Summary label="Ошибка проверки" value={s.failed} bad /> : null}
         </div>
         {data.reason ? <div className="small dim">Обоснование: {data.reason}</div> : null}
@@ -218,6 +219,7 @@ function PackageBlock({
   const isLegal = me.roles.includes('legal') || me.roles.includes('admin')
   const [restartingStep, setRestartingStep] = useState<string | null>(null)
   const [restartError, setRestartError] = useState<string | null>(null)
+  const [stopping, setStopping] = useState(false)
   // При отложенном решении лицензии агрегатный current_step может ещё
   // указывать на license, хотя worker уже выполняет следующий шаг. Строка
   // pipeline_step с result=running — более точный источник текущей работы.
@@ -235,6 +237,21 @@ function PackageBlock({
       .then(onChanged)
       .catch((e: Error) => setRestartError(e.message))
       .finally(() => setRestartingStep(null))
+  }
+
+  const stop = (stepTitle?: string) => {
+    const reason = window.prompt(
+      `Остановить проверку ${item.name} ${item.version}${stepTitle ? ` на шаге «${stepTitle}»` : ''}? ` +
+        'Причину можно оставить пустой.',
+      '',
+    )
+    if (reason === null) return
+    setStopping(true)
+    setRestartError(null)
+    api.stopItem(requestId, item.id, reason)
+      .then(onChanged)
+      .catch((e: Error) => setRestartError(e.message))
+      .finally(() => setStopping(false))
   }
 
   return (
@@ -319,7 +336,14 @@ function PackageBlock({
             steps={item.steps}
             restartingStep={restartingStep}
             onRestart={item.can_restart ? (step) => restart(step.code, `с шага «${step.title}»`) : undefined}
+            onStop={item.can_stop ? (step) => stop(step.title) : undefined}
+            stopping={stopping}
           />
+          {item.can_stop && !runningStep ? (
+            <button className="danger small" disabled={stopping} onClick={() => stop()}>
+              {stopping ? 'останавливаю…' : 'остановить проверку пакета'}
+            </button>
+          ) : null}
           {item.can_restart ? (
             <p className="small muted" style={{ marginTop: 4 }}>
               Точечный перезапуск повторяет выбранный шаг и все шаги после него в этой же заявке.
@@ -371,7 +395,8 @@ function SBOMs({ itemId, refreshKey }: { itemId: number; refreshKey: string | nu
   return (
     <>
       <h3 style={{ marginTop: 12 }}>SBOM (CycloneDX)</h3>
-      <table className="grid">
+      <div className="table-scroll request-report-table-wrap">
+      <table className="request-report-table">
         <thead>
           <tr>
             <th>Платформа</th>
@@ -402,6 +427,7 @@ function SBOMs({ itemId, refreshKey }: { itemId: number; refreshKey: string | nu
           ))}
         </tbody>
       </table>
+      </div>
       {open ? (
         <ReportViewer title={open.title} url={open.url} kind="json" onClose={() => setOpen(null)} />
       ) : null}
@@ -442,7 +468,8 @@ function ScanReports({
   return (
     <>
       <h3 style={{ marginTop: 12 }}>Отчёты о сканировании</h3>
-      <table className="grid">
+      <div className="table-scroll request-report-table-wrap">
+      <table className="request-report-table scan-report-table">
         <thead>
           <tr>
             <th>Проверка</th>
@@ -456,8 +483,13 @@ function ScanReports({
           {items.map((r) => (
             <tr key={r.step_code}>
               <td>{r.step_title}</td>
-              <td className="nowrap">
-                <Badge value={r.state_title} title={r.detail ?? undefined} />
+              <td>
+                <Badge
+                  value={r.state === 'clean' ? 'pass' : r.state === 'findings' ? 'warn' : 'fail'}
+                  label={r.state_title}
+                  title={r.detail ?? undefined}
+                />
+                {r.detail ? <div className="scan-report-detail">{r.detail}</div> : null}
               </td>
               <td className="nowrap">
                 {r.state === 'unavailable' ? (
@@ -508,6 +540,7 @@ function ScanReports({
           ))}
         </tbody>
       </table>
+      </div>
       <p className="small muted" style={{ marginTop: 4 }}>
         Отчёт — снимок прогона: по нему видно, чем и по каким правилам
         проверяли, даже если находок нет.

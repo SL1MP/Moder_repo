@@ -353,8 +353,9 @@ func openAPIRoutes() []openAPIRoute {
 		{Method: "GET", Path: "/api/v1/requests", OperationID: "listRequests", Summary: "Получить заявки", Tag: "Заявки", Query: []openAPIParam{stringQuery("q", "Номер, пакет, версия, автор или причина"), stringQuery("status", "Статус заявки"), stringQuery("manager", "Код менеджера"), boolQuery("mine", "Только свои заявки"), integerQuery("limit", "Размер страницы, максимум 200"), integerQuery("offset", "Смещение")}},
 		{Method: "POST", Path: "/api/v1/requests", OperationID: "createRequest", Summary: "Создать заявку на модерацию", Tag: "Заявки", SuccessCode: "202", Body: createRequestBody},
 		{Method: "GET", Path: "/api/v1/requests/{requestID}", OperationID: "getRequest", Summary: "Получить карточку заявки", Tag: "Заявки"},
-		{Method: "POST", Path: "/api/v1/requests/{requestID}/retry", OperationID: "retryRequest", Summary: "Перезапустить все упавшие пакеты заявки", Tag: "Заявки"},
+		{Method: "POST", Path: "/api/v1/requests/{requestID}/retry", OperationID: "retryRequest", Summary: "Перезапустить упавшие, остановленные и закрытые пакеты заявки", Tag: "Заявки"},
 		{Method: "POST", Path: "/api/v1/requests/{requestID}/items/{itemID}/retry", OperationID: "retryRequestItem", Summary: "Перезапустить пакет с выбранного шага", Tag: "Заявки", Body: optionalJSONBody(refSchema("RetryItemRequest"), "Код шага, с которого повторить проверку; без тела проверка начнётся с первого шага")},
+		{Method: "POST", Path: "/api/v1/requests/{requestID}/items/{itemID}/stop", OperationID: "stopRequestItem", Summary: "Остановить проверку одного пакета", Tag: "Заявки", Body: optionalJSONBody(refSchema("StopItemRequest"), "Необязательная причина остановки")},
 		{Method: "POST", Path: "/api/v1/requests/{requestID}/cancel", OperationID: "cancelRequest", Summary: "Закрыть свою заявку", Tag: "Заявки", Body: genericJSONBody("Необязательная причина закрытия")},
 		{Method: "POST", Path: "/api/v1/dependencies/resolve", OperationID: "resolveDependencies", Summary: "Предварительно раскрыть дерево зависимостей", Tag: "Зависимости", Body: genericJSONBody("Менеджер, пакеты и глубина")},
 
@@ -507,6 +508,11 @@ func openAPISchemas() map[string]any {
 					"type": "string", "default": "db_check",
 					"enum": []string{"db_check", "blacklist", "quarantine", "license", "download", "dragon_scan", "vuln_scan", "sandbox_scan", "sbom", "publish"},
 				},
+			},
+		},
+		"StopItemRequest": map[string]any{
+			"type": "object", "properties": map[string]any{
+				"reason": map[string]any{"type": "string", "maxLength": 1000},
 			},
 		},
 	}

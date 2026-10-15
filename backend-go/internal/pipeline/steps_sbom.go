@@ -48,13 +48,33 @@ func (SBOMStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	if err := pc.Deps.Repo.DeleteSBOMDocuments(ctx, pc.Item.ID); err != nil {
 		return StepOutcome{}, err
 	}
-	for _, old := range oldDocs { _ = pc.Deps.Reports.Delete(ctx, old.StorageKey) }
+	for _, old := range oldDocs {
+		_ = pc.Deps.Reports.Delete(ctx, old.StorageKey)
+	}
+	vulnerabilities, err := pc.Deps.Repo.ListVulnerabilities(ctx, pc.Version.ID)
+	if err != nil {
+		return StepOutcome{}, err
+	}
+	sbomVulnerabilities := make([]sbom.Vulnerability, 0, len(vulnerabilities))
+	for _, finding := range vulnerabilities {
+		score := finding.Score / 10
+		if finding.CVSSScore != nil {
+			score = *finding.CVSSScore
+		}
+		sbomVulnerabilities = append(sbomVulnerabilities, sbom.Vulnerability{
+			ID: finding.ExternalID, Aliases: finding.Aliases,
+			Summary: deref(finding.Summary), URL: deref(finding.URL),
+			Severity: deref(finding.Severity), CVSSVector: deref(finding.CVSSVector),
+			CVSSScore: score, FixedVersions: finding.FixedVersions,
+		})
+	}
 
 	docs, err := pc.Deps.SBOM.Generate(ctx, sbom.Input{
 		Manager: pc.Package.Manager, Name: pc.Package.Name, DisplayName: pc.Package.DisplayName,
 		Version: pc.Version.Version, RawVersion: pc.Version.RawVersion,
 		LicenseSPDX: deref(pc.Version.LicenseSPDX), LicenseRaw: deref(pc.Version.LicenseRaw),
 		ArtifactSHA256: deref(artifact.SHA256), Payload: payload,
+		Vulnerabilities: sbomVulnerabilities,
 	})
 	if err != nil { return StepOutcome{}, fmt.Errorf("формирование SBOM: %w", err) }
 	if len(docs) == 0 { return StepOutcome{}, fmt.Errorf("генератор SBOM не вернул ни одного документа") }
@@ -98,5 +118,8 @@ func (SBOMStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	if pc.Package.Manager == "docker" {
 		message = fmt.Sprintf("Сформирован CycloneDX SBOM для %d платформ Docker-образа.", len(written))
 	}
-	return Pass(message).WithDetails(map[string]any{"documents": views, "format": "cyclonedx-json"}), nil
+	return Pass(message).WithDetails(map[string]any{
+		"documents": views, "format": "cyclonedx-json",
+		"vulnerabilities": len(sbomVulnerabilities),
+	}), nil
 }

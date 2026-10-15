@@ -41,6 +41,22 @@ type Input struct {
 	LicenseRaw     string
 	ArtifactSHA256 string
 	Payload        []byte
+	// Vulnerabilities — результаты реально выполненного шага OSV для этой
+	// версии. Корпоративный generate_from_packagelist_license.py добавляет
+	// PURL и лицензии, но CVE не создаёт; здесь они встраиваются в стандартную
+	// секцию CycloneDX и связываются с компонентом через affects.
+	Vulnerabilities []Vulnerability
+}
+
+type Vulnerability struct {
+	ID            string
+	Aliases       []string
+	Summary       string
+	URL           string
+	Severity      string
+	CVSSVector    string
+	CVSSScore     float64
+	FixedVersions []string
 }
 
 // Document is one CycloneDX JSON file. Docker returns one per real platform.
@@ -83,12 +99,13 @@ func (g DefaultGenerator) now() time.Time {
 }
 
 type cdxDocument struct {
-	BomFormat   string       `json:"bomFormat"`
-	SpecVersion string       `json:"specVersion"`
-	Serial      string       `json:"serialNumber"`
-	Version     int          `json:"version"`
-	Metadata    cdxMetadata  `json:"metadata"`
-	Components  []cdxComponent `json:"components"`
+	BomFormat       string             `json:"bomFormat"`
+	SpecVersion     string             `json:"specVersion"`
+	Serial          string             `json:"serialNumber"`
+	Version         int                `json:"version"`
+	Metadata        cdxMetadata        `json:"metadata"`
+	Components      []cdxComponent     `json:"components"`
+	Vulnerabilities []cdxVulnerability `json:"vulnerabilities,omitempty"`
 }
 
 type cdxMetadata struct {
@@ -128,6 +145,30 @@ type cdxLicenseValue struct {
 	Name string `json:"name,omitempty"`
 }
 
+type cdxVulnerability struct {
+	BomRef         string             `json:"bom-ref"`
+	ID             string             `json:"id"`
+	Source         *cdxVulnSource     `json:"source,omitempty"`
+	Ratings        []cdxVulnRating    `json:"ratings,omitempty"`
+	Description    string             `json:"description,omitempty"`
+	Recommendation string             `json:"recommendation,omitempty"`
+	Affects        []cdxVulnAffect    `json:"affects"`
+}
+
+type cdxVulnSource struct {
+	Name string `json:"name"`
+	URL  string `json:"url,omitempty"`
+}
+type cdxVulnRating struct {
+	Score    float64 `json:"score,omitempty"`
+	Severity string  `json:"severity,omitempty"`
+	Method   string  `json:"method,omitempty"`
+	Vector   string  `json:"vector,omitempty"`
+}
+type cdxVulnAffect struct {
+	Ref string `json:"ref"`
+}
+
 func (g DefaultGenerator) generatePackage(in Input) (Document, error) {
 	purl, group, name, err := packagePURL(in.Manager, in.Name, in.Version)
 	if err != nil {
@@ -157,6 +198,38 @@ func (g DefaultGenerator) generatePackage(in Input) (Document, error) {
 		// reads this list rather than metadata.component.
 		Components: []cdxComponent{component},
 	}
+	seenVulnerabilities := make(map[string]bool, len(in.Vulnerabilities))
+	for _, finding := range in.Vulnerabilities {
+		id := preferredVulnerabilityID(finding.ID, finding.Aliases)
+		if id == "" || seenVulnerabilities[id] {
+			continue
+		}
+		seenVulnerabilities[id] = true
+		v := cdxVulnerability{
+			BomRef: "vulnerability:" + id, ID: id, Description: strings.TrimSpace(finding.Summary),
+			Affects: []cdxVulnAffect{{Ref: purl}},
+		}
+		if rawURL := strings.TrimSpace(finding.URL); rawURL != "" {
+			v.Source = &cdxVulnSource{Name: "OSV", URL: rawURL}
+		} else {
+			v.Source = &cdxVulnSource{Name: "OSV"}
+		}
+		severity := normalizeSeverity(finding.Severity, finding.CVSSScore)
+		if finding.CVSSScore > 0 || severity != "unknown" || strings.TrimSpace(finding.CVSSVector) != "" {
+			method := "other"
+			if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(finding.CVSSVector)), "CVSS:3") {
+				method = "CVSSv3"
+			}
+			v.Ratings = []cdxVulnRating{{
+				Score: finding.CVSSScore, Severity: severity, Method: method,
+				Vector: strings.TrimSpace(finding.CVSSVector),
+			}}
+		}
+		if len(finding.FixedVersions) > 0 {
+			v.Recommendation = "Обновить до исправленной версии: " + strings.Join(finding.FixedVersions, ", ")
+		}
+		doc.Vulnerabilities = append(doc.Vulnerabilities, v)
+	}
 	body, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return Document{}, fmt.Errorf("сериализация CycloneDX: %w", err)
@@ -166,6 +239,35 @@ func (g DefaultGenerator) generatePackage(in Input) (Document, error) {
 		Filename: safeFilename(in.Name) + "-" + safeFilename(in.RawVersion) + ".cdx.json",
 		SpecVersion: "1.4", Body: body,
 	}, nil
+}
+
+func preferredVulnerabilityID(primary string, aliases []string) string {
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		if strings.HasPrefix(strings.ToUpper(alias), "CVE-") {
+			return alias
+		}
+	}
+	return strings.TrimSpace(primary)
+}
+
+func normalizeSeverity(value string, score float64) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "critical", "high", "medium", "low", "unknown":
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+	switch {
+	case score >= 9:
+		return "critical"
+	case score >= 7:
+		return "high"
+	case score >= 4:
+		return "medium"
+	case score > 0:
+		return "low"
+	default:
+		return "unknown"
+	}
 }
 
 func packagePURL(manager, rawName, version string) (purl, group, name string, err error) {

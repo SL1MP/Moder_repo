@@ -35,11 +35,14 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	if err != nil {
 		return StepOutcome{}, err
 	}
-	if fresh != nil && fresh.Status == "cancelled" {
-		return Warn("Публикация отменена: заявка закрыта автором.").
-			WithStatus("cancelled", "").
-			WithNextAction("Пакет больше не нужен автору заявки. " +
-				"Чтобы получить его, создайте новую заявку."), nil
+	if fresh != nil && domain.Contains([]string{"cancelled", "stopped"}, fresh.Status) {
+		message := "Публикация отменена: заявка закрыта автором."
+		next := "Пакет больше не нужен автору заявки. Проверку можно перезапустить в этой же заявке."
+		if fresh.Status == "stopped" {
+			message = "Публикация отменена: проверка пакета остановлена пользователем."
+			next = "Перезапустите проверку в этой же заявке, если пакет снова нужен."
+		}
+		return Warn(message).WithStatus(fresh.Status, "").WithNextAction(next), nil
 	}
 
 	// Согласования идут параллельно, поэтому к публикации пакет может прийти с

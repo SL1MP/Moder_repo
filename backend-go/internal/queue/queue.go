@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -245,7 +246,7 @@ func (q *Queue) Restart(ctx context.Context, itemID int64, fromStep string) erro
 		return ErrActive
 	}
 	if domain.Contains([]string{
-		"approved", "rejected", "revoked", "blacklisted", "cancelled",
+		"approved", "rejected", "revoked", "blacklisted",
 	}, status) {
 		return ErrTerminal
 	}
@@ -281,6 +282,57 @@ func (q *Queue) Restart(ctx context.Context, itemID int64, fromStep string) erro
 		return fmt.Errorf("завершение перезапуска пакета #%d: %w", itemID, err)
 	}
 	return q.Notify(ctx)
+}
+
+// Stop прерывает проверку одного пакета, не закрывая заявку целиком.
+//
+// Смена статуса отбирает строку у worker: очередной Heartbeat вернёт false и
+// отменит контекст выполняющегося шага. Текущий шаг сразу получает warn, чтобы
+// карточка не показывала «выполняется» после подтверждённой остановки.
+func (q *Queue) Stop(ctx context.Context, itemID int64, reason string) (bool, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "Проверка остановлена пользователем"
+	}
+	tx, err := q.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("начало остановки пакета #%d: %w", itemID, err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var currentStep *string
+	err = tx.QueryRow(ctx, `
+		UPDATE request_item
+		SET status = 'stopped', blocked_reason = $2,
+		    next_action = 'Проверку можно перезапустить в этой же заявке.',
+		    waiting_since = NULL, finished_at = now(), resume_from_step = NULL,
+		    updated_at = now()
+		WHERE id = $1 AND status IN (
+		    'queued', 'running', 'quarantined', 'awaiting_legal',
+		    'license_claimed', 'awaiting_security'
+		)
+		RETURNING current_step
+	`, itemID, reason).Scan(&currentStep)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("остановка пакета #%d: %w", itemID, err)
+	}
+	if currentStep != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE pipeline_step
+			SET result = 'warn', message = $3, finished_at = now()
+			WHERE request_item_id = $1 AND step_code = $2
+			  AND result IN ('pending', 'running')
+		`, itemID, *currentStep, reason); err != nil {
+			return false, fmt.Errorf("фиксация остановленного шага пакета #%d: %w", itemID, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("завершение остановки пакета #%d: %w", itemID, err)
+	}
+	return true, nil
 }
 
 // Notify будит ожидающих воркеров. Ошибка не фатальна для вызывающего:

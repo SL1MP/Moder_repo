@@ -276,6 +276,49 @@ func TestHeartbeat(t *testing.T) {
 	}
 }
 
+func TestStopInterruptsAndCanRestart(t *testing.T) {
+	q, r, cleanup := setup(t)
+	defer cleanup()
+	ctx := context.Background()
+	itemID := newItem(t, r, "running")
+	step := "download"
+	if err := r.UpdateRequestItemCurrentStep(ctx, itemID, step); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().UTC()
+	message := "Шаг выполняется"
+	if _, err := r.UpsertPipelineStep(ctx, domain.PipelineStep{
+		RequestItemID: itemID, StepCode: step, StepOrder: domain.StepOrder[step],
+		Result: "running", Message: &message, StartedAt: &started,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped, err := q.Stop(ctx, itemID, "остановлено тестом")
+	if err != nil || !stopped {
+		t.Fatalf("Stop: stopped=%v err=%v", stopped, err)
+	}
+	alive, err := q.Heartbeat(ctx, itemID)
+	if err != nil || alive {
+		t.Fatalf("остановленный прогон всё ещё жив: alive=%v err=%v", alive, err)
+	}
+	item, err := r.GetRequestItem(ctx, itemID)
+	if err != nil || item == nil || item.Status != "stopped" {
+		t.Fatalf("item=%+v err=%v", item, err)
+	}
+	steps, err := r.ListStepsByItem(ctx, itemID)
+	if err != nil || len(steps) != 1 || steps[0].Result != "warn" {
+		t.Fatalf("остановленный шаг=%+v err=%v", steps, err)
+	}
+	if err := q.Restart(ctx, itemID, "db_check"); err != nil {
+		t.Fatalf("Restart stopped: %v", err)
+	}
+	item, err = r.GetRequestItem(ctx, itemID)
+	if err != nil || item == nil || item.Status != "queued" {
+		t.Fatalf("перезапущенный item=%+v err=%v", item, err)
+	}
+}
+
 func TestEnqueueSetsResumeStep(t *testing.T) {
 	q, r, cleanup := setup(t)
 	defer cleanup()

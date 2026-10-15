@@ -323,6 +323,7 @@ export interface RequestItem {
   status: string
   status_title: string
   can_restart: boolean
+  can_stop: boolean
   /**
    * Шаги, по которым решение роли ещё не получено: `license` — юристы,
 	 * `sandbox_scan` — DevSecOps, `quarantine` — срок карантина. Dragon и OSV сюда не
@@ -381,6 +382,7 @@ export interface ModerationRequest {
     failed: number
     cancellable: number
     cancelled: number
+    stopped: number
     by_status: Record<string, number>
   }
   packages: RequestItem[]
@@ -712,6 +714,11 @@ export const api = {
     request<ModerationRequest>(`/requests/${requestId}/items/${itemId}/retry`, {
       method: 'POST',
       body: JSON.stringify({ from_step: fromStep }),
+    }),
+  stopItem: (requestId: number, itemId: number, reason = '') =>
+    request<ModerationRequest>(`/requests/${requestId}/items/${itemId}/stop`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
     }),
   // Закрытие заявки автором: пакеты больше не нужны. Не отклонение — то
   // решение роли, а это отказ автора.

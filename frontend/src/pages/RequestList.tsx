@@ -13,6 +13,7 @@ const STATUS_FILTERS = [
   { value: 'approved', label: 'Одобрены' },
   { value: 'rejected', label: 'Отклонены' },
   { value: 'cancelled', label: 'Закрыты автором' },
+  { value: 'stopped', label: 'Остановлены' },
 ]
 
 const PAGE_SIZE = 25
