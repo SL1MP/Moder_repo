@@ -39,6 +39,7 @@ const (
 	GapValue  GapKind = "значение"
 	GapColumn GapKind = "столбец"
 	GapTable  GapKind = "таблица"
+	GapLength GapKind = "длина"
 )
 
 // SchemaGap — то, чего код ждёт от базы, а в базе этого нет.
@@ -49,6 +50,10 @@ type SchemaGap struct {
 	Value  string
 	// Constraint — ограничение, которое отвергает значение (для GapValue).
 	Constraint string
+	// ActualLength/RequiredLength используются для VARCHAR. nil означает
+	// неограниченный TEXT, который удовлетворяет любой минимальной длине.
+	ActualLength   *int
+	RequiredLength int
 	// Migration — что накатить. Названы оба набора: боевую базу может
 	// создавать любой из них.
 	Migration string
@@ -60,6 +65,13 @@ func (g SchemaGap) String() string {
 		return fmt.Sprintf("нет таблицы %s — накатите %s", g.Table, g.Migration)
 	case GapColumn:
 		return fmt.Sprintf("нет столбца %s.%s — накатите %s", g.Table, g.Column, g.Migration)
+	case GapLength:
+		actual := "не ограничена"
+		if g.ActualLength != nil {
+			actual = fmt.Sprintf("%d", *g.ActualLength)
+		}
+		return fmt.Sprintf("%s.%s имеет максимальную длину %s, требуется не менее %d — накатите %s",
+			g.Table, g.Column, actual, g.RequiredLength, g.Migration)
 	default:
 		return fmt.Sprintf("%s.%s не разрешает значение %q (ограничение %s) — накатите %s",
 			g.Table, g.Column, g.Value, g.Constraint, g.Migration)
@@ -166,6 +178,18 @@ var requiredColumns = []struct {
 	{"user", "description", "backend-go/migrations/0023_auth_sessions"},
 }
 
+// requiredColumnLengths ловит миграции, которые меняют не наличие столбца,
+// а его вместимость. Без этой проверки `moderation schema` называл схему
+// актуальной, хотя Docker tag@digest падал только посреди большого импорта.
+var requiredColumnLengths = []struct {
+	table, column, migration string
+	minimum                  int
+}{
+	{"package_version", "version", "backend-go/migrations/0033_long_package_versions", 512},
+	{"package_version", "raw_version", "backend-go/migrations/0033_long_package_versions", 512},
+	{"request_item", "requested_version", "backend-go/migrations/0033_long_package_versions", 512},
+}
+
 // requiredTables — таблицы поздних миграций.
 var requiredTables = []struct{ table, migration string }{
 	{"code_finding", "backend-go/migrations/0003_code_findings (или alembic 0003)"},
@@ -209,6 +233,23 @@ func (r *Repo) MissingSchemaObjects(ctx context.Context) ([]SchemaGap, error) {
 		if !exists {
 			gaps = append(gaps, SchemaGap{
 				Kind: GapColumn, Table: req.table, Column: req.column, Migration: req.migration,
+			})
+		}
+	}
+
+	for _, req := range requiredColumnLengths {
+		length, exists, err := r.columnMaximumLength(ctx, req.table, req.column)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			// requiredColumns/начальная схема отвечают за отсутствие столбца.
+			continue
+		}
+		if length != nil && *length < req.minimum {
+			gaps = append(gaps, SchemaGap{
+				Kind: GapLength, Table: req.table, Column: req.column,
+				ActualLength: length, RequiredLength: req.minimum, Migration: req.migration,
 			})
 		}
 	}
@@ -313,6 +354,22 @@ func (r *Repo) columnExists(ctx context.Context, table, column string) (bool, er
 		return false, fmt.Errorf("проверка столбца %s.%s: %w", table, column, err)
 	}
 	return exists, nil
+}
+
+func (r *Repo) columnMaximumLength(ctx context.Context, table, column string) (*int, bool, error) {
+	var length *int
+	err := r.pool.QueryRow(ctx, `
+		SELECT character_maximum_length
+		FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2
+	`, table, column).Scan(&length)
+	if err == nil {
+		return length, true, nil
+	}
+	if err == pgx.ErrNoRows {
+		return nil, false, nil
+	}
+	return nil, false, fmt.Errorf("проверка длины столбца %s.%s: %w", table, column, err)
 }
 
 // sortedKeys — порядок обхода ограничений фиксирован: в логе и в выводе

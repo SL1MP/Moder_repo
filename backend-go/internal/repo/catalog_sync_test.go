@@ -2,7 +2,9 @@ package repo
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 )
 
 // PostgreSQL видит одновременно столбцы UPDATE-таблицы и CTE из FROM.
@@ -45,5 +47,42 @@ func TestClaimCatalogSyncMovesQueuedRunToRunning(t *testing.T) {
 	}
 	if next != nil {
 		t.Fatalf("один запуск выдан двум worker: %+v", next)
+	}
+}
+
+// Максимальный Docker tag вместе с index digest занимает 200 символов.
+// Такой образ встречается в корпоративном каталоге и раньше падал на
+// package_version.version VARCHAR(128), оставляя частично завершённый импорт.
+func TestTrustedCatalogAcceptsFullDockerTagAndDigest(t *testing.T) {
+	r, cleanup := mustPool(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+	name := "catalog-long-docker-version-test"
+	version := strings.Repeat("a", 128) + "@sha256:" + strings.Repeat("b", 64)
+
+	result, err := r.UpsertTrustedCatalogArtifacts(ctx, []CatalogArtifact{{
+		Manager: "docker", Name: name, DisplayName: name,
+		Version: version, RawVersion: version,
+		Filename: "list.manifest.json",
+		URL: "https://artifactory.example/docker/" + name + "/manifest.json",
+		SHA256: strings.Repeat("b", 64), PublishedAt: time.Now().UTC(),
+	}}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("импорт Docker tag@digest длиной %d: %v", len(version), err)
+	}
+	if result.VersionID == 0 {
+		t.Fatal("импорт не вернул package_version")
+	}
+	t.Cleanup(func() {
+		_, _ = r.pool.Exec(context.Background(),
+			`DELETE FROM package WHERE manager = 'docker' AND name = $1`, name)
+	})
+
+	row, err := r.GetVersionRow(ctx, result.VersionID)
+	if err != nil || row == nil {
+		t.Fatalf("чтение импортированной версии: row=%+v err=%v", row, err)
+	}
+	if row.Version.Version != version || row.Version.RawVersion != version {
+		t.Fatalf("Docker-версия была обрезана: %+v", row.Version)
 	}
 }
