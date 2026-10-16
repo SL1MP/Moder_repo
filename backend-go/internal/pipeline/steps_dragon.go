@@ -54,10 +54,6 @@ func (DragonScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error)
 	if err != nil {
 		return dragonInformation("Пакет не отправлен в Dragon: архив не прочитан.", err, dragon.Result{}), nil
 	}
-	prepared, err := dragon.PrepareArchive(payload, artifact.Filename, pc.Config.ScanMaxUnpackedBytes)
-	if err != nil {
-		return dragonInformation("Пакет не отправлен в Dragon: архив не подготовлен.", err, dragon.Result{}), nil
-	}
 
 	// Go-модули чувствительны к регистру: DisplayName хранит исходный путь,
 	// тогда как Name нормализован для поиска в базе.
@@ -65,16 +61,21 @@ func (DragonScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error)
 	if name == "" {
 		name = strings.TrimSpace(pc.Package.Name)
 	}
-	prepared.Manager = pc.Package.Manager
-	prepared.Name = name
-	prepared.Version = pc.Version.RawVersion
+	size := int64(len(payload))
+	if artifact.SizeBytes != nil {
+		size = *artifact.SizeBytes
+	}
 	result, scanErr := pc.Deps.Dragon.Scan(ctx, dragon.Request{
 		PipelineID:   pc.Config.DragonPipelineID,
 		RepositoryID: repositoryID,
 		ExternalID:   "moderation:item:" + strconv.FormatInt(pc.Item.ID, 10) + ":sha256:" + *artifact.SHA256,
 		Publish:      pc.Config.DragonPublish,
 		Priority:     pc.Config.DragonPriority,
-		Artifact: prepared,
+		Artifact: dragon.Artifact{
+			Manager: pc.Package.Manager, Name: name,
+			Version: pc.Version.RawVersion, Filename: artifact.Filename,
+			SHA256: *artifact.SHA256, SizeBytes: size, Payload: payload,
+		},
 	})
 	if result.RepositoryID == "" {
 		result.RepositoryID = repositoryID

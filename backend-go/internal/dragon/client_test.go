@@ -54,7 +54,7 @@ func TestClientUploadsArchiveAndPollsReturnedStatusURL(t *testing.T) {
 			if string(buf) != string(payload) || header.Filename != "module.zip" {
 				t.Errorf("file=%q filename=%q", buf, header.Filename)
 			}
-			if got := header.Header.Get("Content-Type"); got != "application/x-zip-compressed" {
+			if got := header.Header.Get("Content-Type"); got != "application/zip" {
 				t.Errorf("file content type = %q", got)
 			}
 			if r.FormValue("name") != "github.com/acme/module" ||
@@ -148,6 +148,24 @@ func TestClientTreatsDragonSuccessAsTerminalInformation(t *testing.T) {
 	}
 	if !result.Done || !result.Success || result.Findings.Total != 0 {
 		t.Fatalf("plain success must be terminal information: %+v", result)
+	}
+}
+
+func TestArtifactContentTypePreservesStagingFormat(t *testing.T) {
+	for _, test := range []struct {
+		filename string
+		payload  []byte
+		want     string
+	}{
+		{"release.pypi-release.tgz", []byte{0x1f, 0x8b}, "application/gzip"},
+		{"module.zip", []byte("zip"), "application/zip"},
+		{"package.whl", []byte("wheel"), "application/zip"},
+		{"package.nupkg", []byte("nuget"), "application/zip"},
+		{"package.rock", []byte("rock"), "application/octet-stream"},
+	} {
+		if got := artifactContentType(test.filename, test.payload); got != test.want {
+			t.Errorf("%s: Content-Type %q, ожидалось %q", test.filename, got, test.want)
+		}
 	}
 }
 

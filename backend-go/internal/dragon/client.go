@@ -346,7 +346,7 @@ func archiveMultipart(req Request) (io.Reader, string, int64, error) {
 	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{
 		"name": "file", "filename": filename,
 	}))
-	header.Set("Content-Type", "application/x-zip-compressed")
+	header.Set("Content-Type", artifactContentType(req.Artifact.Filename, req.Artifact.Payload))
 	if _, err := multipartWriter.CreatePart(header); err != nil {
 		return nil, "", 0, err
 	}
@@ -379,6 +379,25 @@ func archiveMultipart(req Request) (io.Reader, string, int64, error) {
 		bytes.NewReader(suffix),
 	)
 	return reader, multipartWriter.FormDataContentType(), contentLength, nil
+}
+
+func artifactContentType(filename string, payload []byte) string {
+	lower := strings.ToLower(strings.TrimSpace(filename))
+	switch {
+	case strings.HasSuffix(lower, ".tgz"), strings.HasSuffix(lower, ".tar.gz"):
+		return "application/gzip"
+	case strings.HasSuffix(lower, ".zip"), strings.HasSuffix(lower, ".whl"),
+		strings.HasSuffix(lower, ".nupkg"), strings.HasSuffix(lower, ".jar"):
+		return "application/zip"
+	case strings.HasSuffix(lower, ".rock"):
+		return "application/octet-stream"
+	case len(payload) >= 2 && payload[0] == 0x1f && payload[1] == 0x8b:
+		return "application/gzip"
+	case len(payload) >= 4 && bytes.Equal(payload[:4], []byte("PK\x03\x04")):
+		return "application/zip"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func normalizeStatus(base Result, status statusResponse) Result {
