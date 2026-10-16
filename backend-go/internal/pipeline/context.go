@@ -9,6 +9,7 @@ import (
 	"moderation/internal/artifactstore"
 	"moderation/internal/domain"
 	"moderation/internal/dragon"
+	"moderation/internal/gitmirror"
 	"moderation/internal/osv"
 	"moderation/internal/registry"
 	"moderation/internal/repo"
@@ -110,6 +111,9 @@ type Deps struct {
 	// SBOM строит документы из уже скачанных байтов. Повторно обращаться к
 	// внешнему реестру генератору не разрешается.
 	SBOM sbom.Generator
+	// GitMirror переносит Git-репозиторий целиком во внутренний GitLab и
+	// устанавливает CI-шаблон. Он не использует артефактори.
+	GitMirror gitmirror.Service
 	// Banner/SAST — сканеры СНЯТЫХ шагов (pipeline.RetiredSteps). Конвейер их
 	// не вызывает.
 	Banner scanners.Scanner
@@ -134,6 +138,7 @@ type Context struct {
 	Version *domain.PackageVersion
 	Item    *domain.RequestItem
 	Request *domain.ModerationRequest
+	Author  *domain.User
 
 	Config Config
 	Deps   Deps

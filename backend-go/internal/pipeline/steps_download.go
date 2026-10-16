@@ -36,6 +36,9 @@ type DownloadStep struct{}
 func (DownloadStep) Code() string { return "download" }
 
 func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
+	if pc.Package.Manager == "git" {
+		return downloadGitMirror(ctx, pc)
+	}
 	meta, err := pc.Metadata(ctx)
 	if err != nil {
 		return Fail(fmt.Sprintf("Метаданные версии не получены из реестра: %v", err)).
@@ -120,6 +123,55 @@ func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 			"staging_repo": pc.Deps.Storage.Bucket(), "staging_path": key,
 			"sha256": sha, "size_bytes": len(payload), "filename": filename,
 		}), nil
+}
+
+func downloadGitMirror(ctx context.Context, pc *Context) (StepOutcome, error) {
+	if pc.Deps.GitMirror == nil {
+		return Fail("Git-репозиторий не зеркалирован: интеграция с внутренним GitLab не настроена.").
+			WithStatus("failed", "failed").
+			WithNextAction("Администратор: настройте раздел «Git-модерация» и перезапустите проверку."), nil
+	}
+	maintainer := ""
+	if pc.Author != nil {
+		maintainer = pc.Author.Username
+		if pc.Author.GitlabUsername != nil && strings.TrimSpace(*pc.Author.GitlabUsername) != "" {
+			maintainer = strings.TrimSpace(*pc.Author.GitlabUsername)
+		}
+	}
+	result, err := pc.Deps.GitMirror.Mirror(ctx, pc.Package.DisplayName, maintainer)
+	if err != nil {
+		return Fail(fmt.Sprintf("Git-репозиторий не зеркалирован во внутренний GitLab: %v", err)).
+			WithStatus("failed", "failed").
+			WithNextAction("Проверьте доступность исходного репозитория и сервисные токены Git-модерации."), nil
+	}
+	if strings.TrimSpace(maintainer) == "" || !result.MaintainerAssigned {
+		return Fail(fmt.Sprintf(
+			"Репозиторий зеркалирован, но пользователь %q не найден во внутреннем GitLab и не назначен Maintainer.",
+			maintainer)).WithDetails(map[string]any{
+			"project_url": result.ProjectURL, "maintainer": maintainer,
+			"maintainer_assigned": false,
+		}).WithStatus("failed", "failed").WithNextAction(
+			"Подключите пользователю GitLab в профиле или синхронизируйте его логин с внутренним GitLab, затем повторите проверку."), nil
+	}
+	artifact, err := pc.Deps.Repo.GetOrCreateArtifact(ctx, pc.Version.ID, "repository.git")
+	if err != nil {
+		return StepOutcome{}, err
+	}
+	if err := pc.Deps.Repo.SetArtifactExternalReference(
+		ctx, artifact.ID, result.SourceURL, result.ProjectURL,
+	); err != nil {
+		return StepOutcome{}, err
+	}
+	return Pass(fmt.Sprintf(
+		"Репозиторий зеркалирован во внутренний GitLab: %d веток, %d тегов. Рабочая ветка: %s.",
+		result.Branches, result.Tags, result.PTBranch)).WithDetails(map[string]any{
+		"source_url": result.SourceURL, "project_url": result.ProjectURL,
+		"project_id": result.ProjectID, "target_path": result.TargetPath,
+		"default_branch": result.DefaultBranch, "protected_branch": result.PTBranch,
+		"branches": result.Branches, "tags": result.Tags,
+		"created": result.Created, "forced": result.Forced, "lfs_supported": result.LFSSupported,
+		"maintainer": result.Maintainer, "maintainer_assigned": result.MaintainerAssigned,
+	}), nil
 }
 
 // fetchArtifact получает байты артефакта.

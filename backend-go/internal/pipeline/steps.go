@@ -83,6 +83,12 @@ type DbCheckStep struct{}
 func (DbCheckStep) Code() string { return "db_check" }
 
 func (DbCheckStep) Run(_ context.Context, pc *Context) (StepOutcome, error) {
+	// Git-заявка является синхронизацией изменяемого репозитория. Даже уже
+	// одобренный проект нужно зеркалировать повторно, чтобы перенести новые
+	// ветки и теги; статус версии здесь не завершает прогон.
+	if pc.Package.Manager == "git" {
+		return Pass("Репозиторий будет синхронизирован с внутренним GitLab."), nil
+	}
 	switch pc.Version.Status {
 	case "approved":
 		return StepOutcome{
@@ -213,10 +219,11 @@ func (LicenseStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	// Для этих типов модерации проверка лицензий политикой сервиса отключена.
 	// В частности, у Docker одна метка образа не описывает лицензии всех
 	// входящих в него пакетов, а у файлов нет реестра с единым контрактом
-	// метаданных. Git намеренно отсутствует в списке: для репозитория нужно
-	// получить лицензию из метаданных/архива или передать её юристу.
+	// метаданных. Git переносится целиком по принятой схеме зеркалирования:
+	// отдельного пакетного артефакта для автоматического определения лицензии
+	// в этом конвейере нет.
 	switch pc.Package.Manager {
-	case "docker", "files", "luarocks", "terraform":
+	case "docker", "files", "git", "luarocks", "terraform":
 		return StepOutcome{
 			Result:  "skipped",
 			Message: fmt.Sprintf("Проверка лицензии отключена для менеджера %s.", pc.Package.Manager),

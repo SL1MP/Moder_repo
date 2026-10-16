@@ -269,7 +269,7 @@ func New(cfg Config) *Registry {
 			HTTP:    cfg.HTTP, DefaultPlatform: "linux_amd64",
 		},
 
-		&Git{Binary: cfg.GitBinary, Timeout: cfg.GitTimeout},
+		&Git{},
 		&Files{},
 	}
 	r := &Registry{plugins: make(map[string]Plugin, len(plugins)), order: plugins}

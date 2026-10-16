@@ -92,8 +92,8 @@ func TestEntryRoundTrip(t *testing.T) {
 		"terraform": {"hashicorp/aws@5.31.0", "hashicorp/aws", "5.31.0"},
 		"php":       {"symfony/console:6.4.2", "symfony/console", "6.4.2"},
 		"git": {
-			"https://github.com/org/repo@v1.2.3",
-			"https://github.com/org/repo", "v1.2.3",
+			"https://github.com/org/repo",
+			"https://github.com/org/repo", "mirror",
 		},
 		"files": {
 			"https://example.com/tool.tar.gz@sha256:" + strings.Repeat("a", 64),
@@ -231,7 +231,7 @@ func TestFilesMetadataCarriesDeclaredChecksum(t *testing.T) {
 // Плагин, случайно потерявший Downloader, скачал бы только один файл.
 func TestDownloaderManagers(t *testing.T) {
 	want := map[string]bool{
-		"docker": true, "git": true, "conan": true, "maven": true, "pypi": true,
+		"docker": true, "git": false, "conan": true, "maven": true, "pypi": true,
 		"terraform": true,
 	}
 	for _, plugin := range newAll(nil).Plugins() {

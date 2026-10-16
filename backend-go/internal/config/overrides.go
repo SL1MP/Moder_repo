@@ -60,6 +60,19 @@ var webEditable = map[string]bool{
 	"GITLAB_URL":                          true,
 	"GITLAB_OAUTH_CLIENT_ID":              true,
 	"GITLAB_OAUTH_SECRET":                 true,
+	"GIT_MIRROR_ENABLED":                  true,
+	"GIT_MIRROR_GITLAB_URL":               true,
+	"GIT_MIRROR_API_TOKEN":                true,
+	"GIT_MIRROR_PUSH_TOKEN":               true,
+	"GIT_MIRROR_PUSH_USERNAME":            true,
+	"GIT_MIRROR_TEMPLATE_TOKEN":           true,
+	"GIT_MIRROR_TEMPLATE_PROJECT":         true,
+	"GIT_MIRROR_TEMPLATE_REF":             true,
+	"GIT_MIRROR_TEMPLATE_PATH":            true,
+	"GIT_MIRROR_TEMPLATE_MARKER":          true,
+	"GIT_MIRROR_BRANCH_PREFIX":            true,
+	"GIT_MIRROR_FORCE":                    true,
+	"GIT_MIRROR_TIMEOUT_SECONDS":          true,
 	"BLACKLIST_FILE":                      true,
 	"ALLOWED_LICENSES_FILE":                true,
 	"MAX_UPLOAD_SIZE_BYTES":                true,
@@ -79,10 +92,13 @@ var webEditable = map[string]bool{
 }
 
 var secretSettings = map[string]bool{
-	"ARTIFACT_TOKEN":       true,
-	"SANDBOX_TOKEN":        true,
-	"DRAGON_TOKEN":         true,
-	"GITLAB_OAUTH_SECRET":  true,
+	"ARTIFACT_TOKEN":             true,
+	"SANDBOX_TOKEN":              true,
+	"DRAGON_TOKEN":               true,
+	"GITLAB_OAUTH_SECRET":        true,
+	"GIT_MIRROR_API_TOKEN":       true,
+	"GIT_MIRROR_PUSH_TOKEN":      true,
+	"GIT_MIRROR_TEMPLATE_TOKEN":  true,
 }
 
 func IsSecretSetting(key string) bool { return secretSettings[key] }
@@ -119,7 +135,7 @@ func validateOverride(key, value string) error {
 		"PIPELINE_STUCK_AFTER_SECONDS", "REGISTRY_RETRY_ATTEMPTS", "REGISTRY_BREAKER_THRESHOLD",
 		"SANDBOX_TIMEOUT_SECONDS", "OSV_SYNC_INTERVAL_SECONDS",
 		"DRAGON_PRIORITY", "DRAGON_POLL_INTERVAL_SECONDS", "DRAGON_TIMEOUT_SECONDS", "COMMENT_EDIT_WINDOW_MINUTES",
-		"STAGING_CLEANUP_INTERVAL_SECONDS", "STAGING_ORPHAN_TTL_HOURS":
+		"STAGING_CLEANUP_INTERVAL_SECONDS", "STAGING_ORPHAN_TTL_HOURS", "GIT_MIRROR_TIMEOUT_SECONDS":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 {
 			return fmt.Errorf("ожидается неотрицательное целое число")
@@ -134,13 +150,13 @@ func validateOverride(key, value string) error {
 		if err != nil || n < 0 {
 			return fmt.Errorf("ожидается неотрицательное целое число")
 		}
-	case "LOCAL_AUTH_ENABLED", "ARTIFACT_DRY_RUN", "SANDBOX_ENABLED", "SANDBOX_INSECURE_TLS", "DRAGON_ENABLED", "DRAGON_PUBLISH", "PIPELINE_WATCHDOG_ENABLED", "MAINTENANCE_ENABLED":
+	case "LOCAL_AUTH_ENABLED", "ARTIFACT_DRY_RUN", "SANDBOX_ENABLED", "SANDBOX_INSECURE_TLS", "DRAGON_ENABLED", "DRAGON_PUBLISH", "PIPELINE_WATCHDOG_ENABLED", "MAINTENANCE_ENABLED", "GIT_MIRROR_ENABLED", "GIT_MIRROR_FORCE":
 		if _, err := strconv.ParseBool(value); err != nil {
 			return fmt.Errorf("ожидается true или false")
 		}
 	case "ARTIFACT_BASE_URL", "ARTIFACT_PUBLIC_BASE_URL", "ARTIFACT_DOCKER_REGISTRY_URL",
 		"ARTIFACT_DOCKER_PUBLIC_URL", "ARTIFACT_DOCKER_BROWSE_URL", "SANDBOX_URL", "DRAGON_URL", "OIDC_ISSUER", "OIDC_PUBLIC_ISSUER",
-		"GITLAB_URL", "OSV_DB_URL":
+		"GITLAB_URL", "GIT_MIRROR_GITLAB_URL", "OSV_DB_URL":
 		if value == "" && (key == "ARTIFACT_PUBLIC_BASE_URL" || key == "ARTIFACT_DOCKER_PUBLIC_URL" || key == "ARTIFACT_DOCKER_BROWSE_URL" || key == "OSV_DB_URL") {
 			return nil
 		}
@@ -279,6 +295,33 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.GitlabOAuthClientID = v
 		case "GITLAB_OAUTH_SECRET":
 			c.GitlabOAuthSecret = raw
+		case "GIT_MIRROR_ENABLED":
+			c.GitMirrorEnabled, _ = strconv.ParseBool(v)
+		case "GIT_MIRROR_GITLAB_URL":
+			c.GitMirrorGitLabURL = strings.TrimRight(v, "/")
+		case "GIT_MIRROR_API_TOKEN":
+			c.GitMirrorAPIToken = raw
+		case "GIT_MIRROR_PUSH_TOKEN":
+			c.GitMirrorPushToken = raw
+		case "GIT_MIRROR_PUSH_USERNAME":
+			c.GitMirrorPushUsername = v
+		case "GIT_MIRROR_TEMPLATE_TOKEN":
+			c.GitMirrorTemplateToken = raw
+		case "GIT_MIRROR_TEMPLATE_PROJECT":
+			c.GitMirrorTemplateProject = v
+		case "GIT_MIRROR_TEMPLATE_REF":
+			c.GitMirrorTemplateRef = v
+		case "GIT_MIRROR_TEMPLATE_PATH":
+			c.GitMirrorTemplatePath = v
+		case "GIT_MIRROR_TEMPLATE_MARKER":
+			c.GitMirrorTemplateMarker = v
+		case "GIT_MIRROR_BRANCH_PREFIX":
+			c.GitMirrorBranchPrefix = v
+		case "GIT_MIRROR_FORCE":
+			c.GitMirrorForce, _ = strconv.ParseBool(v)
+		case "GIT_MIRROR_TIMEOUT_SECONDS":
+			n, _ := strconv.Atoi(v)
+			c.GitMirrorTimeout = time.Duration(n) * time.Second
 		case "BLACKLIST_FILE":
 			c.BlacklistFile = v
 		case "ALLOWED_LICENSES_FILE":

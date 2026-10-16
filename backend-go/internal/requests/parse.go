@@ -330,6 +330,12 @@ func (s *Service) classify(ctx context.Context, ref registry.Ref, raw, kind stri
 
 	switch existing.Status {
 	case "approved":
+		if ref.Manager == "git" {
+			// Git-репозиторий изменяется после одобрения. Новая заявка означает
+			// повторную синхронизацию refs/LFS, а не бессмысленный дубль.
+			parsed.Message = fmt.Sprintf("%s уже зеркалировался и будет синхронизирован повторно.", ref.DisplayName)
+			break
+		}
 		// Уже одобренные в заявку не попадают: заводить вторую заявку на то,
 		// что можно ставить прямо сейчас, — пустая работа для всех ролей.
 		parsed.State = StateAlreadyInBase

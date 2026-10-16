@@ -7,6 +7,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -156,6 +157,25 @@ type Config struct {
 	// клиент, которым пользуются все.
 	GitBinary  string
 	GitTimeout time.Duration
+
+	// GitMirror — отдельная от пользовательского GitLab OAuth интеграция.
+	// Она зеркалирует публичный репозиторий целиком во внутренний GitLab и
+	// устанавливает утверждённый CI-шаблон в защищённые pt/*-ветки.
+	GitMirrorEnabled         bool
+	GitMirrorGitLabURL       string
+	GitMirrorAPIToken        string
+	GitMirrorPushToken       string
+	GitMirrorPushUsername    string
+	GitMirrorTemplateToken   string
+	GitMirrorTemplateProject string
+	GitMirrorTemplateRef     string
+	GitMirrorTemplatePath    string
+	GitMirrorTemplateMarker  string
+	GitMirrorBranchPrefix    string
+	GitMirrorForce           bool
+	GitMirrorPythonBinary    string
+	GitMirrorScriptDir       string
+	GitMirrorTimeout         time.Duration
 
 	// Параметры устаревшей диагностической batch-команды. Штатный конвейер
 	// формирует отчёты сам; main предупреждает, если старый флаг ещё включён.
@@ -378,6 +398,22 @@ func Load(getenv func(string) string) (*Config, error) {
 		GitBinary:  valueOr(getenv("GIT_BINARY"), "git"),
 		GitTimeout: secondsOr(getenv("GIT_CLONE_TIMEOUT_SECONDS"), 600),
 
+		GitMirrorEnabled:         boolOr(getenv("GIT_MIRROR_ENABLED"), false),
+		GitMirrorGitLabURL:       strings.TrimRight(strings.TrimSpace(getenv("GIT_MIRROR_GITLAB_URL")), "/"),
+		GitMirrorAPIToken:        strings.TrimSpace(getenv("GIT_MIRROR_API_TOKEN")),
+		GitMirrorPushToken:       strings.TrimSpace(getenv("GIT_MIRROR_PUSH_TOKEN")),
+		GitMirrorPushUsername:    valueOr(getenv("GIT_MIRROR_PUSH_USERNAME"), "git"),
+		GitMirrorTemplateToken:   strings.TrimSpace(getenv("GIT_MIRROR_TEMPLATE_TOKEN")),
+		GitMirrorTemplateProject: strings.TrimSpace(getenv("GIT_MIRROR_TEMPLATE_PROJECT")),
+		GitMirrorTemplateRef:     valueOr(getenv("GIT_MIRROR_TEMPLATE_REF"), "main"),
+		GitMirrorTemplatePath:    strings.TrimSpace(getenv("GIT_MIRROR_TEMPLATE_PATH")),
+		GitMirrorTemplateMarker:  valueOr(getenv("GIT_MIRROR_TEMPLATE_MARKER"), "###security###"),
+		GitMirrorBranchPrefix:    valueOr(getenv("GIT_MIRROR_BRANCH_PREFIX"), "pt/"),
+		GitMirrorForce:           boolOr(getenv("GIT_MIRROR_FORCE"), true),
+		GitMirrorPythonBinary:    valueOr(getenv("GIT_MIRROR_PYTHON_BINARY"), "python3"),
+		GitMirrorScriptDir:       valueOr(getenv("GIT_MIRROR_SCRIPT_DIR"), "/opt/moderation/git-mirror"),
+		GitMirrorTimeout:         secondsOr(getenv("GIT_MIRROR_TIMEOUT_SECONDS"), 30*60),
+
 		ScanWatcherEnabled:     boolOr(getenv("SCAN_WATCHER_ENABLED"), false),
 		ScanWatcherInterval:    secondsOr(getenv("SCAN_WATCHER_INTERVAL_SECONDS"), 60),
 		ScanWatcherBatch:       intOr(getenv("SCAN_WATCHER_BATCH"), 10),
@@ -553,6 +589,23 @@ func Load(getenv func(string) string) (*Config, error) {
 	}
 	if cfg.DragonPriority < 0 {
 		errs = append(errs, fmt.Errorf("DRAGON_PRIORITY: ожидается неотрицательное целое число"))
+	}
+	if cfg.GitMirrorEnabled {
+		for name, value := range map[string]string{
+			"GIT_MIRROR_GITLAB_URL": cfg.GitMirrorGitLabURL,
+			"GIT_MIRROR_API_TOKEN": cfg.GitMirrorAPIToken,
+			"GIT_MIRROR_PUSH_TOKEN": cfg.GitMirrorPushToken,
+			"GIT_MIRROR_TEMPLATE_PROJECT": cfg.GitMirrorTemplateProject,
+			"GIT_MIRROR_TEMPLATE_PATH": cfg.GitMirrorTemplatePath,
+		} {
+			if strings.TrimSpace(value) == "" {
+				errs = append(errs, fmt.Errorf("%s: не задан при GIT_MIRROR_ENABLED=true", name))
+			}
+		}
+		if parsed, err := url.Parse(cfg.GitMirrorGitLabURL); err != nil || parsed.Host == "" ||
+			(parsed.Scheme != "http" && parsed.Scheme != "https") {
+			errs = append(errs, errors.New("GIT_MIRROR_GITLAB_URL: ожидается полный URL http(s)://host"))
+		}
 	}
 
 	// Тип артефактори проверяем на старте: опечатка ("nexsus") иначе всплыла

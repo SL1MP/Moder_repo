@@ -63,6 +63,25 @@ func (r *Repo) CurrentArtifact(ctx context.Context, packageVersionID int64) (*do
 	return artifact, nil
 }
 
+// PublishedArtifactURL возвращает актуальную ссылку на опубликованный объект.
+// Для Git это URL проекта во внутреннем GitLab, для обычных менеджеров метод
+// не требуется — их команды строятся из конфигурации репозитория.
+func (r *Repo) PublishedArtifactURL(ctx context.Context, packageVersionID int64) (string, error) {
+	var value string
+	err := r.pool.QueryRow(ctx, `
+		SELECT nexus_url FROM artifact
+		WHERE package_version_id = $1 AND status = 'published' AND nexus_url IS NOT NULL
+		ORDER BY published_at DESC NULLS LAST, id DESC LIMIT 1
+	`, packageVersionID).Scan(&value)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("чтение URL опубликованного объекта: %w", err)
+	}
+	return value, nil
+}
+
 // UpdateArtifactDownloaded — фиксирует результат шага скачивания.
 func (r *Repo) UpdateArtifactDownloaded(ctx context.Context, a *domain.Artifact) error {
 	_, err := r.pool.Exec(ctx, `
@@ -75,6 +94,26 @@ func (r *Repo) UpdateArtifactDownloaded(ctx context.Context, a *domain.Artifact)
 		a.ChecksumAlgo, a.StagingRepo, a.StagingPath, a.StagedAt)
 	if err != nil {
 		return fmt.Errorf("обновление артефакта после скачивания: %w", err)
+	}
+	return nil
+}
+
+// SetArtifactExternalReference фиксирует внешний объект, который уже создан
+// шагом скачивания, но ещё не прошёл финальную настройку. Git-модерация
+// зеркалирует проект сразу во внутренний GitLab, поэтому staging_path у неё
+// нет; до установки CI-шаблона объект остаётся в статусе downloaded.
+func (r *Repo) SetArtifactExternalReference(
+	ctx context.Context, id int64, sourceURL, targetURL string,
+) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE artifact SET
+			source_url = $2, nexus_url = $3, status = 'downloaded',
+			published_at = NULL, staging_repo = NULL, staging_path = NULL,
+			staged_at = NULL, staging_cleared_at = NULL
+		WHERE id = $1
+	`, id, nullIfEmpty(sourceURL), nullIfEmpty(targetURL))
+	if err != nil {
+		return fmt.Errorf("сохранение ссылки на внешний объект: %w", err)
 	}
 	return nil
 }

@@ -155,7 +155,44 @@ Go:   {ARTIFACT_PUBLIC_BASE_URL}/api/go/{repo}
 `get_artifact_store()`. Остальной код (конвейер, отзыв, перепроверка) обращается только к
 абстракции и правок не требует.
 
-## GitLab (только чтение)
+## Git-модерация: зеркало во внутреннем GitLab
+
+Заявка менеджера `git` принимает URL репозитория без версии. В отличие от
+прежней реализации сервис не собирает `tar.gz` и не публикует его в
+артефактори. Worker выполняет два этапа:
+
+1. создаёт во внутреннем GitLab путь `<хост-источника>/<группы>/<проект>`;
+2. зеркалирует все исходные ветки, теги и Git LFS, удаляя исчезнувшие source
+   refs, но сохраняя внутренние ветки с префиксом `pt/`;
+3. создаёт защищённую `pt/<default-branch>`;
+4. после проверок устанавливает утверждённый `.gitlab-ci.yml` во все `pt/*`;
+5. прежний пользовательский CI сохраняет как `old_gitlab-ci.yml`.
+
+Blacklist остаётся блокирующей проверкой. Карантин, лицензия пакета, OSV,
+файловая песочница, SBOM и публикация в артефактори к зеркалу репозитория не
+применяются. Результат — ссылка на проект и команда `git clone`.
+
+```bash
+GIT_MIRROR_ENABLED=true
+GIT_MIRROR_GITLAB_URL=https://gitlab.internal.example
+GIT_MIRROR_API_TOKEN=***
+GIT_MIRROR_PUSH_USERNAME=git
+GIT_MIRROR_PUSH_TOKEN=***
+GIT_MIRROR_TEMPLATE_TOKEN=***     # можно не задавать, тогда используется API token
+GIT_MIRROR_TEMPLATE_PROJECT=platform/security-templates
+GIT_MIRROR_TEMPLATE_REF=main
+GIT_MIRROR_TEMPLATE_PATH=templates/oss.yml
+GIT_MIRROR_TEMPLATE_MARKER="###security###"
+GIT_MIRROR_BRANCH_PREFIX=pt/
+GIT_MIRROR_FORCE=true
+GIT_MIRROR_TIMEOUT_SECONDS=1800
+```
+
+API-токену нужны права создавать группы/проекты, управлять ветками и файлами;
+push-токену — push repository и LFS. Все поля доступны в web-разделе
+«Настройка → Интеграции → Git-модерация», секреты хранятся зашифрованными.
+
+## GitLab (только чтение файлов зависимостей)
 
 Используется для одного способа заведения — чтения файла зависимостей из приватного проекта от
 имени пользователя. Ничего не коммитится, merge request'ы не открываются.

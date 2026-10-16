@@ -43,7 +43,7 @@ ARG INSTALL_SEMGREP=true
 # (там yara-python, cgo-биндинг) здесь используется тот же бинарь, что и для
 # semgrep: два внешних сканера запускаются единообразно.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl git skopeo yara python3 python3-pip \
+ && apt-get install -y --no-install-recommends ca-certificates curl git git-lfs skopeo yara python3 python3-pip \
  && rm -rf /var/lib/apt/lists/*
 
 # semgrep — шаг SAST. Ставится отдельно и НЕ фатально: без него шаг честно
@@ -54,6 +54,12 @@ RUN if [ "$INSTALL_SEMGREP" = "true" ]; then \
       || echo "semgrep не установлен: шаг SAST будет требовать решения DevSecOps"; \
     fi
 
+# Скрипты Git-модерации используют API GitLab, а перенос refs/LFS выполняют
+# системным git. Версии Python-пакетов ограничены мажорной совместимостью,
+# чтобы пересборка не подхватила несовместимый API молча.
+RUN pip install --no-cache-dir --break-system-packages \
+      "python-gitlab>=4,<6" "requests>=2,<3"
+
 # Непривилегированный пользователь. Каталог OSV создаётся в образе заранее:
 # при первом подключении пустого named volume Docker сохранит его владельца,
 # и worker сможет атомарно менять /var/lib/osv-db/current без root.
@@ -63,6 +69,7 @@ USER moderation
 
 COPY --from=build /out/moderation /usr/local/bin/moderation
 COPY --from=syft /syft /usr/local/bin/syft
+COPY scripts/git-mirror /opt/moderation/git-mirror
 
 EXPOSE 8000
 ENTRYPOINT ["/usr/local/bin/moderation"]

@@ -15,6 +15,7 @@ import (
 	"moderation/internal/config"
 	"moderation/internal/db"
 	"moderation/internal/domain"
+	"moderation/internal/gitmirror"
 	"moderation/internal/osv"
 	"moderation/internal/pipeline"
 	"moderation/internal/policy"
@@ -240,6 +241,7 @@ func buildScanContext(ctx context.Context, r *repo.Repo, st *stores, cfg *config
 			Sandbox:   newSandbox(cfg),
 			Dragon:    newDragon(cfg),
 			SBOM:      newSBOMGenerator(cfg),
+			GitMirror: newGitMirror(cfg),
 			// Сканеры снятых шагов: конвейер их не вызывает, но контекст
 			// собирается целиком — см. комментарий к Validate.
 			Banner: scanners.YaraScanner{
@@ -270,8 +272,35 @@ func loadItem(ctx context.Context, r *repo.Repo, pc *pipeline.Context, itemID in
 	if err != nil {
 		return err
 	}
-	pc.Item, pc.Version, pc.Package = item, version, pkg
+	request, err := r.GetModerationRequest(ctx, item.RequestID)
+	if err != nil {
+		return err
+	}
+	if request == nil {
+		return fmt.Errorf("заявка #%d не найдена", item.RequestID)
+	}
+	author, err := r.GetUser(ctx, request.AuthorID)
+	if err != nil {
+		return err
+	}
+	pc.Item, pc.Version, pc.Package, pc.Request, pc.Author = item, version, pkg, request, author
 	return nil
+}
+
+func newGitMirror(cfg *config.Config) gitmirror.Service {
+	if !cfg.GitMirrorEnabled {
+		return nil
+	}
+	return gitmirror.New(gitmirror.Config{
+		Enabled: cfg.GitMirrorEnabled, GitLabURL: cfg.GitMirrorGitLabURL,
+		APIToken: cfg.GitMirrorAPIToken, PushToken: cfg.GitMirrorPushToken,
+		PushUsername: cfg.GitMirrorPushUsername, TemplateToken: cfg.GitMirrorTemplateToken,
+		TemplateProject: cfg.GitMirrorTemplateProject, TemplateRef: cfg.GitMirrorTemplateRef,
+		TemplatePath: cfg.GitMirrorTemplatePath, TemplateMarker: cfg.GitMirrorTemplateMarker,
+		BranchPrefix: cfg.GitMirrorBranchPrefix, Force: cfg.GitMirrorForce,
+		PythonBinary: cfg.GitMirrorPythonBinary, ScriptDir: cfg.GitMirrorScriptDir,
+		CACerts: cfg.CACerts, Timeout: cfg.GitMirrorTimeout,
+	})
 }
 
 // ensureArtifact добивается того, чтобы артефакт лежал в карантинной зоне.

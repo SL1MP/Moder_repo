@@ -122,7 +122,7 @@ export default function SettingsPage({ me }: { me: Me }) {
       {activeTab === 'artifact' ? settingsSections(['Артефактори']) : null}
 
       {activeTab === 'integrations' && isAdmin ? <OIDCPanel /> : null}
-      {activeTab === 'integrations' ? settingsSections(['Песочница', 'Dragon', 'GitLab', 'Доступ']) : null}
+      {activeTab === 'integrations' ? settingsSections(['Песочница', 'Dragon', 'Git-модерация', 'GitLab', 'Доступ']) : null}
 
       {activeTab === 'policies' && policies.data?.vuln_index ? <VulnIndexCard info={policies.data.vuln_index} isSec={isSec} /> : null}
       {activeTab === 'policies' ? settingsSections(['Уязвимости', 'Политики']) : null}

@@ -47,10 +47,10 @@ func (SandboxScanStep) Code() string { return "sandbox_scan" }
 const sandboxTitle = "Проверка в песочнице"
 
 func (s SandboxScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
-	if pc.Package.Manager == "docker" {
+	if pc.Package.Manager == "docker" || pc.Package.Manager == "git" {
 		return StepOutcome{
 			Result:  "skipped",
-			Message: "Проверка в песочнице отключена для Docker-образов.",
+			Message: fmt.Sprintf("Проверка в песочнице не применяется к менеджеру %s.", pc.Package.Manager),
 			Details: map[string]any{
 				"applicable": false,
 				"manager":    pc.Package.Manager,

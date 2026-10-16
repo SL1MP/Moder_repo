@@ -20,6 +20,13 @@ type VulnScanStep struct{}
 func (VulnScanStep) Code() string { return "vuln_scan" }
 
 func (VulnScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
+	if pc.Package.Manager == "git" {
+		return StepOutcome{
+			Result: "skipped",
+			Message: "OSV проверяет версии пакетов, а Git-модерация переносит репозиторий целиком — шаг неприменим.",
+			Details: map[string]any{"applicable": false, "manager": "git"},
+		}, nil
+	}
 	artifact, err := pc.Deps.Repo.CurrentArtifact(ctx, pc.Version.ID)
 	if err != nil {
 		return StepOutcome{}, err

@@ -370,7 +370,7 @@ func (h *PackagesHandler) versionSummary(r *http.Request, row *repo.VersionRow) 
 	// Команда установки имеет смысл только у одобренного пакета: у остального
 	// она вела бы в репозиторий, где артефакта нет.
 	if v.Status == "approved" {
-		if cmd := h.installCommand(row); cmd != "" {
+		if cmd := h.installCommand(row, artifacts); cmd != "" {
 			out["install_command"] = cmd
 		}
 	}
@@ -379,7 +379,15 @@ func (h *PackagesHandler) versionSummary(r *http.Request, row *repo.VersionRow) 
 
 // installCommand — готовая команда установки из внутреннего репозитория.
 // Пустая строка, если менеджер неизвестен: это не повод ронять карточку.
-func (h *PackagesHandler) installCommand(row *repo.VersionRow) string {
+func (h *PackagesHandler) installCommand(row *repo.VersionRow, artifacts []domain.Artifact) string {
+	if row.Manager == "git" {
+		for _, artifact := range artifacts {
+			if artifact.Status == "published" && artifact.NexusURL != nil && *artifact.NexusURL != "" {
+				return "git clone " + strings.TrimSuffix(*artifact.NexusURL, ".git") + ".git"
+			}
+		}
+		return ""
+	}
 	plugin, err := h.Registry.Get(row.Manager)
 	if err != nil {
 		return ""

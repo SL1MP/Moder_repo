@@ -224,9 +224,8 @@ func TestLicenseDoesNotStopPipeline(t *testing.T) {
 
 func TestLicenseIsNotApplicableToExcludedManagers(t *testing.T) {
 	// Каждый исключённый менеджер должен пройти шаг без реестра лицензий,
-	// метаданных и обращения к внешним зависимостям. Git намеренно не входит
-	// в список: для репозитория лицензия должна быть проверена отдельно.
-	for _, manager := range []string{"docker", "files", "luarocks", "terraform"} {
+	// метаданных и обращения к внешним зависимостям.
+	for _, manager := range []string{"docker", "files", "git", "luarocks", "terraform"} {
 		t.Run(manager, func(t *testing.T) {
 			outcome, err := (pipeline.LicenseStep{}).Run(context.Background(), &pipeline.Context{
 				Package: &domain.Package{Manager: manager},

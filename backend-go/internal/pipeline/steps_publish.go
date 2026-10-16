@@ -79,6 +79,9 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 			WithStatus("failed", "failed").
 			WithNextAction("Перезапустите проверку заявки."), nil
 	}
+	if pc.Package.Manager == "git" {
+		return publishGitMirror(ctx, pc, artifact)
+	}
 
 	plugin, err := pc.Plugin()
 	if err != nil {
@@ -173,6 +176,53 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 		VersionStatus: "approved",
 		NextAction:    "Устанавливайте из внутреннего репозитория: " + command,
 		NotifyEvent:   EventPackageApproved,
+	}, nil
+}
+
+func publishGitMirror(ctx context.Context, pc *Context, artifact *domain.Artifact) (StepOutcome, error) {
+	if pc.Deps.GitMirror == nil {
+		return Fail("CI-шаблон не установлен: интеграция с внутренним GitLab не настроена.").
+			WithStatus("failed", "failed").
+			WithNextAction("Администратор: настройте раздел «Git-модерация» и перезапустите шаг публикации."), nil
+	}
+	result, err := pc.Deps.GitMirror.InstallTemplate(ctx, pc.Package.DisplayName)
+	if err != nil {
+		return Fail(fmt.Sprintf("Git-репозиторий зеркалирован, но CI-шаблон не установлен: %v", err)).
+			WithStatus("failed", "failed").
+			WithNextAction("Проверьте доступ к проекту шаблонов и перезапустите шаг публикации."), nil
+	}
+	projectURL := strings.TrimRight(result.ProjectURL, "/")
+	if projectURL == "" {
+		projectURL = strings.TrimRight(deref(artifact.NexusURL), "/")
+	}
+	if projectURL == "" {
+		return Fail("Внутренний GitLab не вернул URL зеркального проекта.").
+			WithStatus("failed", "failed"), nil
+	}
+	if err := pc.Deps.Repo.MarkArtifactPublished(ctx, artifact.ID, projectURL, pc.now()); err != nil {
+		return StepOutcome{}, err
+	}
+	cloneURL := projectURL
+	if !strings.HasSuffix(cloneURL, ".git") {
+		cloneURL += ".git"
+	}
+	command := "git clone " + cloneURL
+	return StepOutcome{
+		Result: "pass",
+		Message: fmt.Sprintf(
+			"Репозиторий доступен во внутреннем GitLab; CI-шаблон применён к %d веткам, изменено %d: %s",
+			result.BranchesProcessed, result.BranchesChanged, projectURL),
+		Details: map[string]any{
+			"project_url": projectURL, "install_command": command,
+			"branches_processed": result.BranchesProcessed,
+			"branches_changed": result.BranchesChanged,
+			"previous_ci_preserved": result.PreviousCIPreserved,
+			"template_project": result.TemplateProject,
+			"template_ref": result.TemplateRef, "template_path": result.TemplatePath,
+		},
+		Terminal: true, ItemStatus: "approved", VersionStatus: "approved",
+		NextAction: "Клонируйте защищённую копию из внутреннего GitLab: " + command,
+		NotifyEvent: EventPackageApproved,
 	}, nil
 }
 

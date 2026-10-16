@@ -229,7 +229,7 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 			"pending":            listOrEmpty(pending),
 			"waiting_for":        nilIfEmpty(waitingFor),
 			"current_step":       item.CurrentStep,
-			"current_step_title": stepTitleOf(item.CurrentStep),
+			"current_step_title": stepTitleForManager(item.CurrentStep, req.Manager),
 			"blocked_reason":     h.publicArtifactTextPtr(item.BlockedReason),
 			"next_action":        h.publicArtifactTextPtr(item.NextAction),
 			"waiting_since":      item.WaitingSince,
@@ -239,7 +239,7 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 			"max_vuln_score":     version.Version.MaxVulnScore,
 			"vulnerabilities":    vulnerabilityViews(vulns[item.PackageVersionID], false),
 			"code_findings":      codeFindingViews(findings[item.PackageVersionID]),
-			"steps":              h.stepViews(itemSteps),
+			"steps":              h.stepViews(itemSteps, req.Manager),
 			"can_restart":        h.canRestartItem(r, req, &item),
 			"can_stop":           h.canStopItem(r, req, &item),
 		}
@@ -248,7 +248,7 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 		// тот пакет» — не то же самое, что «у нас в заявке GPL».
 		itemTreeView(view, item.ParentItemID, item.Depth, item.RequiredRange)
 		if version.Version.Status == "approved" {
-			if cmd := h.installCommand(version); cmd != "" {
+			if cmd := h.installCommand(ctx, version); cmd != "" {
 				view["install_command"] = cmd
 			}
 		}
@@ -296,6 +296,18 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 	return payload, nil
 }
 
+func stepTitleForManager(code, manager string) string {
+	if manager == "git" {
+		switch code {
+		case "download":
+			return "Зеркалирование во внутренний GitLab"
+		case "publish":
+			return "Установка CI-шаблона"
+		}
+	}
+	return stepTitleOf(code)
+}
+
 func (h *RequestsHandler) canRestartItem(
 	r *http.Request, req *domain.ModerationRequest, item *domain.RequestItem,
 ) bool {
@@ -326,7 +338,14 @@ func (h *RequestsHandler) canStopItem(
 	}, item.Status)
 }
 
-func (h *RequestsHandler) installCommand(row repo.VersionRow) string {
+func (h *RequestsHandler) installCommand(ctx context.Context, row repo.VersionRow) string {
+	if row.Manager == "git" {
+		value, err := h.Repo.PublishedArtifactURL(ctx, row.Version.ID)
+		if err != nil || value == "" {
+			return ""
+		}
+		return "git clone " + strings.TrimSuffix(value, ".git") + ".git"
+	}
 	plugin, err := h.Registry.Get(row.Manager)
 	if err != nil {
 		return ""
@@ -392,15 +411,24 @@ func (h *RequestsHandler) canCancel(r *http.Request, req *domain.ModerationReque
 // stepViews — снимок конвейера для карточки. Порт runner.step_snapshot:
 // отдаются ВСЕ действующие шаги, включая те, до которых прогон не дошёл, — иначе
 // в карточке не видно, что ещё впереди.
-func (h *RequestsHandler) stepViews(steps []domain.PipelineStep) []map[string]any {
+func (h *RequestsHandler) stepViews(steps []domain.PipelineStep, manager string) []map[string]any {
 	byCode := make(map[string]domain.PipelineStep, len(steps))
 	for _, s := range steps {
 		byCode[s.StepCode] = s
 	}
 	out := make([]map[string]any, 0, len(domain.StepCodes))
 	for order, code := range domain.StepCodes {
+		title := domain.StepTitles[code]
+		if manager == "git" {
+			switch code {
+			case "download":
+				title = "Зеркалирование во внутренний GitLab"
+			case "publish":
+				title = "Установка CI-шаблона"
+			}
+		}
 		view := map[string]any{
-			"code": code, "order": order, "title": domain.StepTitles[code],
+			"code": code, "order": order, "title": title,
 			"result": "pending", "message": nil, "details": nil,
 			"started_at": nil, "finished_at": nil,
 		}

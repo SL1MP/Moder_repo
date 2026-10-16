@@ -216,6 +216,28 @@ func TestPublicArtifactURLAndWebOverrides(t *testing.T) {
 	}
 }
 
+func TestGitMirrorConfigurationAndSecrets(t *testing.T) {
+	values := map[string]string{
+		"DATABASE_URL": "postgres://localhost/x",
+		"GIT_MIRROR_ENABLED": "true",
+		"GIT_MIRROR_GITLAB_URL": "https://gitlab.internal.example/",
+		"GIT_MIRROR_API_TOKEN": "api-secret",
+		"GIT_MIRROR_PUSH_TOKEN": "push-secret",
+		"GIT_MIRROR_TEMPLATE_PROJECT": "platform/templates",
+		"GIT_MIRROR_TEMPLATE_PATH": "security/oss.yml",
+	}
+	cfg, err := Load(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.GitMirrorEnabled || cfg.GitMirrorGitLabURL != "https://gitlab.internal.example" {
+		t.Fatalf("Git mirror config = enabled:%v url:%q", cfg.GitMirrorEnabled, cfg.GitMirrorGitLabURL)
+	}
+	if !IsSecretSetting("GIT_MIRROR_API_TOKEN") || !IsSecretSetting("GIT_MIRROR_PUSH_TOKEN") {
+		t.Fatal("токены Git-модерации не помечены секретами web-настроек")
+	}
+}
+
 // TestBannerTimeoutIsSeparateVariable фиксирует отдельный таймаут YARA на
 // всё дерево. Переиспользовать короткий таймаут на один файл нельзя: 10 с на
 // всё дерево означали бы, что проверка почти всегда обрывается и отдаёт «не
