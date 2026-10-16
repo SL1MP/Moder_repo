@@ -431,10 +431,20 @@ func (h *PackagesHandler) artifactViews(row *repo.VersionRow, artifacts []domain
 		var publicURL *string
 		if a.NexusURL != nil && a.Status == "published" {
 			value := *a.NexusURL
+			if row.Manager == "docker" && h.Cfg != nil {
+				if browseURL := registry.DockerBrowseURL(
+					h.Cfg.ArtifactDockerBrowseURL,
+					registry.PublishedName(row.Manager, row.Name),
+					row.Version.RawVersion,
+				); browseURL != "" {
+					value = browseURL
+				}
+			}
 			// URL строится заново по текущей конфигурации. Поэтому смена
 			// внутреннего артефактори или его публичного адреса не оставляет в
 			// карточках исторический http://nexus:8081.
-			if h.Artifacts != nil && plugin != nil && h.Cfg != nil {
+			if (row.Manager != "docker" || h.Cfg == nil || h.Cfg.ArtifactDockerBrowseURL == "") &&
+				h.Artifacts != nil && plugin != nil && h.Cfg != nil {
 				target := artifactstore.Target{
 					Repo: h.Cfg.ArtifactRepo(row.Manager), Manager: row.Manager,
 					Name: registry.PublishedName(row.Manager, row.Name), DisplayName: row.DisplayName,

@@ -67,6 +67,7 @@ type Config struct {
 	// каждый менеджер (ключ — код менеджера).
 	ArtifactBaseURL         string
 	ArtifactDockerPublicURL string
+	ArtifactDockerBrowseURL string
 	ArtifactRepos           map[string]string
 }
 

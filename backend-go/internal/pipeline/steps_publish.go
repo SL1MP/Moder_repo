@@ -104,7 +104,7 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 		// реальные сканеры) — не публикуем реальными байтами. Проверяем только
 		// достижимость и авторизацию, чтобы креды боевого Artifactory были
 		// проверены без риска записи.
-		wouldBeURL := pc.Deps.Artifacts.ArtifactURL(target)
+		wouldBeURL := publishedArtifactURL(pc.Config, target, pc.Deps.Artifacts.ArtifactURL(target))
 		authNote := "артефактори отвечает, доступ подтверждён"
 		var reachable any
 		if exists, err := pc.Deps.Artifacts.Exists(ctx, target); err != nil {
@@ -135,13 +135,14 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 			WithStatus("failed", "failed").
 			WithNextAction("Сообщите администратору сервиса: артефактори отклонил выгрузку."), nil
 	}
+	browseURL := publishedArtifactURL(pc.Config, target, url)
 
 	if len(publishedFiles) > 0 {
 		if err := pc.Deps.Repo.UpsertPublishedArtifacts(ctx, pc.Version.ID, publishedFiles, pc.now()); err != nil {
 			return StepOutcome{}, err
 		}
 	} else {
-		if err := pc.Deps.Repo.MarkArtifactPublished(ctx, artifact.ID, url, pc.now()); err != nil {
+		if err := pc.Deps.Repo.MarkArtifactPublished(ctx, artifact.ID, browseURL, pc.now()); err != nil {
 			return StepOutcome{}, err
 		}
 	}
@@ -162,9 +163,9 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	return StepOutcome{
 		Result: "pass",
 		Message: fmt.Sprintf("Пакет опубликован во внутреннем репозитории %s (%s): %s",
-			repoName, how.title(), url),
+			repoName, how.title(), browseURL),
 		Details: map[string]any{
-			"nexus_url": url, "install_command": command, "repo": repoName,
+			"nexus_url": browseURL, "install_command": command, "repo": repoName,
 			"publish_mode": string(how),
 		},
 		Terminal:      true,
@@ -173,6 +174,18 @@ func (PublishStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 		NextAction:    "Устанавливайте из внутреннего репозитория: " + command,
 		NotifyEvent:   EventPackageApproved,
 	}, nil
+}
+
+// publishedArtifactURL возвращает ссылку, которую можно открыть в браузере.
+// Для Docker registry endpoint и web-каталог артефактори являются разными
+// адресами: первый нужен skopeo/docker, второй — человеку в интерфейсе.
+func publishedArtifactURL(cfg Config, target artifactstore.Target, fallback string) string {
+	if target.Manager == "docker" {
+		if value := registry.DockerBrowseURL(cfg.ArtifactDockerBrowseURL, target.Name, target.Version); value != "" {
+			return value
+		}
+	}
+	return fallback
 }
 
 // blockedOutcome — публикация отложена: какое-то согласование ещё не получено.

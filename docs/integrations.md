@@ -39,6 +39,7 @@ ARTIFACT_REPO_DOCKER=docker-internal
 ARTIFACT_REPO_CONAN=conan-internal
 ARTIFACT_DOCKER_REGISTRY_URL=http://nexus:8081/docker-internal
 ARTIFACT_DOCKER_PUBLIC_URL=https://nexus.internal.example.com/docker-internal
+ARTIFACT_DOCKER_BROWSE_URL=https://nexus.internal.example.com/repository/docker-internal
 ARTIFACT_REPO_OSV=osv-snapshots
 OSV_PYPI_SNAPSHOT_PATH=osv/latest/osv-pypi.zip
 OSV_NPM_SNAPSHOT_PATH=osv/latest/osv-npm.zip
@@ -50,6 +51,12 @@ path-based routing: тогда worker публикует в
 `docker pull nexus.internal.example.com/docker-internal/postgres:14.23@sha256:...`.
 Если используется отдельный connector port, оба Docker URL задаются без
 `/docker-internal`, но с соответствующим внутренним/внешним портом.
+
+`ARTIFACT_DOCKER_BROWSE_URL` используется только кнопкой «Открыть в
+артефактори». Для JFrog это URL каталога local/hosted-репозитория, например
+`https://repo.example/artifactory/docker-moderated`; он не совпадает с
+registry endpoint вида `https://docker.example`, который используется в
+`docker pull`.
 
 Публикацию выполняет `skopeo copy --all --preserve-digests`: перед запуском
 архив staging безопасно распаковывается приложением в OCI layout, чтобы

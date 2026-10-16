@@ -222,7 +222,7 @@ func TestDockerRejectsPlatformManifestAsIndexDigest(t *testing.T) {
 	}
 }
 
-func TestDockerCorporatePublicationReference(t *testing.T) {
+func TestDockerPublicationReference(t *testing.T) {
 	plugin := dockerPlugin(t, newDockerRegistry())
 	digest := "sha256:" + strings.Repeat("a", 64)
 	ref, err := registry.ParseEntry(plugin, "postgres:14.23@"+digest)
@@ -231,16 +231,16 @@ func TestDockerCorporatePublicationReference(t *testing.T) {
 	}
 
 	// Для внешнего Docker Hub имя нормализовано как library/postgres, но во
-	// внутреннем JFrog корпоративный путь — docker/postgres/14.23.
+	// внутреннем JFrog путь — docker/postgres/14.23.
 	if got := registry.PublishedName(ref.Manager, ref.Name); got != "postgres" {
 		t.Fatalf("PublishedName = %q, ожидался postgres", got)
 	}
-	want := "docker pull repo.ptsecurity.ru:443/docker/postgres:14.23@" + digest
-	if got := plugin.InstallCommand(ref, "https://repo.ptsecurity.ru:443/artifactory", "docker"); got != want {
+	want := "docker pull repo.example:443/docker/postgres:14.23@" + digest
+	if got := plugin.InstallCommand(ref, "https://repo.example:443/artifactory", "docker"); got != want {
 		t.Fatalf("InstallCommand = %q, ожидалась %q", got, want)
 	}
-	wantNexus := "docker pull nexus.ptsecurity.ru/docker-internal/postgres:14.23@" + digest
-	if got := plugin.InstallCommand(ref, "https://nexus.ptsecurity.ru/docker-internal", ""); got != wantNexus {
+	wantNexus := "docker pull nexus.example/docker-internal/postgres:14.23@" + digest
+	if got := plugin.InstallCommand(ref, "https://nexus.example/docker-internal", ""); got != wantNexus {
 		t.Fatalf("InstallCommand для Nexus = %q, ожидалась %q", got, wantNexus)
 	}
 	if got := plugin.ArtifactPath(ref, "image.oci.tar.gz"); !strings.HasPrefix(got, "postgres/") {
@@ -560,6 +560,34 @@ func TestDockerMissingTag(t *testing.T) {
 	_, err := plugin.FetchMetadata(context.Background(), ref)
 	if err == nil {
 		t.Fatal("несуществующий тег принят")
+	}
+}
+
+func TestDockerBrowseURL(t *testing.T) {
+	digest := "sha256:050532e8d40d5e63bea57612aa381256ffdff72e38e2c63ee4fe2729e54a0521"
+	base := "https://repo.example/artifactory/docker-moderated/"
+	cases := []struct {
+		name, image, version, want string
+	}{
+		{
+			name: "tag", image: "chrislusf/seaweedfs", version: "3.85",
+			want: "https://repo.example/artifactory/docker-moderated/chrislusf/seaweedfs/3.85/",
+		},
+		{
+			name: "pinned tag", image: "3proxy/3proxy", version: "0.9.4@" + digest,
+			want: "https://repo.example/artifactory/docker-moderated/3proxy/3proxy/0.9.4/",
+		},
+		{
+			name: "digest only", image: "chrislusf/seaweedfs", version: digest,
+			want: "https://repo.example/artifactory/docker-moderated/chrislusf/seaweedfs/sha256%3A050532e8d40d5e63bea57612aa381256ffdff72e38e2c63ee4fe2729e54a0521/",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := registry.DockerBrowseURL(base, tc.image, tc.version); got != tc.want {
+				t.Fatalf("DockerBrowseURL() = %q, ожидалось %q", got, tc.want)
+			}
+		})
 	}
 }
 

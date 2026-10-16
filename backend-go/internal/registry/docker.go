@@ -211,6 +211,41 @@ func dockerDisplayTag(version string) string {
 	return tag
 }
 
+// DockerBrowseURL строит HTTP-ссылку на каталог образа в web-интерфейсе
+// артефактори. Она намеренно отделена от registry endpoint, который
+// используется в docker pull: Docker Registry API не обязан отдавать
+// браузерную страницу и обычно отвечает на такой переход 404.
+//
+// Для закреплённой версии tag@digest каталогом остаётся tag. У образа,
+// импортированного только по digest, каталог в JFrog называется sha256:<hex>;
+// двоеточие кодируется, как в File URL самого Artifactory.
+func DockerBrowseURL(baseURL, name, version string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	name = strings.Trim(strings.TrimSpace(name), "/")
+	version = strings.TrimSpace(version)
+	if baseURL == "" || name == "" || version == "" {
+		return ""
+	}
+
+	tag, _, pinned := splitDockerVersion(version)
+	if pinned && tag != "" {
+		version = tag
+	}
+
+	segments := strings.Split(name, "/")
+	for i := range segments {
+		segments[i] = dockerBrowsePathSegment(segments[i])
+	}
+	return baseURL + "/" + strings.Join(segments, "/") + "/" +
+		dockerBrowsePathSegment(version) + "/"
+}
+
+func dockerBrowsePathSegment(value string) string {
+	// url.PathEscape не кодирует двоеточие, хотя JFrog показывает digest в
+	// File URL как sha256%3A.... Остальные разделители сегмента кодирует он.
+	return strings.ReplaceAll(url.PathEscape(value), ":", "%3A")
+}
+
 // dockerManifest — и одиночный манифест, и список: поля не пересекаются,
 // поэтому один тип разбирает оба, а какой пришёл — видно по mediaType.
 type dockerManifest struct {

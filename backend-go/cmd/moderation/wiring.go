@@ -186,6 +186,7 @@ func pipelineConfig(cfg *config.Config) pipeline.Config {
 		// разработчику. Поэтому в pipeline передаётся внешний адрес.
 		ArtifactBaseURL:         artifactBaseURL,
 		ArtifactDockerPublicURL: cfg.ArtifactDockerPublicURL,
+		ArtifactDockerBrowseURL: cfg.ArtifactDockerBrowseURL,
 		ArtifactRepos:           cfg.ArtifactRepos,
 
 		QuarantineDays:             cfg.QuarantineDays,

@@ -27,6 +27,7 @@ var webEditable = map[string]bool{
 	"ARTIFACT_PUBLIC_BASE_URL":            true,
 	"ARTIFACT_DOCKER_REGISTRY_URL":        true,
 	"ARTIFACT_DOCKER_PUBLIC_URL":          true,
+	"ARTIFACT_DOCKER_BROWSE_URL":          true,
 	"ARTIFACT_REPO_STAGING":               true,
 	"ARTIFACT_REPO_REPORTS":               true,
 	"ARTIFACT_REPO_OSV":                   true,
@@ -138,9 +139,9 @@ func validateOverride(key, value string) error {
 			return fmt.Errorf("ожидается true или false")
 		}
 	case "ARTIFACT_BASE_URL", "ARTIFACT_PUBLIC_BASE_URL", "ARTIFACT_DOCKER_REGISTRY_URL",
-		"ARTIFACT_DOCKER_PUBLIC_URL", "SANDBOX_URL", "DRAGON_URL", "OIDC_ISSUER", "OIDC_PUBLIC_ISSUER",
+		"ARTIFACT_DOCKER_PUBLIC_URL", "ARTIFACT_DOCKER_BROWSE_URL", "SANDBOX_URL", "DRAGON_URL", "OIDC_ISSUER", "OIDC_PUBLIC_ISSUER",
 		"GITLAB_URL", "OSV_DB_URL":
-		if value == "" && (key == "ARTIFACT_PUBLIC_BASE_URL" || key == "ARTIFACT_DOCKER_PUBLIC_URL" || key == "OSV_DB_URL") {
+		if value == "" && (key == "ARTIFACT_PUBLIC_BASE_URL" || key == "ARTIFACT_DOCKER_PUBLIC_URL" || key == "ARTIFACT_DOCKER_BROWSE_URL" || key == "OSV_DB_URL") {
 			return nil
 		}
 		u, err := url.Parse(value)
@@ -210,6 +211,8 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.ArtifactDockerRegistryURL = strings.TrimRight(v, "/")
 		case "ARTIFACT_DOCKER_PUBLIC_URL":
 			c.ArtifactDockerPublicURL = strings.TrimRight(v, "/")
+		case "ARTIFACT_DOCKER_BROWSE_URL":
+			c.ArtifactDockerBrowseURL = strings.TrimRight(v, "/")
 		case "ARTIFACT_REPO_STAGING":
 			c.ArtifactRepoStaging = v
 		case "ARTIFACT_REPO_REPORTS":

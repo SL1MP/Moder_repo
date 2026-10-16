@@ -48,6 +48,7 @@ func TestConfigDefaults(t *testing.T) {
 		{"artifact_public_base_url", cfg.ArtifactPublicBaseURL, ""},
 		{"artifact_docker_registry_url", cfg.ArtifactDockerRegistryURL, ""},
 		{"artifact_docker_public_url", cfg.ArtifactDockerPublicURL, ""},
+		{"artifact_docker_browse_url", cfg.ArtifactDockerBrowseURL, ""},
 		{"artifact_repo_pypi", cfg.ArtifactRepo("pypi"), "pypi-internal"},
 		{"artifact_repo_npm", cfg.ArtifactRepo("npm"), "npm-internal"},
 		{"artifact_repo_go", cfg.ArtifactRepo("go"), "go-internal"},
@@ -115,6 +116,8 @@ func TestDockerInstallLocationUsesPublicRegistryPrefix(t *testing.T) {
 			return "http://nexus:8081"
 		case "ARTIFACT_DOCKER_PUBLIC_URL":
 			return "https://packages.example/docker-internal/"
+		case "ARTIFACT_DOCKER_BROWSE_URL":
+			return "https://repo.example/artifactory/docker-moderated/"
 		}
 		return ""
 	})
@@ -124,6 +127,9 @@ func TestDockerInstallLocationUsesPublicRegistryPrefix(t *testing.T) {
 	base, repo := cfg.ArtifactInstallLocation("docker")
 	if base != "https://packages.example/docker-internal" || repo != "" {
 		t.Fatalf("Docker install location = (%q, %q)", base, repo)
+	}
+	if cfg.ArtifactDockerBrowseURL != "https://repo.example/artifactory/docker-moderated" {
+		t.Fatalf("Docker browse URL = %q", cfg.ArtifactDockerBrowseURL)
 	}
 	base, repo = cfg.ArtifactInstallLocation("pypi")
 	if base != "http://nexus:8081" || repo != "pypi-internal" {
@@ -454,6 +460,7 @@ func TestApplyWebOverrides(t *testing.T) {
 	}
 	err = cfg.ApplyOverrides(map[string]string{
 		"ARTIFACT_PUBLIC_BASE_URL": "https://repo.example.test:8443",
+		"ARTIFACT_DOCKER_BROWSE_URL": "https://repo.example.test:8443/artifactory/docker-moderated/",
 		"QUARANTINE_DAYS":          "21",
 		"LOCAL_AUTH_ENABLED":       "true",
 	})
@@ -461,6 +468,7 @@ func TestApplyWebOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.ArtifactPublicBaseURL != "https://repo.example.test:8443" ||
+		cfg.ArtifactDockerBrowseURL != "https://repo.example.test:8443/artifactory/docker-moderated" ||
 		cfg.QuarantineDays != 21 || !cfg.LocalAuthEnabled {
 		t.Fatalf("override применён неверно: %+v", cfg)
 	}

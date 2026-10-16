@@ -107,10 +107,13 @@ type Config struct {
 	// внутреннее имя контейнера никогда не должно попадать в команды установки.
 	ArtifactPublicBaseURL string
 	// ArtifactDockerRegistryURL — внутренний префикс Docker Registry артефактори,
-	// куда worker делает push. ArtifactDockerPublicURL — тот же repository с
+	// куда worker делает push. ArtifactDockerPublicURL — registry endpoint с
 	// точки зрения разработчика; используется в готовой команде docker pull.
+	// ArtifactDockerBrowseURL — HTTP-каталог hosted-репозитория, который
+	// открывается кнопкой «Открыть в артефактори». Эти адреса у JFrog разные.
 	ArtifactDockerRegistryURL string
 	ArtifactDockerPublicURL   string
+	ArtifactDockerBrowseURL   string
 	// ArtifactRepos — репозиторий на каждый менеджер, ключ — код менеджера.
 	// Читается из ARTIFACT_REPO_{МЕНЕДЖЕР}, по умолчанию «{менеджер}-internal».
 	//
@@ -345,6 +348,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		ArtifactPublicBaseURL:     strings.TrimRight(strings.TrimSpace(getenv("ARTIFACT_PUBLIC_BASE_URL")), "/"),
 		ArtifactDockerRegistryURL: strings.TrimRight(strings.TrimSpace(getenv("ARTIFACT_DOCKER_REGISTRY_URL")), "/"),
 		ArtifactDockerPublicURL:   strings.TrimRight(strings.TrimSpace(getenv("ARTIFACT_DOCKER_PUBLIC_URL")), "/"),
+		ArtifactDockerBrowseURL:   strings.TrimRight(strings.TrimSpace(getenv("ARTIFACT_DOCKER_BROWSE_URL")), "/"),
 		ArtifactRepos:             artifactRepos(getenv),
 
 		RegistryPyPIURL:      valueOr(getenv("REGISTRY_PYPI_URL"), "https://pypi.org"),
