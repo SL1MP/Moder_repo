@@ -122,7 +122,7 @@ export default function SettingsPage({ me }: { me: Me }) {
       {activeTab === 'artifact' ? settingsSections(['Артефактори']) : null}
 
       {activeTab === 'integrations' && isAdmin ? <OIDCPanel /> : null}
-      {activeTab === 'integrations' ? settingsSections(['Песочница', 'Dragon', 'Git-модерация', 'GitLab', 'Доступ']) : null}
+      {activeTab === 'integrations' ? settingsSections(['Песочница', 'Dragon', 'VuMana', 'Git-модерация', 'GitLab', 'Доступ']) : null}
 
       {activeTab === 'policies' && policies.data?.vuln_index ? <VulnIndexCard info={policies.data.vuln_index} isSec={isSec} /> : null}
       {activeTab === 'policies' ? settingsSections(['Уязвимости', 'Политики']) : null}
@@ -469,6 +469,7 @@ function SettingValue({ row, isAdmin, onSaved, onError }: {
 
 function UsersPanel() {
   const users = useAsync(() => api.adminUsers(), [])
+  const [search, setSearch] = useState('')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
@@ -496,8 +497,17 @@ function UsersPanel() {
         {error ? <Alert kind="error">{error}</Alert> : null}
         {users.error ? <Alert kind="error">{users.error}</Alert> : null}
         {users.loading ? <Loader /> : null}
+        <label className="wide"><span>Поиск пользователя</span>
+          <input className="wide" value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Логин, имя, email, роль или описание" />
+        </label>
         <div className="user-list">
-          {(users.data?.items ?? []).map((user) => (
+          {(users.data?.items ?? []).filter((user) => {
+            const needle = search.trim().toLocaleLowerCase()
+            return !needle || [user.username, user.display_name, user.full_name,
+              user.email, user.description, user.source, ...(user.roles ?? [])]
+              .some((value) => String(value ?? '').toLocaleLowerCase().includes(needle))
+          }).map((user) => (
             <UserAccessRow key={user.id} user={user} roles={users.data?.roles ?? []}
               onSaved={() => { setMessage(`Доступ ${user.username} обновлён`); users.reload() }}
               onDeleted={() => { setMessage(`Пользователь ${user.username} удалён`); users.reload() }}

@@ -113,6 +113,11 @@ func IsSecretSetting(key string) bool { return secretSettings[key] }
 
 // IsWebEditable сообщает API, какие строки каталога рисовать как поля ввода.
 func IsWebEditable(key string) bool {
+	for _, manager := range DragonManagers {
+		if key == DragonRepositoryKey(manager) {
+			return true
+		}
+	}
 	if strings.HasPrefix(key, "ARTIFACT_REPO_") && key != "ARTIFACT_REPO_OSV" {
 		return true
 	}
@@ -133,6 +138,14 @@ func ValidateOverrides(values map[string]string) error {
 }
 
 func validateOverride(key, value string) error {
+	for _, manager := range DragonManagers {
+		if key == DragonRepositoryKey(manager) {
+			if strings.ContainsAny(strings.TrimSpace(value), " \t\r\n") {
+				return fmt.Errorf("ID репозитория не должен содержать пробелы")
+			}
+			return nil // empty removes this manager's routing
+		}
+	}
 	value = strings.TrimSpace(value)
 	if IsSecretSetting(key) && value == "" {
 		return nil
@@ -208,6 +221,14 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 	}
 	for key, raw := range values {
 		v := strings.TrimSpace(raw)
+		for _, manager := range DragonManagers {
+			if key == DragonRepositoryKey(manager) {
+				if c.DragonRepositoryIDs == nil {
+					c.DragonRepositoryIDs = make(map[string]string)
+				}
+				c.DragonRepositoryIDs[manager] = v
+			}
+		}
 		switch key {
 		case "APP_NAME":
 			c.AppName = v

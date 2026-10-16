@@ -8,12 +8,28 @@ import (
 )
 
 func TestDragonManagers(t *testing.T) {
-	if !dragonManagerSupported("go") {
-		t.Error("Go должен поддерживаться")
+	for _, manager := range []string{"go", "npm", "nuget", "pypi", "maven", "conan", "files", "luarocks", "terraform", "php"} {
+		if !dragonManagerSupported(manager) {
+			t.Errorf("manager %s должен поддерживаться", manager)
+		}
 	}
-	for _, manager := range []string{"npm", "nuget", "pypi", "maven", "conan", "docker", "files", "git", "luarocks", "terraform", "php"} {
+	for _, manager := range []string{"docker", "git", "unknown"} {
 		if dragonManagerSupported(manager) {
 			t.Errorf("manager %s не должен поддерживаться", manager)
+		}
+	}
+}
+
+func TestDragonRepositoryPerManagerNeverFallsBackToGo(t *testing.T) {
+	cfg := Config{DragonRepositoryID: "legacy-go", DragonRepositoryIDs: map[string]string{
+		"npm": "npm-id", "pypi": "pypi-id",
+	}}
+	for manager, want := range map[string]string{
+		"npm": "npm-id", "pypi": "pypi-id", "go": "legacy-go",
+		"maven": "", "docker": "", "git": "",
+	} {
+		if got := dragonRepositoryFor(cfg, manager); got != want {
+			t.Errorf("manager %s: ID %q, ожидалось %q", manager, got, want)
 		}
 	}
 }

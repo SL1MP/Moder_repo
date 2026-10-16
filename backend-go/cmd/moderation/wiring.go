@@ -200,6 +200,7 @@ func pipelineConfig(cfg *config.Config) pipeline.Config {
 		DragonEnabled:      cfg.DragonEnabled,
 		DragonPipelineID:   cfg.DragonPipelineID,
 		DragonRepositoryID: cfg.DragonRepositoryID,
+		DragonRepositoryIDs: cfg.DragonRepositoryIDs,
 		DragonPublish:      cfg.DragonPublish,
 		DragonPriority:     cfg.DragonPriority,
 		SBOMEnabled:        cfg.SBOMEnabled,

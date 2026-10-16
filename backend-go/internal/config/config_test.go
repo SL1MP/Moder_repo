@@ -585,6 +585,43 @@ func TestDragonConfiguration(t *testing.T) {
 	}
 }
 
+func TestDragonRepositoryRoutingAndWebOverrides(t *testing.T) {
+	env := map[string]string{
+		"DATABASE_URL": "postgres://localhost/moderation",
+		"DRAGON_ENABLED": "true",
+		"DRAGON_URL": "https://dragon.example",
+		"DRAGON_TOKEN": "pat",
+		"DRAGON_PIPELINE_ID": "pl:default-security",
+		"DRAGON_REPOSITORY_ID": "legacy-go",
+		"DRAGON_REPOSITORY_ID_NPM": "npm-repo",
+	}
+	cfg, err := Load(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DragonRepositoryFor("go") != "legacy-go" || cfg.DragonRepositoryFor("npm") != "npm-repo" || cfg.DragonRepositoryFor("pypi") != "" {
+		t.Fatalf("неверная маршрутизация: %+v", cfg.DragonRepositoryIDs)
+	}
+	if err := cfg.ApplyOverrides(map[string]string{"DRAGON_REPOSITORY_ID_GO": "new-go", "DRAGON_REPOSITORY_ID_PYPI": "pypi-repo"}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DragonRepositoryFor("go") != "new-go" || cfg.DragonRepositoryFor("pypi") != "pypi-repo" {
+		t.Fatalf("web-настройки не применились: %+v", cfg.DragonRepositoryIDs)
+	}
+	rows := cfg.Catalog()
+	for _, key := range []string{"DRAGON_REPOSITORY_ID_NPM", "DRAGON_REPOSITORY_ID_PYPI", "DRAGON_REPOSITORY_ID_FILES"} {
+		found := false
+		for _, row := range rows {
+			if row.Env == key && row.Editable && row.Section == "Dragon" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("нет редактируемой настройки %s", key)
+		}
+	}
+}
+
 func TestVumanaConfiguration(t *testing.T) {
 	env := map[string]string{
 		"DATABASE_URL": "postgres://localhost/moderation",

@@ -62,13 +62,14 @@ type Config struct {
 	// сертификата обязана быть видимым решением, а не строчкой в скрипте.
 	SandboxInsecureTLS bool
 
-	// Dragon информационно запускает сканеры над Go-архивом. Возвращённый
+	// Dragon информационно запускает сканеры над архивами пакетов. Возвращённый
 	// SHA-256 сверяется для трассировки, но Dragon не блокирует публикацию.
 	DragonEnabled      bool
 	DragonURL          string
 	DragonToken        string
 	DragonPipelineID   string
 	DragonRepositoryID string
+	DragonRepositoryIDs map[string]string
 	DragonPollInterval time.Duration
 	DragonTimeout      time.Duration
 	DragonPublish      bool
@@ -359,6 +360,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		DragonToken:        strings.TrimSpace(getenv("DRAGON_TOKEN")),
 		DragonPipelineID:   strings.TrimSpace(getenv("DRAGON_PIPELINE_ID")),
 		DragonRepositoryID: strings.TrimSpace(getenv("DRAGON_REPOSITORY_ID")),
+		DragonRepositoryIDs: dragonRepositoryIDs(getenv),
 		DragonPollInterval: secondsOr(getenv("DRAGON_POLL_INTERVAL_SECONDS"), 5),
 		DragonTimeout:      secondsOr(getenv("DRAGON_TIMEOUT_SECONDS"), 25*60),
 		DragonPublish:      boolOr(getenv("DRAGON_PUBLISH"), true),
@@ -608,8 +610,8 @@ func Load(getenv func(string) string) (*Config, error) {
 		if strings.TrimSpace(cfg.DragonPipelineID) == "" {
 			errs = append(errs, errors.New("DRAGON_PIPELINE_ID: не задан при DRAGON_ENABLED=true"))
 		}
-		if strings.TrimSpace(cfg.DragonRepositoryID) == "" {
-			errs = append(errs, errors.New("DRAGON_REPOSITORY_ID: не задан Go-репозиторий при DRAGON_ENABLED=true"))
+		if !cfg.HasDragonRepository() {
+			errs = append(errs, errors.New("DRAGON_REPOSITORY_ID_GO или DRAGON_REPOSITORY_ID_<MANAGER>: задайте хотя бы один репозиторий при DRAGON_ENABLED=true"))
 		}
 	}
 	if cfg.DragonPriority < 0 {

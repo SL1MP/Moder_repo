@@ -9,7 +9,7 @@ import (
 	"moderation/internal/dragon"
 )
 
-// DragonScanStep sends the downloaded Go module archive to Dragon. The step
+// DragonScanStep sends the downloaded package archive to Dragon. The step
 // is informational by policy: submission errors, scanner failures and
 // findings are recorded, but none of them may stop publication.
 type DragonScanStep struct{}
@@ -27,12 +27,17 @@ func (DragonScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error)
 	if !dragonManagerSupported(pc.Package.Manager) {
 		return StepOutcome{
 			Result:  "skipped",
-			Message: "Dragon применяется только к Go-модулям — шаг пропущен.",
+			Message: "Dragon не применяется к Docker-образам и Git-репозиториям — шаг пропущен.",
 			Details: map[string]any{"applicable": false, "manager": pc.Package.Manager},
 		}, nil
 	}
 	if pc.Deps.Dragon == nil {
-		return dragonInformation("Go-пакет не отправлен в Dragon: клиент не настроен.", nil, dragon.Result{}), nil
+		return dragonInformation("Пакет не отправлен в Dragon: клиент не настроен.", nil, dragon.Result{}), nil
+	}
+	repositoryID := dragonRepositoryFor(pc.Config, pc.Package.Manager)
+	if repositoryID == "" {
+		return dragonInformation("Пакет не отправлен в Dragon: для менеджера "+pc.Package.Manager+
+			" не задан собственный DRAGON_REPOSITORY_ID. Публикация продолжается.", nil, dragon.Result{}), nil
 	}
 
 	artifact, err := pc.Deps.Repo.CurrentArtifact(ctx, pc.Version.ID)
@@ -42,12 +47,16 @@ func (DragonScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error)
 	if artifact == nil || artifact.StagingPath == nil || artifact.SHA256 == nil ||
 		strings.TrimSpace(*artifact.StagingPath) == "" || strings.TrimSpace(*artifact.SHA256) == "" {
 		return dragonInformation(
-			"Go-пакет не отправлен в Dragon: архив или его SHA-256 отсутствует во временном хранилище.",
+			"Пакет не отправлен в Dragon: архив или его SHA-256 отсутствует во временном хранилище.",
 			nil, dragon.Result{}), nil
 	}
 	payload, err := pc.Payload(ctx, artifact)
 	if err != nil {
-		return dragonInformation("Go-пакет не отправлен в Dragon: архив не прочитан.", err, dragon.Result{}), nil
+		return dragonInformation("Пакет не отправлен в Dragon: архив не прочитан.", err, dragon.Result{}), nil
+	}
+	prepared, err := dragon.PrepareArchive(payload, artifact.Filename, pc.Config.ScanMaxUnpackedBytes)
+	if err != nil {
+		return dragonInformation("Пакет не отправлен в Dragon: архив не подготовлен.", err, dragon.Result{}), nil
 	}
 
 	// Go-модули чувствительны к регистру: DisplayName хранит исходный путь,
@@ -56,31 +65,29 @@ func (DragonScanStep) Run(ctx context.Context, pc *Context) (StepOutcome, error)
 	if name == "" {
 		name = strings.TrimSpace(pc.Package.Name)
 	}
-	size := int64(0)
-	if artifact.SizeBytes != nil {
-		size = *artifact.SizeBytes
-	}
+	prepared.Manager = pc.Package.Manager
+	prepared.Name = name
+	prepared.Version = pc.Version.RawVersion
 	result, scanErr := pc.Deps.Dragon.Scan(ctx, dragon.Request{
 		PipelineID:   pc.Config.DragonPipelineID,
-		RepositoryID: pc.Config.DragonRepositoryID,
+		RepositoryID: repositoryID,
 		ExternalID:   "moderation:item:" + strconv.FormatInt(pc.Item.ID, 10) + ":sha256:" + *artifact.SHA256,
 		Publish:      pc.Config.DragonPublish,
 		Priority:     pc.Config.DragonPriority,
-		Artifact: dragon.Artifact{
-			Manager: pc.Package.Manager, Name: name,
-			Version: pc.Version.RawVersion, Filename: artifact.Filename,
-			SHA256: *artifact.SHA256, SizeBytes: size, Payload: payload,
-		},
+		Artifact: prepared,
 	})
+	if result.RepositoryID == "" {
+		result.RepositoryID = repositoryID
+	}
 	if scanErr != nil {
-		message := "Go-пакет не удалось отправить в Dragon. Публикация продолжается, потому что Dragon — информационная проверка."
+		message := "Пакет не удалось отправить в Dragon. Публикация продолжается, потому что Dragon — информационная проверка."
 		if result.RunID != "" {
-			message = "Dragon принял Go-пакет, но итог сканирования получить не удалось. Публикация продолжается."
+			message = "Dragon принял пакет, но итог сканирования получить не удалось. Публикация продолжается."
 		}
 		return dragonInformation(message, scanErr, result), nil
 	}
 
-	message := fmt.Sprintf("Dragon завершил информационное сканирование Go-пакета со статусом %s.", result.Status)
+	message := fmt.Sprintf("Dragon завершил информационное сканирование пакета со статусом %s.", result.Status)
 	if strings.TrimSpace(result.Error) != "" {
 		message += " Ошибка Dragon: " + result.Error + "."
 	}
@@ -140,5 +147,24 @@ func dragonJobDetails(jobs []dragon.Job) []map[string]any {
 }
 
 func dragonManagerSupported(manager string) bool {
-	return strings.EqualFold(strings.TrimSpace(manager), "go")
+	switch strings.ToLower(strings.TrimSpace(manager)) {
+	case "pypi", "npm", "go", "nuget", "conan", "luarocks", "maven", "php", "terraform", "files":
+		return true
+	default:
+		return false
+	}
+}
+
+func dragonRepositoryFor(cfg Config, manager string) string {
+	manager = strings.ToLower(strings.TrimSpace(manager))
+	if !dragonManagerSupported(manager) {
+		return ""
+	}
+	if id := strings.TrimSpace(cfg.DragonRepositoryIDs[manager]); id != "" {
+		return id
+	}
+	if manager == "go" {
+		return strings.TrimSpace(cfg.DragonRepositoryID)
+	}
+	return ""
 }

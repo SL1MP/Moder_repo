@@ -41,11 +41,12 @@ type Config struct {
 	// с явной пометкой, а не молча пропускается: «проверку не делали» обязано
 	// быть видно в карточке.
 	SandboxEnabled bool
-	// DragonEnabled включает информационную оркестрацию сканеров скачанного
-	// Go-архива. Результат Dragon никогда не блокирует публикацию.
+	// DragonEnabled включает информационную оркестрацию сканеров архивов.
+	// Результат Dragon никогда не блокирует публикацию.
 	DragonEnabled      bool
 	DragonPipelineID   string
 	DragonRepositoryID string
+	DragonRepositoryIDs map[string]string
 	DragonPublish      bool
 	DragonPriority     int
 	// SBOMEnabled — формировать CycloneDX между проверками и публикацией.

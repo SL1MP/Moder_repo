@@ -99,7 +99,7 @@ func (c *Config) Catalog() []Setting {
 			Description: "Принимать самоподписанный сертификат", Value: c.SandboxInsecureTLS},
 
 		{Env: "DRAGON_ENABLED", Section: "Dragon",
-			Description: "Информационное сканирование Go-архивов", Value: c.DragonEnabled},
+			Description: "Информационное сканирование архивов (кроме Docker и Git)", Value: c.DragonEnabled},
 		{Env: "DRAGON_URL", Section: "Dragon",
 			Description: "Адрес API оркестратора Dragon", Value: c.DragonURL},
 		{Env: "DRAGON_TOKEN", Section: "Dragon",
@@ -107,7 +107,7 @@ func (c *Config) Catalog() []Setting {
 		{Env: "DRAGON_PIPELINE_ID", Section: "Dragon",
 			Description: "Pipeline Dragon, запускаемый для архивов пакетов", Value: c.DragonPipelineID},
 		{Env: "DRAGON_REPOSITORY_ID", Section: "Dragon",
-			Description: "ID репозитория Dragon для Go (например u:...)",
+			Description: "Устаревшее поле Go; используйте DRAGON_REPOSITORY_ID_GO",
 			Value: c.DragonRepositoryID},
 		{Env: "DRAGON_PUBLISH", Section: "Dragon",
 			Description: "Передавать publish=true в архивный запуск Dragon", Value: c.DragonPublish},
@@ -241,6 +241,13 @@ func (c *Config) Catalog() []Setting {
 		{Env: "REGISTRY_BREAKER_THRESHOLD", Section: "Надёжность",
 			Description: "Неудач подряд, после которых реестр перестаёт опрашиваться",
 			Value:       c.RegistryBreakerThreshold},
+	}
+	for _, manager := range DragonManagers {
+		settings = append(settings, Setting{
+			Env: DragonRepositoryKey(manager), Section: "Dragon",
+			Description: "ID репозитория Dragon для " + manager + "; пусто — не отправлять",
+			Value: c.DragonRepositoryIDs[manager],
+		})
 	}
 	// Целевые репозитории — часть рабочей конфигурации, а не скрытая карта.
 	// Без них администратор не сможет выбрать корпоративные moderated-репы для
