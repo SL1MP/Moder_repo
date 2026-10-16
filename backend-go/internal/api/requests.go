@@ -296,9 +296,9 @@ func (h *RequestsHandler) requestPayload(r *http.Request, req *domain.Moderation
 	return payload, nil
 }
 
-func stepTitleForManager(code, manager string) string {
-	if manager == "git" {
-		switch code {
+func stepTitleForManager(code *string, manager string) any {
+	if manager == "git" && code != nil {
+		switch *code {
 		case "download":
 			return "Зеркалирование во внутренний GitLab"
 		case "publish":
