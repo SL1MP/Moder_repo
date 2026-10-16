@@ -86,7 +86,7 @@ func newMaintenanceRunner(cfg *config.Config, r *repo.Repo, q *queue.Queue, st *
 		catalog: maintenance.CatalogConfig{
 			Managers: cfg.ArtifactCatalogSyncManagers,
 			Repositories: cfg.ArtifactRepos,
-			Registry: newRegistry(cfg, newHTTPClient()),
+			Registry: newRegistry(cfg, nil),
 		},
 	}
 }

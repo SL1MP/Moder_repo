@@ -85,6 +85,7 @@ var webEditable = map[string]bool{
 	"PIPELINE_WATCHDOG_INTERVAL_SECONDS":   true,
 	"PIPELINE_STUCK_AFTER_SECONDS":         true,
 	"REGISTRY_RETRY_ATTEMPTS":              true,
+	"REGISTRY_HTTP_TIMEOUT_SECONDS":         true,
 	"REGISTRY_BREAKER_THRESHOLD":           true,
 	"MAINTENANCE_ENABLED":                  true,
 	"STAGING_CLEANUP_INTERVAL_SECONDS":     true,
@@ -133,6 +134,7 @@ func validateOverride(key, value string) error {
 	case "QUARANTINE_DAYS", "OSV_MAX_STALENESS_DAYS", "MAX_PACKAGES_PER_REQUEST",
 		"RATE_LIMIT_REQUESTS_PER_MINUTE", "PIPELINE_WATCHDOG_INTERVAL_SECONDS",
 		"PIPELINE_STUCK_AFTER_SECONDS", "REGISTRY_RETRY_ATTEMPTS", "REGISTRY_BREAKER_THRESHOLD",
+		"REGISTRY_HTTP_TIMEOUT_SECONDS",
 		"SANDBOX_TIMEOUT_SECONDS", "OSV_SYNC_INTERVAL_SECONDS",
 		"DRAGON_PRIORITY", "DRAGON_POLL_INTERVAL_SECONDS", "DRAGON_TIMEOUT_SECONDS", "COMMENT_EDIT_WINDOW_MINUTES",
 		"STAGING_CLEANUP_INTERVAL_SECONDS", "STAGING_ORPHAN_TTL_HOURS", "GIT_MIRROR_TIMEOUT_SECONDS":
@@ -349,6 +351,9 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 			c.PipelineStuckAfter = time.Duration(n) * time.Second
 		case "REGISTRY_RETRY_ATTEMPTS":
 			c.RegistryRetryAttempts, _ = strconv.Atoi(v)
+		case "REGISTRY_HTTP_TIMEOUT_SECONDS":
+			n, _ := strconv.Atoi(v)
+			c.RegistryHTTPTimeout = time.Duration(n) * time.Second
 		case "REGISTRY_BREAKER_THRESHOLD":
 			c.RegistryBreakerThreshold, _ = strconv.Atoi(v)
 		case "MAINTENANCE_ENABLED":

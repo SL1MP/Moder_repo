@@ -151,6 +151,10 @@ type Config struct {
 	RegistryRetryMaxDelay    time.Duration
 	RegistryBreakerThreshold int
 	RegistryBreakerOpenFor   time.Duration
+	// RegistryHTTPTimeout — потолок полного HTTP-ответа внешнего реестра.
+	// В отличие от коротких запросов API сюда попадает чтение Docker layers:
+	// multi-platform образ легко не успевает скачаться за одну минуту.
+	RegistryHTTPTimeout time.Duration
 
 	// Менеджер git обращается к репозиториям внешним бинарём: протокол git
 	// реализовать внутри сервиса несопоставимо дороже, чем вызвать тот же
@@ -394,6 +398,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		RegistryRetryMaxDelay:    millisOr(getenv("REGISTRY_RETRY_MAX_DELAY_MS"), 3000),
 		RegistryBreakerThreshold: intOr(getenv("REGISTRY_BREAKER_THRESHOLD"), 5),
 		RegistryBreakerOpenFor:   secondsOr(getenv("REGISTRY_BREAKER_OPEN_SECONDS"), 30),
+		RegistryHTTPTimeout:      secondsOr(getenv("REGISTRY_HTTP_TIMEOUT_SECONDS"), 20*60),
 
 		GitBinary:  valueOr(getenv("GIT_BINARY"), "git"),
 		GitTimeout: secondsOr(getenv("GIT_CLONE_TIMEOUT_SECONDS"), 600),

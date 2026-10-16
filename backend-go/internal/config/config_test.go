@@ -98,12 +98,33 @@ func TestConfigDefaults(t *testing.T) {
 		{"registry_go_proxy", cfg.RegistryGoProxy, "https://proxy.golang.org"},
 		{"registry_go_license_url", cfg.RegistryGoLicenseURL, "https://pkg.go.dev"},
 		{"registry_nuget_url", cfg.RegistryNuGetURL, "https://api.nuget.org"},
+		{"registry_http_timeout", cfg.RegistryHTTPTimeout, 20 * time.Minute},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
 			t.Errorf("%s = %v, у python-версии %v — один .env дал бы разный вердикт",
 				c.name, c.got, c.want)
 		}
+	}
+}
+
+func TestRegistryHTTPTimeoutWebOverride(t *testing.T) {
+	cfg, err := Load(func(key string) string {
+		if key == "DATABASE_URL" {
+			return "postgres://localhost/x"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.ApplyOverrides(map[string]string{
+		"REGISTRY_HTTP_TIMEOUT_SECONDS": "900",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RegistryHTTPTimeout != 15*time.Minute {
+		t.Fatalf("RegistryHTTPTimeout = %v, ожидалось 15m", cfg.RegistryHTTPTimeout)
 	}
 }
 

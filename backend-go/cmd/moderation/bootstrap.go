@@ -71,7 +71,7 @@ func openBootstrapEnv(logger *slog.Logger) (*bootstrapEnv, error) {
 		cfg: cfg, pool: pool, repo: r, ctx: ctx, stop: stop, logger: logger,
 		seeds: &seeds.Service{
 			Repo:     r,
-			Registry: newRegistry(cfg, newHTTPClient()),
+			Registry: newRegistry(cfg, nil),
 			Policies: policy.NewHolder(cfg.BlacklistFile, cfg.AllowedLicensesFile),
 		},
 	}, nil

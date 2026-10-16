@@ -113,7 +113,7 @@ func newRegistry(cfg *config.Config, httpClient registry.Doer) *registry.Registr
 	// последовательное ожидание таймаута на каждом пакете: снаружи сервис
 	// выглядит зависшим, хотя работает ровно как написано.
 	if httpClient == nil {
-		httpClient = newHTTPClient()
+		httpClient = newRegistryHTTPClient(cfg.RegistryHTTPTimeout)
 	}
 	resilient := registry.NewResilientDoer(httpClient,
 		registry.RetryPolicy{
@@ -240,6 +240,17 @@ const storeProbeTimeout = 10 * time.Second
 // OSV занимают сотни мегабайт, а Docker-образы могут занимать гигабайты.
 func newHTTPClient() *http.Client {
 	return &http.Client{Timeout: 60 * time.Second}
+}
+
+// newRegistryHTTPClient — клиент загрузки из внешних пакетных реестров.
+// Docker Download читает все manifests и layers multi-platform образа через
+// этот клиент. Минутный служебный клиент обрывал исправное чтение большого
+// слоя с `context deadline exceeded while reading body`.
+func newRegistryHTTPClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 20 * time.Minute
+	}
+	return &http.Client{Timeout: timeout}
 }
 
 // newArtifactHTTPClient — клиент для передачи больших файлов в артефактори.

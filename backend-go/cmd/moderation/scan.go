@@ -201,7 +201,7 @@ func scanOne(ctx context.Context, r *repo.Repo, st *stores, cfg *config.Config, 
 // кроме самого пакета: его подставляет loadItem.
 func buildScanContext(ctx context.Context, r *repo.Repo, st *stores, cfg *config.Config) (*pipeline.Context, error) {
 	httpClient := newHTTPClient()
-	reg := newRegistry(cfg, httpClient)
+	reg := newRegistry(cfg, nil)
 	blacklist := policy.LoadBlacklist(cfg.BlacklistFile)
 	licenses := policy.LoadLicensePolicy(cfg.AllowedLicensesFile)
 	if r != nil {
