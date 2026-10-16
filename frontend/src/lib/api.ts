@@ -610,6 +610,19 @@ export interface ArtifactCatalogSyncRun {
   updated: number
   skipped: number
   errors: number
+  details?: {
+    managers?: Record<string, {
+      repository?: string
+      files?: number
+      parsed?: number
+      imported?: number
+      updated?: number
+      skipped?: number
+      errors?: number
+      error?: string
+      warnings?: string[]
+    }>
+  }
   error?: string | null
   created_at: string
   started_at?: string | null

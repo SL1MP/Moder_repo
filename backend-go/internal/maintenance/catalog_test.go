@@ -17,14 +17,20 @@ func TestParseCatalogPath(t *testing.T) {
 		{"go", "github.com/!sirupsen/logrus/@v/v1.9.3.zip", "github.com/Sirupsen/logrus", "v1.9.3"},
 		{"maven", "org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar", "org.apache.commons:commons-lang3", "3.14.0"},
 		{"nuget", "newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg", "newtonsoft.json", "13.0.3"},
+		{"nuget", "AjaxControlToolkit.20.1.0.nupkg", "AjaxControlToolkit", "20.1.0"},
+		{"nuget", "Akka.Analyzers.0.2.5.nupkg", "Akka.Analyzers", "0.2.5"},
+		{"nuget", "Microsoft.Extensions.Logging.8.0.0-rc.2.nupkg", "Microsoft.Extensions.Logging", "8.0.0-rc.2"},
 		{"docker", "postgres/14.23/list.manifest.json", "postgres", "14.23"},
 		{"docker", "mcr.microsoft.com/dotnet/aspnet/10.0/manifest.json", "mcr.microsoft.com/dotnet/aspnet", "10.0"},
 		{"docker", "chrislusf/seaweedfs/" + digest + "/manifest.json", "chrislusf/seaweedfs", digest},
 		{"conan", "boost/1.90.0/boost-1.90.0.tgz", "boost", "1.90.0"},
-		{"conan", "boost/1.90.0/_/_/67c04388906d183b7bf506954ab/export/conan_export.tgz", "boost", "1.90.0"},
+		{"conan", "test_product_1/boost/1.90.0/_/67c04388906d183b7bf506954ab/export/conan_export.tgz", "boost", "1.90.0"},
+		{"conan", "test_product_1/boost/1.90.0/_/index.json", "boost", "1.90.0"},
+		{"conan", "_/zlib/1.2.12/_/a30750797caa71bd61bd0a18189caa28/package/0508f825/index.json", "zlib", "1.2.12"},
 		{"luarocks", "lua-cjson-2.1.0.10-1.src.rock", "lua-cjson", "2.1.0.10-1"},
 		{"php", "symfony/console/v7.2.1/symfony-console-v7.2.1.zip", "symfony/console", "v7.2.1"},
 		{"terraform", "registry.terraform.io/hashicorp/aws/5.31.0/terraform-provider-aws.zip", "hashicorp/aws", "5.31.0"},
+		{"terraform", "ansible/ansible/1.0.0/terraform-provider-ansible_1.0.0_darwin_amd64.zip", "ansible/ansible", "1.0.0"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.manager+"/"+tt.name, func(t *testing.T) {
@@ -34,6 +40,19 @@ func TestParseCatalogPath(t *testing.T) {
 					tt.manager, tt.path, got, ok, tt.name, tt.version)
 			}
 		})
+	}
+}
+
+func TestParseCatalogPathSkipsNuGetAndTerraformSidecars(t *testing.T) {
+	for _, test := range []struct{ manager, path string }{
+		{"nuget", "Akka.1.5.22.snupkg"},
+		{"nuget", "repository.index.json"},
+		{"terraform", "ansible/ansible/1.0.0/index.json"},
+		{"terraform", "ansible/ansible/1.0.0/terraform-provider-ansible_1.0.0_linux_amd64.zip.sha256"},
+	} {
+		if _, ok := parseCatalogPath(test.manager, test.path); ok {
+			t.Fatalf("служебный файл %s распознан как пакет %s", test.path, test.manager)
+		}
 	}
 }
 

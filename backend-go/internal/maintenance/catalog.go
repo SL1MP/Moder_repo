@@ -32,6 +32,7 @@ var (
 	pypiWheelName      = regexp.MustCompile(`^([A-Za-z0-9_.]+)-([0-9][A-Za-z0-9.!+_]*)-[^-]+-[^-]+-[^-]+\.whl$`)
 	pypiSdistName      = regexp.MustCompile(`^(.+)-([0-9][A-Za-z0-9.!+_-]*)\.(?:tar\.gz|zip)$`)
 	luarocksName       = regexp.MustCompile(`^(.+)-([0-9][0-9A-Za-z.+_-]*)-([0-9]+)$`)
+	nugetVersion       = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 	dockerDigestFolder = regexp.MustCompile(`(?i)^sha256:[0-9a-f]{64}$`)
 	dockerSHA256       = regexp.MustCompile(`(?i)^[0-9a-f]{64}$`)
 )
@@ -249,20 +250,42 @@ func parseCatalogPath(manager, filePath string) (catalogCoordinate, bool) {
 			return catalogCoordinate{Name: name, Version: reference}, name != "" && reference != ""
 		}
 	case "conan":
-		// JFrog Conan repositories use
-		// name/version/user/channel/revision/export/... (and deeper package
-		// revisions). Name and version are therefore always the first two
-		// path segments, not the two directories preceding the file.
-		if len(parts) >= 3 {
+		// Корпоративный JFrog хранит native Conan v2 как
+		// owner/name/version/channel/revision/(export|package)/... . Owner
+		// (например, "_", "edr" или "test_product") не является именем
+		// рецепта. Упрощённая раскладка самого сервиса name/version/file
+		// также остаётся поддержанной.
+		if len(parts) >= 5 {
+			return catalogCoordinate{Name: parts[1], Version: parts[2]}, true
+		}
+		if len(parts) == 3 {
 			return catalogCoordinate{Name: parts[0], Version: parts[1]}, true
 		}
-	case "nuget", "php":
+	case "nuget":
+		// Native NuGet-репозиторий JFrog хранит .nupkg плоско в корне.
+		// В нашей раскладке name/version/file координаты уже даны путём.
+		if len(parts) >= 3 {
+			return catalogCoordinate{Name: strings.Join(parts[:len(parts)-2], "/"), Version: parts[len(parts)-2]}, true
+		}
+		if len(parts) == 1 {
+			return parseFlatNuGetFilename(filename)
+		}
+	case "php":
 		if len(parts) >= 3 {
 			return catalogCoordinate{Name: strings.Join(parts[:len(parts)-2], "/"), Version: parts[len(parts)-2]}, true
 		}
 	case "terraform":
+		// Native JFrog Terraform layout:
+		// namespace/provider/version/terraform-provider-..._<os>_<arch>.zip.
+		// Старый network-mirror путь с registry.terraform.io поддерживается
+		// для совместимости с пакетами, опубликованными самим сервисом.
 		if len(parts) >= 5 && parts[0] == "registry.terraform.io" {
-			return catalogCoordinate{Name: parts[1] + "/" + parts[2], Version: parts[3]}, true
+			return catalogCoordinate{Name: parts[1] + "/" + parts[2], Version: parts[3]},
+				isTerraformProviderArchive(filename)
+		}
+		if len(parts) >= 4 {
+			return catalogCoordinate{Name: parts[0] + "/" + parts[1], Version: parts[2]},
+				isTerraformProviderArchive(filename)
 		}
 	case "luarocks":
 		// name-version-revision.(src|all).rock либо name-version.rockspec.
@@ -272,6 +295,31 @@ func parseCatalogPath(manager, filePath string) (catalogCoordinate, bool) {
 		}
 	}
 	return catalogCoordinate{}, false
+}
+
+// parseFlatNuGetFilename разбирает принятую NuGet раскладку
+// <package-id>.<version>.nupkg. Перебор идёт слева направо: версия NuGet
+// содержит от двух до четырёх числовых компонент, а package id может
+// содержать точки. Символьные пакеты .snupkg намеренно не принимаются.
+func parseFlatNuGetFilename(filename string) (catalogCoordinate, bool) {
+	if !strings.HasSuffix(strings.ToLower(filename), ".nupkg") {
+		return catalogCoordinate{}, false
+	}
+	base := filename[:len(filename)-len(".nupkg")]
+	parts := strings.Split(base, ".")
+	for index := 1; index < len(parts); index++ {
+		name := strings.Join(parts[:index], ".")
+		version := strings.Join(parts[index:], ".")
+		if name != "" && nugetVersion.MatchString(version) {
+			return catalogCoordinate{Name: name, Version: version}, true
+		}
+	}
+	return catalogCoordinate{}, false
+}
+
+func isTerraformProviderArchive(filename string) bool {
+	lower := strings.ToLower(strings.TrimSpace(filename))
+	return strings.HasPrefix(lower, "terraform-provider-") && strings.HasSuffix(lower, ".zip")
 }
 
 // catalogDockerVersion keeps immutable digest-only references intact. For a

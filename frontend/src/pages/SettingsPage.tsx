@@ -239,6 +239,9 @@ function ArtifactCatalogSyncCard({
   const [selectedManagers, setSelectedManagers] = useState<string[]>(info.managers)
   useEffect(() => setSelectedManagers(info.managers), [info.managers.join(',')])
   const run = info.last_run
+  const managerDetails = Object.values(run?.details?.managers ?? {})
+  const physicalFiles = managerDetails.reduce((total, detail) => total + (detail.files ?? 0), 0)
+  const recognizedArtifacts = managerDetails.reduce((total, detail) => total + (detail.parsed ?? 0), 0)
   const statusTitle: Record<string, string> = {
     queued: 'ожидает worker', running: 'выполняется', succeeded: 'завершена', failed: 'ошибка',
   }
@@ -291,10 +294,12 @@ function ArtifactCatalogSyncCard({
             <dt>Завершён</dt><dd>{formatTime(run.finished_at ?? null)}</dd>
           </dl>
           <dl>
-            <dt>Найдено файлов</dt><dd>{run.discovered}</dd>
+            <dt>Файлов в артефактори</dt><dd>{physicalFiles || run.discovered + run.skipped}</dd>
+            <dt>Распознано артефактов</dt><dd>{recognizedArtifacts || run.discovered}</dd>
             <dt>Добавлено версий</dt><dd>{run.imported}</dd>
-            <dt>Обновлено</dt><dd>{run.updated}</dd>
-            <dt>Пропущено / ошибок</dt><dd>{run.skipped} / {run.errors}</dd>
+            <dt>Обновлено версий</dt><dd>{run.updated}</dd>
+            <dt>Служебных/нераспознанных файлов</dt><dd>{run.skipped}</dd>
+            <dt>Ошибок</dt><dd>{run.errors}</dd>
           </dl>
           {run.error ? <Alert kind="error">{run.error}</Alert> : null}
         </div>
