@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"moderation/internal/registry"
+	"moderation/internal/resolve"
 )
 
 func TestDependencyResolverMatrix(t *testing.T) {
@@ -135,6 +136,78 @@ func TestComposerReadsRuntimeRequires(t *testing.T) {
 	versions, err := resolver.Versions(context.Background(), "acme/app")
 	if err != nil || len(versions) != 1 || versions[0] != "1.2.0" {
 		t.Fatalf("Composer versions: %v, %v", versions, err)
+	}
+}
+
+// Реальный Packagist отдаёт require объектом у версий с зависимостями и
+// пустым массивом у некоторых версий без них (например, psr/log). Обе формы
+// должны разбираться в рамках одного минифицированного p2-ответа.
+func TestComposerAcceptsEmptyArrayRequires(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://packagist.test/p2/psr/log.json": `{
+			"minified":"composer/2.0",
+			"packages":{"psr/log":[
+				{"version":"3.0.2","version_normalized":"3.0.2.0","require":[]},
+				{"version":"2.0.0","version_normalized":"2.0.0.0","require":{"php":">=8.0"}}
+			]}}
+		`,
+	}}
+	plugin := pluginWith(t, "php", f)
+	resolver := plugin.(registry.DependencyResolver)
+	ref, err := registry.ParseEntry(plugin, "psr/log:3.0.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements, err := resolver.Requirements(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("пустой require Packagist не разобран: %v", err)
+	}
+	if len(requirements) != 0 {
+		t.Fatalf("у psr/log:3.0.2 неожиданно появились зависимости: %+v", requirements)
+	}
+	versions, err := resolver.Versions(context.Background(), "psr/log")
+	if err != nil || strings.Join(versions, ",") != "3.0.2,2.0.0" {
+		t.Fatalf("версии Packagist = %v, ошибка = %v", versions, err)
+	}
+}
+
+func TestComposerBuildsTransitiveTreeWithPackagistEmptyArrays(t *testing.T) {
+	f := &fakeRegistry{responses: map[string]string{
+		"https://packagist.test/p2/monolog/monolog.json": `{
+			"packages":{"monolog/monolog":[{
+				"version":"3.9.0","version_normalized":"3.9.0.0",
+				"require":{"php":">=8.1","psr/log":"^2.0 || ^3.0"}
+			}]}
+		`,
+		"https://packagist.test/p2/psr/log.json": `{
+			"packages":{"psr/log":[
+				{"version":"3.0.2","version_normalized":"3.0.2.0","require":[]},
+				{"version":"2.0.0","version_normalized":"2.0.0.0","require":[]}
+			]}
+		`,
+	}}
+	reg := registry.New(registry.Config{PackagistURL: "https://packagist.test", HTTP: f})
+	plugin, err := reg.Get("php")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := registry.ParseEntry(plugin, "monolog/monolog:3.9.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	walk, err := resolve.New(reg, resolve.Options{
+		MaxDepth: 1, MaxNodes: 20, Concurrency: 2,
+	}, nil).Walk(context.Background(), "php", []registry.Ref{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(walk.Problems) != 0 {
+		t.Fatalf("дерево Composer содержит ошибки: %+v", walk.Problems)
+	}
+	transitive := walk.Transitive()
+	if len(transitive) != 1 || transitive[0].Ref.Name != "psr/log" ||
+		transitive[0].Ref.Version != "3.0.2" {
+		t.Fatalf("транзитивы monolog/monolog:3.9.0 = %+v", transitive)
 	}
 }
 

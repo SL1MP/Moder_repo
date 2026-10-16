@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -85,6 +86,41 @@ func (p *PHP) ValidateVersion(version string) error {
 	return nil
 }
 
+// composerRequirements принимает обе формы поля require, которые реально
+// встречаются в Packagist p2 metadata. Composer описывает зависимости
+// объектом, но версии без зависимостей Packagist иногда сериализует как
+// пустой массив (`"require": []`). Обычный map[string]string на таком
+// ответе роняет разбор всего пакета и вместе с ним всё дерево зависимостей.
+type composerRequirements map[string]string
+
+func (r *composerRequirements) UnmarshalJSON(data []byte) error {
+	text := strings.TrimSpace(string(data))
+	switch {
+	case text == "null":
+		*r = nil
+		return nil
+	case strings.HasPrefix(text, "{"):
+		var values map[string]string
+		if err := json.Unmarshal(data, &values); err != nil {
+			return err
+		}
+		*r = values
+		return nil
+	case strings.HasPrefix(text, "["):
+		var values []json.RawMessage
+		if err := json.Unmarshal(data, &values); err != nil {
+			return err
+		}
+		if len(values) != 0 {
+			return fmt.Errorf("поле require Packagist содержит непустой массив")
+		}
+		*r = composerRequirements{}
+		return nil
+	default:
+		return fmt.Errorf("поле require Packagist имеет неподдерживаемый JSON-тип")
+	}
+}
+
 // composerPackage — ответ Packagist v2 (/p2/{vendor}/{package}.json).
 type composerPackage struct {
 	Minified string `json:"minified"`
@@ -96,7 +132,7 @@ type composerPackage struct {
 		// намеренно не раскрываются: при обычном composer install пакета они
 		// не устанавливаются. Указатель нужен из-за minified metadata так же,
 		// как у License ниже.
-		Require           *map[string]string `json:"require"`
+		Require           *composerRequirements `json:"require"`
 		// Packagist p2 применяет composer/2.0 metadata minification: если
 		// лицензия совпадает с предыдущей (более новой) версией, поле вообще
 		// отсутствует. Указатель отличает отсутствие от явного пустого массива.

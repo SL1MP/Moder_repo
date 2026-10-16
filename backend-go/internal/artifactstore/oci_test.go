@@ -116,6 +116,12 @@ func TestGenericPublishesEveryPlatformAsNativeOCI(t *testing.T) {
 		if strings.Contains(r.URL.Path, "/library/postgres/") {
 			t.Errorf("официальный образ опубликован с внешним namespace library: %s", r.URL.Path)
 		}
+		if (r.Method == http.MethodHead || r.Method == http.MethodPost ||
+			(r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/manifests/"))) &&
+			!strings.HasPrefix(r.URL.Path, "/hosted-registry/v2/postgres/") {
+			t.Errorf("Docker API вызван не через настроенный hosted registry: %s %s",
+				r.Method, r.URL.Path)
+		}
 		switch {
 		case r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/blobs/"):
 			w.WriteHeader(http.StatusNotFound)
@@ -143,6 +149,7 @@ func TestGenericPublishesEveryPlatformAsNativeOCI(t *testing.T) {
 
 	store, err := New(Config{
 		Kind: KindGeneric, BaseURL: srv.URL + "/artifactory", HTTPClient: srv.Client(),
+		DockerRegistryURL: srv.URL + "/hosted-registry",
 		DockerPublicURL: "https://packages.example/docker-internal",
 	})
 	if err != nil {

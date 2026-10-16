@@ -46,6 +46,18 @@ type parsedOCILayout struct {
 }
 
 func (g *Generic) dockerAPIBase(repo string) string {
+	// У JFrog Docker push идёт не через обычный /artifactory/{repo} и не на
+	// всех установках разрешён через /artifactory/api/docker/{repo}. Если для
+	// hosted Docker repository настроен отдельный registry host (типичный
+	// reverse-proxy layout), он является единственным корректным endpoint для
+	// HEAD/POST/PUT протокола Registry v2. Раньше Generic игнорировал эту
+	// настройку и получал 405 на завершении загрузки blob.
+	if configured := strings.TrimRight(strings.TrimSpace(g.cfg.DockerRegistryURL), "/"); configured != "" {
+		if strings.HasSuffix(configured, "/v2") {
+			return configured
+		}
+		return configured + "/v2"
+	}
 	return fmt.Sprintf("%s/api/docker/%s/v2", strings.TrimRight(g.cfg.BaseURL, "/"), url.PathEscape(repo))
 }
 
