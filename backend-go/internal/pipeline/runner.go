@@ -3,7 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
-
+	"sync"
 	"time"
 
 	"moderation/internal/domain"
@@ -69,6 +69,31 @@ func Run(ctx context.Context, pc *Context, fromCode string) (Result, error) {
 	deferredStatus := ""
 
 	for i := startIdx; i < len(Steps); i++ {
+		// После скачивания пять независимых операций выполняются одновременно:
+		// лицензия, Dragon, OSV, песочница и формирование SBOM. Возобновление с
+		// шага внутри группы запускает выбранный и все следующие проверки, как
+		// прежде делал последовательный runner.
+		parallelStart := domain.StepOrder["license"]
+		parallelEnd := domain.StepOrder["sbom"]
+		if i >= parallelStart && i <= parallelEnd {
+			group, err := runParallelSteps(ctx, pc, Steps[i:parallelEnd+1])
+			result.Notifications = append(result.Notifications, group.notifications...)
+			if group.lastStep != "" {
+				result.LastStep = group.lastStep
+			}
+			if group.deferredStatus != "" {
+				deferredStatus = group.deferredStatus
+			}
+			if err != nil {
+				return result, err
+			}
+			if group.hardStop {
+				result.ItemStatus, result.Blocked = group.itemStatus, group.itemStatus != ""
+				return result, nil
+			}
+			i = parallelEnd
+			continue
+		}
 		step := Steps[i]
 		startedAt := pc.now()
 		if err := saveStepStarted(ctx, r, pc, step.Code(), startedAt); err != nil {
@@ -152,6 +177,173 @@ func Run(ctx context.Context, pc *Context, fromCode string) (Result, error) {
 	return result, nil
 }
 
+type parallelResult struct {
+	notifications []Notification
+	lastStep       string
+	deferredStatus string
+	itemStatus     string
+	hardStop       bool
+}
+
+type parallelExecution struct {
+	step      Step
+	startedAt time.Time
+	outcome   StepOutcome
+	err       error
+}
+
+func runParallelSteps(ctx context.Context, pc *Context, steps []Step) (parallelResult, error) {
+	result := parallelResult{}
+	if len(steps) == 0 {
+		return result, nil
+	}
+	if err := pc.Deps.Repo.UpdateRequestItemCurrentStep(ctx, pc.Item.ID, steps[0].Code()); err != nil {
+		return result, fmt.Errorf("сохранение начала параллельных проверок: %w", err)
+	}
+	executions := make([]parallelExecution, len(steps))
+	for i, step := range steps {
+		executions[i] = parallelExecution{step: step, startedAt: pc.now()}
+		if err := saveStepStartedRecord(ctx, pc.Deps.Repo, pc, step.Code(), executions[i].startedAt); err != nil {
+			return result, err
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i := range executions {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			stepContext := cloneForParallel(pc)
+			executions[i].outcome, executions[i].err = executions[i].step.Run(ctx, stepContext)
+		}(i)
+	}
+	wg.Wait()
+
+	if fresh, err := pc.Deps.Repo.GetRequestItem(ctx, pc.Item.ID); err != nil {
+		return result, err
+	} else if fresh != nil && domain.Contains([]string{"stopped", "cancelled"}, fresh.Status) {
+		result.itemStatus, result.hardStop = fresh.Status, true
+		return result, nil
+	}
+
+	var firstErr error
+	for i := range executions {
+		exec := &executions[i]
+		outcomeResult := exec.outcome.Result
+		if exec.err != nil {
+			outcomeResult = "error"
+		}
+		metrics.ObserveStep(exec.step.Code(), outcomeResult, pc.Package.Manager,
+			pc.now().Sub(exec.startedAt).Seconds())
+		if exec.err != nil {
+			failed := Fail(fmt.Sprintf("Техническая ошибка выполнения шага: %v", exec.err))
+			if saveErr := saveStep(ctx, pc.Deps.Repo, pc, exec.step.Code(), failed, exec.startedAt); saveErr != nil {
+				return result, fmt.Errorf("шаг %s: %v; результат ошибки не сохранён: %w",
+					exec.step.Code(), exec.err, saveErr)
+			}
+			if firstErr == nil {
+				firstErr = fmt.Errorf("шаг %s: %w", exec.step.Code(), exec.err)
+			}
+			continue
+		}
+		if err := saveStep(ctx, pc.Deps.Repo, pc, exec.step.Code(), exec.outcome, exec.startedAt); err != nil {
+			return result, err
+		}
+		result.lastStep = exec.step.Code()
+		if exec.outcome.NotifyEvent != "" {
+			result.notifications = append(result.notifications,
+				notificationsForOutcome(exec.outcome, pc.Item.ID)...)
+		}
+	}
+	if firstErr != nil {
+		return result, firstErr
+	}
+
+	// A policy rejection (for example a forbidden license) wins over pending
+	// approvals. Sandbox warn/fail is not a hard stop here: it is an open
+	// DevSecOps blocker, so the already generated SBOM can still be enriched
+	// and sent before PublishStep records that publication is waiting.
+	for i := range executions {
+		exec := &executions[i]
+		if exec.outcome.Stop && !IsOpenResult(exec.step.Code(), exec.outcome.Result) {
+			if err := applyParallelStatus(ctx, pc, exec.step.Code(), exec.outcome); err != nil {
+				return result, err
+			}
+			result.itemStatus, result.hardStop = exec.outcome.ItemStatus, true
+			return result, nil
+		}
+	}
+	byCode := make(map[string]parallelExecution, len(executions))
+	for _, exec := range executions {
+		byCode[exec.step.Code()] = exec
+	}
+	for _, code := range BlockerPriority {
+		exec, ok := byCode[code]
+		if !ok || !IsOpenResult(code, exec.outcome.Result) {
+			continue
+		}
+		// The request item must remain running until the post-processing
+		// barrier, but the shared package version may already expose why this
+		// run cannot publish. Choose exactly one status using BlockerPriority;
+		// otherwise concurrent license/sandbox outcomes would race and the
+		// final value would depend on goroutine completion order.
+		if exec.outcome.VersionStatus != "" {
+			if err := pc.Deps.Repo.UpdatePackageVersionQuarantine(
+				ctx, pc.Version.ID, exec.outcome.VersionStatus, pc.Version.QuarantineUntil); err != nil {
+				return result, err
+			}
+			pc.Version.Status = exec.outcome.VersionStatus
+		}
+		// Пока барьер VuMana и PublishStep ещё выполняются, request_item обязан
+		// оставаться running: heartbeat владеет строкой именно по этому статусу.
+		// Итоговый статус выбранной блокировки применит PublishStep после всех
+		// пост-проверок. Иначе долгий upload SBOM выглядел бы воркеру как
+		// потерянная задача и сам отменял бы собственный context.
+		result.deferredStatus = exec.outcome.ItemStatus
+		break
+	}
+	return result, nil
+}
+
+func applyParallelStatus(ctx context.Context, pc *Context, code string, outcome StepOutcome) error {
+	if outcome.VersionStatus != "" {
+		if err := pc.Deps.Repo.UpdatePackageVersionQuarantine(
+			ctx, pc.Version.ID, outcome.VersionStatus, pc.Version.QuarantineUntil); err != nil {
+			return err
+		}
+		pc.Version.Status = outcome.VersionStatus
+	}
+	if outcome.ItemStatus != "" {
+		return applyItemStatus(ctx, pc.Deps.Repo, pc, code, outcome)
+	}
+	return nil
+}
+
+func cloneForParallel(pc *Context) *Context {
+	clone := *pc
+	if pc.Package != nil {
+		value := *pc.Package
+		clone.Package = &value
+	}
+	if pc.Version != nil {
+		value := *pc.Version
+		clone.Version = &value
+	}
+	if pc.Item != nil {
+		value := *pc.Item
+		clone.Item = &value
+	}
+	if pc.Request != nil {
+		value := *pc.Request
+		clone.Request = &value
+	}
+	if pc.Author != nil {
+		value := *pc.Author
+		clone.Author = &value
+	}
+	return &clone
+}
+
 // notificationsForOutcome не смешивает роли в одном событии. Публикация
 // может одновременно ждать лицензию и песочницу; раньше событие называлось по
 // первой блокировке («ждёт DevSecOps»), но рассылалось и юристам. Теперь у
@@ -208,6 +400,12 @@ func saveStepStarted(
 	if err := r.UpdateRequestItemCurrentStep(ctx, pc.Item.ID, code); err != nil {
 		return fmt.Errorf("сохранение текущего шага %s: %w", code, err)
 	}
+	return saveStepStartedRecord(ctx, r, pc, code, startedAt)
+}
+
+func saveStepStartedRecord(
+	ctx context.Context, r *repo.Repo, pc *Context, code string, startedAt time.Time,
+) error {
 	message := "Шаг выполняется. Для внешних проверок это может занять несколько минут."
 	_, err := r.UpsertPipelineStep(ctx, domain.PipelineStep{
 		RequestItemID: pc.Item.ID,

@@ -46,6 +46,11 @@ var webEditable = map[string]bool{
 	"DRAGON_PRIORITY":                     true,
 	"DRAGON_POLL_INTERVAL_SECONDS":         true,
 	"DRAGON_TIMEOUT_SECONDS":               true,
+	"VUMANA_ENABLED":                      true,
+	"VUMANA_API_URL":                      true,
+	"VUMANA_URL":                          true,
+	"VUMANA_TOKEN":                        true,
+	"VUMANA_TIMEOUT_SECONDS":              true,
 	"OSV_DB_SOURCE":                       true,
 	"OSV_PYPI_SNAPSHOT_PATH":              true,
 	"OSV_NPM_SNAPSHOT_PATH":               true,
@@ -84,6 +89,7 @@ var webEditable = map[string]bool{
 	"PIPELINE_WATCHDOG_ENABLED":            true,
 	"PIPELINE_WATCHDOG_INTERVAL_SECONDS":   true,
 	"PIPELINE_STUCK_AFTER_SECONDS":         true,
+	"PIPELINE_ITEM_TIMEOUT_SECONDS":        true,
 	"REGISTRY_RETRY_ATTEMPTS":              true,
 	"REGISTRY_HTTP_TIMEOUT_SECONDS":         true,
 	"REGISTRY_BREAKER_THRESHOLD":           true,
@@ -96,6 +102,7 @@ var secretSettings = map[string]bool{
 	"ARTIFACT_TOKEN":             true,
 	"SANDBOX_TOKEN":              true,
 	"DRAGON_TOKEN":               true,
+	"VUMANA_TOKEN":               true,
 	"GITLAB_OAUTH_SECRET":        true,
 	"GIT_MIRROR_API_TOKEN":       true,
 	"GIT_MIRROR_PUSH_TOKEN":      true,
@@ -135,6 +142,7 @@ func validateOverride(key, value string) error {
 		"RATE_LIMIT_REQUESTS_PER_MINUTE", "PIPELINE_WATCHDOG_INTERVAL_SECONDS",
 		"PIPELINE_STUCK_AFTER_SECONDS", "REGISTRY_RETRY_ATTEMPTS", "REGISTRY_BREAKER_THRESHOLD",
 		"REGISTRY_HTTP_TIMEOUT_SECONDS",
+		"PIPELINE_ITEM_TIMEOUT_SECONDS", "VUMANA_TIMEOUT_SECONDS",
 		"SANDBOX_TIMEOUT_SECONDS", "OSV_SYNC_INTERVAL_SECONDS",
 		"DRAGON_PRIORITY", "DRAGON_POLL_INTERVAL_SECONDS", "DRAGON_TIMEOUT_SECONDS", "COMMENT_EDIT_WINDOW_MINUTES",
 		"STAGING_CLEANUP_INTERVAL_SECONDS", "STAGING_ORPHAN_TTL_HOURS", "GIT_MIRROR_TIMEOUT_SECONDS":
@@ -152,14 +160,14 @@ func validateOverride(key, value string) error {
 		if err != nil || n < 0 {
 			return fmt.Errorf("ожидается неотрицательное целое число")
 		}
-	case "LOCAL_AUTH_ENABLED", "ARTIFACT_DRY_RUN", "SANDBOX_ENABLED", "SANDBOX_INSECURE_TLS", "DRAGON_ENABLED", "DRAGON_PUBLISH", "PIPELINE_WATCHDOG_ENABLED", "MAINTENANCE_ENABLED", "GIT_MIRROR_ENABLED", "GIT_MIRROR_FORCE":
+	case "LOCAL_AUTH_ENABLED", "ARTIFACT_DRY_RUN", "SANDBOX_ENABLED", "SANDBOX_INSECURE_TLS", "DRAGON_ENABLED", "DRAGON_PUBLISH", "VUMANA_ENABLED", "PIPELINE_WATCHDOG_ENABLED", "MAINTENANCE_ENABLED", "GIT_MIRROR_ENABLED", "GIT_MIRROR_FORCE":
 		if _, err := strconv.ParseBool(value); err != nil {
 			return fmt.Errorf("ожидается true или false")
 		}
 	case "ARTIFACT_BASE_URL", "ARTIFACT_PUBLIC_BASE_URL", "ARTIFACT_DOCKER_REGISTRY_URL",
 		"ARTIFACT_DOCKER_PUBLIC_URL", "ARTIFACT_DOCKER_BROWSE_URL", "SANDBOX_URL", "DRAGON_URL", "OIDC_ISSUER", "OIDC_PUBLIC_ISSUER",
-		"GITLAB_URL", "GIT_MIRROR_GITLAB_URL", "OSV_DB_URL":
-		if value == "" && (key == "ARTIFACT_PUBLIC_BASE_URL" || key == "ARTIFACT_DOCKER_PUBLIC_URL" || key == "ARTIFACT_DOCKER_BROWSE_URL" || key == "OSV_DB_URL") {
+		"GITLAB_URL", "GIT_MIRROR_GITLAB_URL", "OSV_DB_URL", "VUMANA_API_URL", "VUMANA_URL":
+		if value == "" && (key == "ARTIFACT_PUBLIC_BASE_URL" || key == "ARTIFACT_DOCKER_PUBLIC_URL" || key == "ARTIFACT_DOCKER_BROWSE_URL" || key == "OSV_DB_URL" || key == "VUMANA_API_URL" || key == "VUMANA_URL") {
 			return nil
 		}
 		u, err := url.Parse(value)
@@ -268,6 +276,17 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 		case "DRAGON_TIMEOUT_SECONDS":
 			n, _ := strconv.Atoi(v)
 			c.DragonTimeout = time.Duration(n) * time.Second
+		case "VUMANA_ENABLED":
+			c.VumanaEnabled, _ = strconv.ParseBool(v)
+		case "VUMANA_API_URL":
+			c.VumanaAPIURL = strings.TrimRight(v, "/")
+		case "VUMANA_URL":
+			c.VumanaURL = strings.TrimRight(v, "/")
+		case "VUMANA_TOKEN":
+			c.VumanaToken = raw
+		case "VUMANA_TIMEOUT_SECONDS":
+			n, _ := strconv.Atoi(v)
+			c.VumanaTimeout = time.Duration(n) * time.Second
 		case "OSV_DB_SOURCE":
 			c.OSVDBSource = v
 		case "OSV_PYPI_SNAPSHOT_PATH":
@@ -349,6 +368,9 @@ func (c *Config) ApplyOverrides(values map[string]string) error {
 		case "PIPELINE_STUCK_AFTER_SECONDS":
 			n, _ := strconv.Atoi(v)
 			c.PipelineStuckAfter = time.Duration(n) * time.Second
+		case "PIPELINE_ITEM_TIMEOUT_SECONDS":
+			n, _ := strconv.Atoi(v)
+			c.PipelineItemTimeout = time.Duration(n) * time.Second
 		case "REGISTRY_RETRY_ATTEMPTS":
 			c.RegistryRetryAttempts, _ = strconv.Atoi(v)
 		case "REGISTRY_HTTP_TIMEOUT_SECONDS":

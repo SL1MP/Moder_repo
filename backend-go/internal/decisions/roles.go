@@ -42,10 +42,12 @@ func (s *Service) ReleaseQuarantine(ctx context.Context, item *domain.RequestIte
 	}
 
 	result := &Result{Item: item}
-	// Возобновляем с шага лицензии: карантин (шаг 2) повторно выполнять
-	// незачем — дата публикации не изменилась.
+	// Возобновляем со скачивания: после перестановки независимые проверки
+	// (лицензия, OSV, песочница, Dragon и SBOM) идут параллельно и требуют уже
+	// подготовленный артефакт. Карантин повторно выполнять незачем — дата
+	// публикации не изменилась.
 	siblings, notifications, err := s.applyToSiblings(ctx, item,
-		[]string{"quarantined"}, "license", note, []string{"quarantine"})
+		[]string{"quarantined"}, "download", note, []string{"quarantine"})
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +68,7 @@ func (s *Service) ReleaseQuarantine(ctx context.Context, item *domain.RequestIte
 	result.Notifications = append(result.Notifications, Notification{
 		RequestItemID: item.ID, Event: "quarantine_released", Message: note,
 	})
-	if err := s.resume(ctx, item, "license"); err != nil {
+	if err := s.resume(ctx, item, "download"); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -100,7 +102,7 @@ func (s *Service) releaseLegacyQuarantineSiblings(
 		notifications = append(notifications, Notification{
 			RequestItemID: sibling.ID, Event: pipeline.EventDecisionMade, Message: note,
 		})
-		if err := s.resume(ctx, sibling, "license"); err != nil {
+		if err := s.resume(ctx, sibling, "download"); err != nil {
 			return nil, nil, err
 		}
 		ids = append(ids, sibling.ID)

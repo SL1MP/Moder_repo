@@ -415,11 +415,11 @@ func TestQuarantineReleaseReachesSiblings(t *testing.T) {
 	if len(res.Siblings) != 1 || res.Siblings[0] != f.second.ID {
 		t.Fatalf("Siblings = %v", res.Siblings)
 	}
-	// Возобновление с шага лицензии: карантин повторно выполнять незачем —
-	// дата публикации не изменилась.
+	// Возобновление со скачивания: карантин повторно выполнять незачем, но
+	// параллельным проверкам нужен подготовленный артефакт.
 	for _, id := range []int64{f.first.ID, f.second.ID} {
-		if from, ok := rec.resumedFrom(id); !ok || from != "license" {
-			t.Errorf("заявка %d возобновлена с %q (ok=%v), ожидался license", id, from, ok)
+		if from, ok := rec.resumedFrom(id); !ok || from != "download" {
+			t.Errorf("заявка %d возобновлена с %q (ok=%v), ожидался download", id, from, ok)
 		}
 		// Блокировка снята явно, иначе публикация ждала бы вечно.
 		if got := stepResult(t, r, id, "quarantine"); got != "pass" {
@@ -470,8 +470,8 @@ func TestQuarantineReleaseAcceptsLegacyManualStatus(t *testing.T) {
 		if got := stepResult(t, r, id, "quarantine"); got != "pass" {
 			t.Errorf("заявка %d, шаг quarantine = %q, ожидался pass", id, got)
 		}
-		if from, ok := rec.resumedFrom(id); !ok || from != "license" {
-			t.Errorf("заявка %d возобновлена с %q (ok=%v), ожидался license", id, from, ok)
+		if from, ok := rec.resumedFrom(id); !ok || from != "download" {
+			t.Errorf("заявка %d возобновлена с %q (ok=%v), ожидался download", id, from, ok)
 		}
 	}
 }

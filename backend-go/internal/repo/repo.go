@@ -459,6 +459,7 @@ func (r *Repo) UpsertPipelineStep(ctx context.Context, step domain.PipelineStep)
 			(request_item_id, step_code, step_order, result, message, details, started_at, finished_at)
 		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
 		ON CONFLICT (request_item_id, step_code) DO UPDATE SET
+			step_order = EXCLUDED.step_order,
 			result = EXCLUDED.result,
 			message = EXCLUDED.message,
 			details = EXCLUDED.details,

@@ -21,12 +21,13 @@ var Steps = []Step{
 	DbCheckStep{},
 	BlacklistStep{},
 	QuarantineStep{},
-	LicenseStep{},
 	DownloadStep{},
+	LicenseStep{},
 	DragonScanStep{},
 	VulnScanStep{},
 	SandboxScanStep{},
 	SBOMStep{},
+	SBOMUploadStep{},
 	PublishStep{},
 }
 
@@ -208,9 +209,10 @@ func (QuarantineStep) Run(ctx context.Context, pc *Context) (StepOutcome, error)
 	return Pass(""), nil
 }
 
-// --------------------------------------------------------------------------- шаг 3
-// LicenseStep — единственный из первых четырёх, чей warn НЕ останавливает
-// конвейер: согласования юриста и DevSecOps идут параллельно.
+// --------------------------------------------------------------------------- параллельная проверка
+// LicenseStep выполняется одновременно с OSV, песочницей, Dragon и SBOM.
+// Его warn не прерывает остальные проверки: согласования юриста и DevSecOps
+// могут ожидаться параллельно.
 type LicenseStep struct{}
 
 func (LicenseStep) Code() string { return "license" }
@@ -238,6 +240,12 @@ func (LicenseStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 	}
 	if pc.Version.LicenseRaw != nil {
 		raw = *pc.Version.LicenseRaw
+	}
+	// Решение юриста уже записано на версии. После перестановки license в
+	// параллельную группу возобновление со скачивания снова посещает этот шаг;
+	// без явного признания claim пакет зацикливался бы в awaiting_legal.
+	if pc.Version.LicenseSource != nil && *pc.Version.LicenseSource == "claim" && spdx != "" {
+		return Pass(fmt.Sprintf("Лицензия %s подтверждена юристом.", spdx)), nil
 	}
 	// Лицензии ещё нет в базе — берём из метаданных реестра.
 	if spdx == "" {

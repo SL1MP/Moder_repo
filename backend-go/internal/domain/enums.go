@@ -68,13 +68,14 @@ var StepCodes = []string{
 	"db_check",     // шаг 0 — наличие в базе
 	"blacklist",    // шаг 1
 	"quarantine",   // шаг 2
-	"license",      // шаг 3
-	"download",     // шаг 4
-	"dragon_scan",  // шаг 5 — информационное сканирование Go-архива в Dragon
-	"vuln_scan",    // шаг 6 — уязвимости по снапшоту OSV
-	"sandbox_scan", // шаг 7 — динамический анализ в песочнице
-	"sbom",         // шаг 8 — CycloneDX SBOM проверенного артефакта
-	"publish",      // шаг 9
+	"download",     // шаг 3 — общий prerequisite параллельных проверок
+	"license",      // шаг 4 — параллельная группа
+	"dragon_scan",  // шаг 5 — параллельная информационная проверка
+	"vuln_scan",    // шаг 6 — параллельная проверка OSV
+	"sandbox_scan", // шаг 7 — параллельная динамическая проверка
+	"sbom",         // шаг 8 — параллельное формирование CycloneDX
+	"sbom_upload",  // шаг 9 — barrier: обогащение и выгрузка в VuMana
+	"publish",      // шаг 10
 }
 
 // RetiredStepCodes — шаги, снятые с конвейера, но оставшиеся в истории.
@@ -118,6 +119,7 @@ var StepTitles = map[string]string{
 	"vuln_scan":    "Проверка на уязвимости",
 	"sandbox_scan": "Проверка в песочнице",
 	"sbom":         "Формирование SBOM",
+	"sbom_upload":  "Выгрузка SBOM в VuMana",
 	"publish":      "Выгрузка в артефактори",
 	// Снятые с конвейера — см. RetiredStepCodes.
 	"banner_scan": "Политические баннеры (шаг снят)",

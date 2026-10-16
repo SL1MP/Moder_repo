@@ -28,8 +28,8 @@ import (
 // Команда `moderation worker` — прогон конвейера по пакетам из очереди.
 //
 // Очередь — строки request_item в статусе `queued` (см. internal/queue).
-// Воркер ждёт уведомления, забирает пакет атомарно, гоняет по нему все десять
-// шагов и снимает с обработки. Пока прогон идёт, воркер отмечается в той же
+// Воркер ждёт уведомления, забирает пакет атомарно, гоняет по нему весь
+// конвейер и снимает с обработки. Пока прогон идёт, воркер отмечается в той же
 // строке: по этой отметке упавший процесс отличается от работающего.
 //
 // Несколько Go-воркеров могут работать одновременно: захват у них общий
@@ -50,9 +50,6 @@ const (
 	idleWait = 30 * time.Second
 	// defaultRetryPause — пауза перед повтором упавшего прогона.
 	defaultRetryPause = 10 * time.Second
-	// itemTimeout — потолок на один пакет: скачивание, распаковка и два
-	// сканера. Больше — почти наверняка зависший внешний вызов.
-	itemTimeout = 30 * time.Minute
 )
 
 func runWorker(args []string, logger *slog.Logger) int {
@@ -278,7 +275,11 @@ func (w *pipelineWorker) drain(ctx context.Context) int {
 
 // handle обрабатывает один пакет целиком, включая исход.
 func (w *pipelineWorker) handle(ctx context.Context, job queue.Job) {
-	runCtx, cancel := context.WithTimeout(ctx, itemTimeout)
+	timeout := w.cfg.PipelineItemTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Hour
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// Отметка о жизни: пока она обновляется, пакет не перехватят. Если строку

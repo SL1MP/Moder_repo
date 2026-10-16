@@ -241,6 +241,7 @@ func buildScanContext(ctx context.Context, r *repo.Repo, st *stores, cfg *config
 			Sandbox:   newSandbox(cfg),
 			Dragon:    newDragon(cfg),
 			SBOM:      newSBOMGenerator(cfg),
+			Vumana:    newVumana(cfg),
 			GitMirror: newGitMirror(cfg),
 			// Сканеры снятых шагов: конвейер их не вызывает, но контекст
 			// собирается целиком — см. комментарий к Validate.

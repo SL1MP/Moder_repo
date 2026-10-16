@@ -45,6 +45,24 @@ func (DownloadStep) Run(ctx context.Context, pc *Context) (StepOutcome, error) {
 			WithStatus("failed", "failed").
 			WithNextAction("Проверьте, что версия опубликована в реестре, и повторите заявку."), nil
 	}
+	// LicenseStep and SBOMStep start concurrently after download. Persist the
+	// metadata-derived license before that fan-out so both see one immutable
+	// value instead of racing to mutate Context.Version.
+	if pc.Version.LicenseSPDX == nil && pc.Version.LicenseRaw == nil &&
+		(meta.LicenseSPDX != "" || meta.LicenseRaw != "") {
+		spdx, raw, source := meta.LicenseSPDX, meta.LicenseRaw, "registry"
+		if err := pc.Deps.Repo.SetDetectedLicense(
+			ctx, pc.Version.ID, spdx, raw, source); err != nil {
+			return StepOutcome{}, err
+		}
+		if spdx != "" {
+			pc.Version.LicenseSPDX = &spdx
+		}
+		if raw != "" {
+			pc.Version.LicenseRaw = &raw
+		}
+		pc.Version.LicenseSource = &source
+	}
 
 	limit := pc.Config.MaxArtifactSizeBytes
 	if pc.Package.Manager == "docker" && pc.Config.MaxDockerArtifactSizeBytes > 0 {

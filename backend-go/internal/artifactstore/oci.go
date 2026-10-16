@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 )
 
 const (
@@ -175,13 +176,8 @@ func (g *Generic) PublishOCI(ctx context.Context, t Target, layoutTarGz []byte) 
 	if err != nil {
 		return "", err
 	}
-	for digest, body := range layout.blobs {
-		if manifestSet[digest] {
-			continue
-		}
-		if err := g.uploadBlob(ctx, t, digest, body); err != nil {
-			return "", err
-		}
+	if err := g.uploadBlobs(ctx, t, layout.blobs, manifestSet); err != nil {
+		return "", err
 	}
 
 	// post-order: дочерние manifests уже существуют, когда публикуется index.
@@ -198,6 +194,65 @@ func (g *Generic) PublishOCI(ctx context.Context, t Target, layoutTarGz []byte) 
 		return "", err
 	}
 	return g.ociReference(t), nil
+}
+
+// uploadBlobs отправляет независимые config/layer blobs ограниченно
+// параллельно. Multi-platform Docker image легко содержит десятки слоёв и
+// сотни мегабайт; последовательная загрузка делала исправную публикацию
+// похожей на зависание и часто упиралась в общий deadline пакета. Manifests
+// по-прежнему публикуются только после завершения всех blobs и строго в
+// post-order — Registry никогда не увидит ссылку на ещё не загруженный слой.
+func (g *Generic) uploadBlobs(
+	ctx context.Context, t Target, blobs map[string][]byte, manifestSet map[string]bool,
+) error {
+	type blob struct {
+		digest string
+		body   []byte
+	}
+	jobs := make(chan blob)
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	const workers = 4
+	var wg sync.WaitGroup
+	var once sync.Once
+	var firstErr error
+	worker := func() {
+		defer wg.Done()
+		for job := range jobs {
+			if workCtx.Err() != nil {
+				return
+			}
+			if err := g.uploadBlob(workCtx, t, job.digest, job.body); err != nil {
+				once.Do(func() {
+					firstErr = fmt.Errorf("загрузка OCI blob %s (%d байт): %w",
+						job.digest, len(job.body), err)
+					cancel()
+				})
+				return
+			}
+		}
+	}
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go worker()
+	}
+	for digest, body := range blobs {
+		if manifestSet[digest] {
+			continue
+		}
+		select {
+		case jobs <- blob{digest: digest, body: body}:
+		case <-workCtx.Done():
+			break
+		}
+		if workCtx.Err() != nil {
+			break
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	return firstErr
 }
 
 func parseOCILayout(payload []byte) (parsedOCILayout, error) {

@@ -116,6 +116,7 @@ var valueMigrations = map[string]string{
 	// Шаг песочницы вместо снятых сканеров содержимого.
 	"sandbox_scan": "backend-go/migrations/0013_sandbox_step",
 	"sbom":         "backend-go/migrations/0020_sbom_documents",
+	"sbom_upload":  "backend-go/migrations/0035_vumana_sbom_step",
 	// Менеджеры сверх четырёх, перенесённых прототипом.
 	"conan":     migrationManagers,
 	"docker":    migrationManagers,

@@ -38,11 +38,19 @@ func TestPackageManagersProduceCanonicalCycloneDX(t *testing.T) {
 			}
 			metadata := body["metadata"].(map[string]any)
 			component := metadata["component"].(map[string]any)
+			if component["group"] != moderatedGroup {
+				t.Errorf("metadata.component.group = %q, ожидался %q", component["group"], moderatedGroup)
+			}
 			if component["purl"] != tc.wantPURL {
 				t.Errorf("purl = %q, ожидался %q", component["purl"], tc.wantPURL)
 			}
 			components := body["components"].([]any)
 			if len(components) != 1 { t.Fatalf("components = %d", len(components)) }
+			if tc.manager == "maven" {
+				if got := components[0].(map[string]any)["group"]; got != "org.example" {
+					t.Errorf("группа Maven-пакета потеряна: %v", got)
+				}
+			}
 		})
 	}
 }
@@ -71,6 +79,32 @@ func TestPackageSBOMIncludesOSVVulnerabilities(t *testing.T) {
 	}
 }
 
+func TestEnrichPreservesSyftFields(t *testing.T) {
+	original := []byte(`{
+		"bomFormat":"CycloneDX","specVersion":"1.6","version":1,
+		"metadata":{"component":{"bom-ref":"pkg:oci/app@sha256:abc","name":"app"}},
+		"components":[{"bom-ref":"pkg:oci/app@sha256:abc","name":"app","properties":[{"name":"syft:location","value":"/"}]}],
+		"dependencies":[{"ref":"pkg:oci/app@sha256:abc","dependsOn":[]}],
+		"properties":[{"name":"syft:source","value":"oci"}]
+	}`)
+	enriched, err := Enrich(original, "MIT", "", []Vulnerability{{
+		ID: "GHSA-test", Aliases: []string{"CVE-2026-0002"}, CVSSScore: 7.5,
+	}})
+	if err != nil { t.Fatal(err) }
+	var body map[string]any
+	if err := json.Unmarshal(enriched, &body); err != nil { t.Fatal(err) }
+	for _, key := range []string{"dependencies", "properties", "vulnerabilities"} {
+		if _, ok := body[key]; !ok { t.Errorf("после обогащения потеряно поле %s: %s", key, enriched) }
+	}
+	components := body["components"].([]any)
+	component := components[0].(map[string]any)
+	if got := body["metadata"].(map[string]any)["component"].(map[string]any)["group"]; got != moderatedGroup {
+		t.Errorf("после обогащения metadata.component.group = %v", got)
+	}
+	if _, ok := component["properties"]; !ok { t.Error("потеряны Syft properties компонента") }
+	if _, ok := component["licenses"]; !ok { t.Error("лицензия не добавлена") }
+}
+
 func TestDockerProducesDocumentPerPlatformAndSkipsAttestation(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "calls.log")
@@ -93,6 +127,11 @@ func TestDockerProducesDocumentPerPlatformAndSkipsAttestation(t *testing.T) {
 		t.Fatalf("платформы = %q, %q", docs[0].Platform, docs[1].Platform)
 	}
 	for _, doc := range docs {
+		var body map[string]any
+		if err := json.Unmarshal(doc.Body, &body); err != nil { t.Fatal(err) }
+		if got := body["metadata"].(map[string]any)["component"].(map[string]any)["group"]; got != moderatedGroup {
+			t.Errorf("Docker metadata.component.group = %v", got)
+		}
 		if !bytes.Contains(doc.Body, []byte(`"type": "container"`)) ||
 			!bytes.Contains(doc.Body, []byte(`pkg:oci/postgres@sha256`)) {
 			t.Errorf("корневой компонент Docker не нормализован: %s", doc.Body)

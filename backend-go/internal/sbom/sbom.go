@@ -28,6 +28,8 @@ var supported = map[string]bool{
 	"go": true, "conan": true, "docker": true,
 }
 
+const moderatedGroup = "com.ptsecurity.moderated"
+
 func Supports(manager string) bool { return supported[strings.ToLower(strings.TrimSpace(manager))] }
 
 // Input identifies a moderated package and the bytes saved by DownloadStep.
@@ -169,6 +171,116 @@ type cdxVulnAffect struct {
 	Ref string `json:"ref"`
 }
 
+// Enrich adds moderation results that are only known after the independent
+// SBOM generator has finished. This split is what allows SBOM generation and
+// OSV scanning to run in parallel: the later VuMana upload barrier combines
+// them without making either scanner wait for the other.
+func Enrich(body []byte, licenseSPDX, licenseRaw string, findings []Vulnerability) ([]byte, error) {
+	// Generic maps are deliberate: Docker documents come from Syft and carry
+	// dependency graphs, properties and evidence fields unknown to the small
+	// structures used by our package generator. A typed unmarshal/marshal
+	// would silently erase those fields and turn a useful image SBOM into a
+	// shell containing only components.
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("CycloneDX не разобран для обогащения: %w", err)
+	}
+	if format, _ := doc["bomFormat"].(string); format != "CycloneDX" {
+		return nil, fmt.Errorf("ожидался CycloneDX, получено %q", format)
+	}
+	var licenses []any
+	if value := strings.TrimSpace(licenseSPDX); value != "" {
+		licenses = []any{map[string]any{"license": map[string]any{"id": value}}}
+	} else if value := strings.TrimSpace(licenseRaw); value != "" {
+		licenses = []any{map[string]any{"license": map[string]any{"name": value}}}
+	}
+	var metadataComponent map[string]any
+	if metadata, ok := doc["metadata"].(map[string]any); ok {
+		metadataComponent, _ = metadata["component"].(map[string]any)
+	}
+	if metadataComponent != nil {
+		metadataComponent["group"] = moderatedGroup
+	}
+	if len(licenses) > 0 {
+		if metadataComponent != nil {
+			metadataComponent["licenses"] = licenses
+		}
+		components, _ := doc["components"].([]any)
+		metadataRef, _ := metadataComponent["bom-ref"].(string)
+		for _, raw := range components {
+			component, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			ref, _ := component["bom-ref"].(string)
+			if ref == metadataRef || len(components) == 1 {
+				component["licenses"] = licenses
+			}
+		}
+	}
+	affectsRef := ""
+	if metadataComponent != nil {
+		affectsRef, _ = metadataComponent["bom-ref"].(string)
+	}
+	components, _ := doc["components"].([]any)
+	if strings.TrimSpace(affectsRef) == "" && len(components) > 0 {
+		if component, ok := components[0].(map[string]any); ok {
+			affectsRef, _ = component["bom-ref"].(string)
+		}
+	}
+	seen := make(map[string]bool, len(findings))
+	vulnerabilities := make([]any, 0, len(findings))
+	for _, finding := range findings {
+		id := preferredVulnerabilityID(finding.ID, finding.Aliases)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		v := map[string]any{
+			"bom-ref": "vulnerability:" + id, "id": id,
+			"source": map[string]any{"name": "OSV"},
+		}
+		if description := strings.TrimSpace(finding.Summary); description != "" {
+			v["description"] = description
+		}
+		if affectsRef != "" {
+			v["affects"] = []any{map[string]any{"ref": affectsRef}}
+		}
+		if rawURL := strings.TrimSpace(finding.URL); rawURL != "" {
+			v["source"].(map[string]any)["url"] = rawURL
+		}
+		severity := normalizeSeverity(finding.Severity, finding.CVSSScore)
+		if finding.CVSSScore > 0 || severity != "unknown" || strings.TrimSpace(finding.CVSSVector) != "" {
+			method := "other"
+			if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(finding.CVSSVector)), "CVSS:3") {
+				method = "CVSSv3"
+			}
+			rating := map[string]any{"severity": severity, "method": method}
+			if finding.CVSSScore > 0 {
+				rating["score"] = finding.CVSSScore
+			}
+			if vector := strings.TrimSpace(finding.CVSSVector); vector != "" {
+				rating["vector"] = vector
+			}
+			v["ratings"] = []any{rating}
+		}
+		if len(finding.FixedVersions) > 0 {
+			v["recommendation"] = "Обновить до исправленной версии: " + strings.Join(finding.FixedVersions, ", ")
+		}
+		vulnerabilities = append(vulnerabilities, v)
+	}
+	if len(vulnerabilities) > 0 {
+		doc["vulnerabilities"] = vulnerabilities
+	} else {
+		delete(doc, "vulnerabilities")
+	}
+	result, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("сериализация обогащённого CycloneDX: %w", err)
+	}
+	return append(result, '\n'), nil
+}
+
 func (g DefaultGenerator) generatePackage(in Input) (Document, error) {
 	purl, group, name, err := packagePURL(in.Manager, in.Name, in.Version)
 	if err != nil {
@@ -178,6 +290,8 @@ func (g DefaultGenerator) generatePackage(in Input) (Document, error) {
 		Type: "library", BomRef: purl, Group: group, Name: name,
 		Version: in.Version, PURL: purl,
 	}
+	metadataComponent := component
+	metadataComponent.Group = moderatedGroup
 	if sha := strings.TrimSpace(in.ArtifactSHA256); sha != "" {
 		component.Hashes = []cdxHash{{Alg: "SHA-256", Content: sha}}
 	}
@@ -191,8 +305,8 @@ func (g DefaultGenerator) generatePackage(in Input) (Document, error) {
 		Serial: deterministicSerial(in.Manager + "\x00" + in.Name + "\x00" + in.Version + "\x00" + in.ArtifactSHA256),
 		Metadata: cdxMetadata{
 			Timestamp: g.now().Format(time.RFC3339),
-			Tools: []cdxTool{{Vendor: "PT Security", Name: "moderation-service", Version: "1"}},
-			Component: component,
+			Tools: []cdxTool{{Vendor: "Positive Technologies", Name: "moderation-service", Version: "1"}},
+			Component: metadataComponent,
 		},
 		// Kept in components as well because the existing corporate consumer
 		// reads this list rather than metadata.component.
@@ -569,7 +683,7 @@ func normalizeDockerDocument(raw []byte, root dockerRoot) ([]byte, string, error
 	qualifiers.Set("repository_url", root.Repository)
 	purl += "?" + qualifiers.Encode()
 	component := map[string]any{
-		"type": "container", "bom-ref": purl, "name": root.Name,
+		"type": "container", "bom-ref": purl, "group": moderatedGroup, "name": root.Name,
 		"version": root.ManifestDigest, "purl": purl,
 		"properties": []map[string]string{
 			{"name": "ptsecurity:docker:index-digest", "value": root.IndexDigest},

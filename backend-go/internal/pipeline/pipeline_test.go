@@ -321,8 +321,8 @@ func TestGoldenPathPublishes(t *testing.T) {
 			len(steps), len(domain.StepCodes), steps)
 	}
 	for code, step := range steps {
-		if step.Result != "pass" {
-			t.Errorf("шаг %s = %q, ожидался pass", code, step.Result)
+		if step.Result != "pass" && step.Result != "skipped" {
+			t.Errorf("шаг %s = %q, ожидался pass/skipped", code, step.Result)
 		}
 	}
 	if len(e.artifacts.published) != 1 {
@@ -1259,13 +1259,13 @@ func TestResumeFromStepSkipsEarlier(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	steps := stepsByCode(t, r, item.ID)
-	for _, code := range []string{"db_check", "blacklist", "quarantine", "license"} {
+	for _, code := range []string{"db_check", "blacklist", "quarantine"} {
 		if _, ok := steps[code]; ok {
 			t.Errorf("шаг %s выполнен, хотя возобновление было с download", code)
 		}
 	}
-	// download, vuln_scan, sandbox_scan, sbom, publish.
-	if want := len(domain.StepCodes) - 4; len(steps) != want {
+	// download, затем вся параллельная группа, VuMana и publish.
+	if want := len(domain.StepCodes) - 3; len(steps) != want {
 		t.Errorf("шагов: %d, ожидалось %d (download..publish)", len(steps), want)
 	}
 }

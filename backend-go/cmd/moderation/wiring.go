@@ -15,6 +15,7 @@ import (
 	"moderation/internal/sandbox"
 	"moderation/internal/sbom"
 	"moderation/internal/storage"
+	"moderation/internal/vumana"
 )
 
 // Сборка внешних зависимостей в одном месте.
@@ -202,6 +203,7 @@ func pipelineConfig(cfg *config.Config) pipeline.Config {
 		DragonPublish:      cfg.DragonPublish,
 		DragonPriority:     cfg.DragonPriority,
 		SBOMEnabled:        cfg.SBOMEnabled,
+		VumanaEnabled:      cfg.VumanaEnabled,
 
 		// Снятые шаги: конвейер их не запускает, значения переносятся, чтобы
 		// возврат шага в строй не требовал ещё и правки сборки.
@@ -216,6 +218,17 @@ func pipelineConfig(cfg *config.Config) pipeline.Config {
 
 func newSBOMGenerator(cfg *config.Config) sbom.Generator {
 	return sbom.DefaultGenerator{SyftBinary: cfg.SBOMSyftBinary}
+}
+
+func newVumana(cfg *config.Config) vumana.Uploader {
+	if !cfg.VumanaEnabled {
+		return nil
+	}
+	return vumana.New(vumana.Config{
+		APIURL: cfg.VumanaAPIURL, PublicURL: cfg.VumanaURL,
+		Token: cfg.VumanaToken, Timeout: cfg.VumanaTimeout,
+		HTTPClient: newArtifactHTTPClient(),
+	})
 }
 
 func newDragon(cfg *config.Config) dragon.Scanner {

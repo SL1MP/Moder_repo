@@ -89,8 +89,11 @@ func (p *PHP) ValidateVersion(version string) error {
 // composerRequirements принимает обе формы поля require, которые реально
 // встречаются в Packagist p2 metadata. Composer описывает зависимости
 // объектом, но версии без зависимостей Packagist иногда сериализует как
-// пустой массив (`"require": []`). Обычный map[string]string на таком
-// ответе роняет разбор всего пакета и вместе с ним всё дерево зависимостей.
+// пустой массив (`"require": []`). В minified P2 metadata повторяющееся
+// значение также заменяется строкой `"__unset"`: это указание Composer
+// очистить унаследованное поле, а не зависимость с необычным типом. Обычный
+// map[string]string на обеих формах роняет разбор всего пакета и вместе с ним
+// всё дерево зависимостей.
 type composerRequirements map[string]string
 
 func (r *composerRequirements) UnmarshalJSON(data []byte) error {
@@ -98,6 +101,9 @@ func (r *composerRequirements) UnmarshalJSON(data []byte) error {
 	switch {
 	case text == "null":
 		*r = nil
+		return nil
+	case text == `"__unset"`:
+		*r = composerRequirements{}
 		return nil
 	case strings.HasPrefix(text, "{"):
 		var values map[string]string

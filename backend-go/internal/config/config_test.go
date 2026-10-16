@@ -73,6 +73,8 @@ func TestConfigDefaults(t *testing.T) {
 		{"dragon_priority", cfg.DragonPriority, 4},
 		{"sbom_enabled", cfg.SBOMEnabled, true},
 		{"sbom_syft_binary", cfg.SBOMSyftBinary, "syft"},
+		{"vumana_enabled", cfg.VumanaEnabled, false},
+		{"vumana_timeout", cfg.VumanaTimeout, 5 * time.Minute},
 		{"oidc_client_id", cfg.OIDCClientID, "moderation-web"},
 		{"ca_certs", cfg.CACerts, ""},
 		{"role_mapping_admin", cfg.RoleMappingAdmin, "moderation-admin"},
@@ -88,6 +90,7 @@ func TestConfigDefaults(t *testing.T) {
 		{"app_name", cfg.AppName, "Модерация пакетов"},
 		{"comment_edit_window_minutes", cfg.CommentEditWindow, 15 * time.Minute},
 		{"pipeline_stuck_after_seconds", cfg.PipelineStuckAfter, 120 * time.Second},
+		{"pipeline_item_timeout_seconds", cfg.PipelineItemTimeout, 2 * time.Hour},
 		{"artifact_auth_type", cfg.ArtifactAuthType, "basic"},
 		{"artifact_dry_run", cfg.ArtifactDryRun, false},
 		{"osv_local_db_path", cfg.OSVLocalDBPath, "/var/lib/osv-db/current"},
@@ -579,6 +582,24 @@ func TestDragonConfiguration(t *testing.T) {
 		cfg.DragonRepositoryID != "repo:packages" ||
 		cfg.DragonPublish || cfg.DragonPriority != 7 {
 		t.Fatalf("Dragon config = %+v", cfg)
+	}
+}
+
+func TestVumanaConfiguration(t *testing.T) {
+	env := map[string]string{
+		"DATABASE_URL": "postgres://localhost/moderation",
+		"VUMANA_ENABLED": "true",
+		"VUMANA_API_URL": "https://vumana.example/api/",
+		"VUMANA_URL": "https://vumana.example/",
+		"VUMANA_TOKEN": "pat",
+		"VUMANA_TIMEOUT_SECONDS": "420",
+	}
+	cfg, err := Load(func(key string) string { return env[key] })
+	if err != nil { t.Fatal(err) }
+	if !cfg.VumanaEnabled || cfg.VumanaAPIURL != "https://vumana.example/api" ||
+		cfg.VumanaURL != "https://vumana.example" || cfg.VumanaToken != "pat" ||
+		cfg.VumanaTimeout != 7*time.Minute {
+		t.Fatalf("VuMana config = %+v", cfg)
 	}
 }
 

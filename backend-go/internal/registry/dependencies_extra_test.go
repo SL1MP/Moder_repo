@@ -176,14 +176,16 @@ func TestComposerBuildsTransitiveTreeWithPackagistEmptyArrays(t *testing.T) {
 		"https://packagist.test/p2/monolog/monolog.json": `{
 			"packages":{"monolog/monolog":[{
 				"version":"3.9.0","version_normalized":"3.9.0.0",
-				"require":{"php":">=8.1","psr/log":"^2.0 || ^3.0"}
+				"require":{"php":">=8.1","psr/log":"^2.0"}
 			}]}
+		}
 		`,
 		"https://packagist.test/p2/psr/log.json": `{
 			"packages":{"psr/log":[
 				{"version":"3.0.2","version_normalized":"3.0.2.0","require":[]},
-				{"version":"2.0.0","version_normalized":"2.0.0.0","require":[]}
+				{"version":"2.0.0","version_normalized":"2.0.0.0","require":"__unset"}
 			]}
+		}
 		`,
 	}}
 	reg := registry.New(registry.Config{PackagistURL: "https://packagist.test", HTTP: f})
@@ -206,7 +208,7 @@ func TestComposerBuildsTransitiveTreeWithPackagistEmptyArrays(t *testing.T) {
 	}
 	transitive := walk.Transitive()
 	if len(transitive) != 1 || transitive[0].Ref.Name != "psr/log" ||
-		transitive[0].Ref.Version != "3.0.2" {
+		transitive[0].Ref.Version != "2.0.0" {
 		t.Fatalf("транзитивы monolog/monolog:3.9.0 = %+v", transitive)
 	}
 }

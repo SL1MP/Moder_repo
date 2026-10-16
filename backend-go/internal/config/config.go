@@ -79,6 +79,16 @@ type Config struct {
 	SBOMEnabled    bool
 	SBOMSyftBinary string
 
+	// VuMana принимает готовые CycloneDX документы отдельным шагом после их
+	// формирования. APIURL — служебная ручка /api, PublicURL — адрес карточки
+	// отчёта для браузера. Token необязателен: предоставленный корпоративный
+	// sbom-utils работает и без Authorization, но контуры могут требовать PAT.
+	VumanaEnabled bool
+	VumanaAPIURL  string
+	VumanaURL     string
+	VumanaToken   string
+	VumanaTimeout time.Duration
+
 	// Сканеры содержимого СНЯТЫХ шагов (pipeline.RetiredSteps): политические
 	// баннеры и SAST. Конвейер их не запускает — настройки оставлены вместе с
 	// самими шагами, чтобы возврат в строй не требовал ещё и восстановления
@@ -273,6 +283,10 @@ type Config struct {
 	// считается зависшим; брошенным прогон признаётся втрое позже (столько же,
 	// сколько у python-версии: STALE_RUNNING_FACTOR = 3).
 	PipelineStuckAfter time.Duration
+	// PipelineItemTimeout — полный deadline одного пакета, включая большой
+	// multi-platform Docker push. Он не должен быть захардкожен в worker:
+	// скорость внутреннего артефактори различается между контурами.
+	PipelineItemTimeout time.Duration
 
 	// Сторож очереди в процессе API: подбирает пакеты, которые не забрал
 	// выделенный воркер. Включён по умолчанию — выключенный сторож означает,
@@ -351,6 +365,11 @@ func Load(getenv func(string) string) (*Config, error) {
 		DragonPriority:     intOr(getenv("DRAGON_PRIORITY"), 4),
 		SBOMEnabled:        boolOr(getenv("SBOM_ENABLED"), true),
 		SBOMSyftBinary:     valueOr(getenv("SBOM_SYFT_BINARY"), "syft"),
+		VumanaEnabled:      boolOr(getenv("VUMANA_ENABLED"), false),
+		VumanaAPIURL:       strings.TrimRight(strings.TrimSpace(getenv("VUMANA_API_URL")), "/"),
+		VumanaURL:          strings.TrimRight(strings.TrimSpace(getenv("VUMANA_URL")), "/"),
+		VumanaToken:        strings.TrimSpace(getenv("VUMANA_TOKEN")),
+		VumanaTimeout:      secondsOr(getenv("VUMANA_TIMEOUT_SECONDS"), 5*60),
 
 		// Шаги сняты с конвейера: значения по умолчанию false, чтобы включённым
 		// оказался только тот шаг, который явно включили обратно.
@@ -472,6 +491,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		OSVSyncInterval: secondsOr(getenv("OSV_SYNC_INTERVAL_SECONDS"), 6*60*60),
 
 		PipelineStuckAfter:       secondsOr(getenv("PIPELINE_STUCK_AFTER_SECONDS"), 120),
+		PipelineItemTimeout:      secondsOr(getenv("PIPELINE_ITEM_TIMEOUT_SECONDS"), 2*60*60),
 		PipelineWatchdogEnabled:  boolOr(getenv("PIPELINE_WATCHDOG_ENABLED"), true),
 		PipelineWatchdogInterval: secondsOr(getenv("PIPELINE_WATCHDOG_INTERVAL_SECONDS"), 30),
 
@@ -594,6 +614,9 @@ func Load(getenv func(string) string) (*Config, error) {
 	}
 	if cfg.DragonPriority < 0 {
 		errs = append(errs, fmt.Errorf("DRAGON_PRIORITY: ожидается неотрицательное целое число"))
+	}
+	if cfg.VumanaEnabled && strings.TrimSpace(cfg.VumanaAPIURL) == "" {
+		errs = append(errs, errors.New("VUMANA_API_URL: не задан при VUMANA_ENABLED=true"))
 	}
 	if cfg.GitMirrorEnabled {
 		for name, value := range map[string]string{

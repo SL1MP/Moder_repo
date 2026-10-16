@@ -17,6 +17,7 @@ import (
 	"moderation/internal/scanners"
 	"moderation/internal/sbom"
 	"moderation/internal/storage"
+	"moderation/internal/vumana"
 )
 
 // Config — пороги и переключатели конвейера. Целевой источник — БД/admin API
@@ -49,6 +50,10 @@ type Config struct {
 	DragonPriority     int
 	// SBOMEnabled — формировать CycloneDX между проверками и публикацией.
 	SBOMEnabled bool
+	// VumanaEnabled включает отдельную информационную выгрузку уже готового
+	// CycloneDX. Ошибка внешней системы видна в шаге, но пакет не блокирует —
+	// тот же контракт, что у предоставленного upload_sbom.py (`|| true`).
+	VumanaEnabled bool
 
 	// BannerScanEnabled/SASTEnabled — выключатели СНЯТЫХ шагов сканирования
 	// содержимого (pipeline.RetiredSteps). Конвейер их не запускает; поля
@@ -111,6 +116,9 @@ type Deps struct {
 	// SBOM строит документы из уже скачанных байтов. Повторно обращаться к
 	// внешнему реестру генератору не разрешается.
 	SBOM sbom.Generator
+	// Vumana получает документы только после завершения параллельной группы
+	// проверок, чтобы загруженный SBOM мог содержать результаты OSV.
+	Vumana vumana.Uploader
 	// GitMirror переносит Git-репозиторий целиком во внутренний GitLab и
 	// устанавливает CI-шаблон. Он не использует артефактори.
 	GitMirror gitmirror.Service

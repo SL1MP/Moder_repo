@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -111,6 +112,7 @@ func TestGenericPublishesEveryPlatformAsNativeOCI(t *testing.T) {
 	uploadedManifests := map[string][]byte{}
 	manifestTypes := map[string]string{}
 	uploadID := 0
+	var mu sync.Mutex
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/library/postgres/") {
@@ -126,12 +128,16 @@ func TestGenericPublishesEveryPlatformAsNativeOCI(t *testing.T) {
 		case r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/blobs/"):
 			w.WriteHeader(http.StatusNotFound)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/blobs/uploads/"):
+			mu.Lock()
 			uploadID++
 			w.Header().Set("Location", fmt.Sprintf("/upload/%d", uploadID))
+			mu.Unlock()
 			w.WriteHeader(http.StatusAccepted)
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/upload/"):
 			body, _ := io.ReadAll(r.Body)
+			mu.Lock()
 			uploadedBlobs[r.URL.Query().Get("digest")] = body
+			mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/manifests/"):
 			body, _ := io.ReadAll(r.Body)

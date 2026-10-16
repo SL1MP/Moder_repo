@@ -506,7 +506,7 @@ func openAPISchemas() map[string]any {
 			"properties": map[string]any{
 				"from_step": map[string]any{
 					"type": "string", "default": "db_check",
-					"enum": []string{"db_check", "blacklist", "quarantine", "license", "download", "dragon_scan", "vuln_scan", "sandbox_scan", "sbom", "publish"},
+					"enum": []string{"db_check", "blacklist", "quarantine", "download", "license", "dragon_scan", "vuln_scan", "sandbox_scan", "sbom", "sbom_upload", "publish"},
 				},
 			},
 		},
